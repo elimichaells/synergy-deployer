@@ -1,0 +1,2 @@
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS webhook_secret TEXT;
+ALTER TABLE deployments ADD COLUMN IF NOT EXISTS trigger TEXT DEFAULT 'manual';
