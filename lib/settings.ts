@@ -6,6 +6,12 @@ export type SettingKey =
   | 'LOGS_PATH'
   | 'CADDY_PATH'
   | 'GITHUB_TOKEN'
+  | 'NOTIFY_WEBHOOK_URL'
+  | 'BACKUP_DIR'
+  | 'BACKUP_ENABLED'
+  | 'BACKUP_RETENTION_DAYS'
+  | 'BACKUP_LAST_RUN'
+  | 'PG_BIN_PATH'
 
 const DEFAULTS: Record<SettingKey, string> = {
   PRODUCTION_PATH: 'C:\\web\\production',
@@ -13,6 +19,12 @@ const DEFAULTS: Record<SettingKey, string> = {
   LOGS_PATH: 'C:\\web\\logs',
   CADDY_PATH: 'C:\\web',
   GITHUB_TOKEN: '',
+  NOTIFY_WEBHOOK_URL: '',
+  BACKUP_DIR: 'C:\\web\\backups\\postgres',
+  BACKUP_ENABLED: 'false',
+  BACKUP_RETENTION_DAYS: '14',
+  BACKUP_LAST_RUN: '',
+  PG_BIN_PATH: 'C:\\Program Files\\PostgreSQL\\18\\bin',
 }
 
 // In-memory cache with TTL
@@ -73,6 +85,12 @@ export async function seedSettingsFromEnv(): Promise<void> {
     LOGS_PATH: process.env.LOGS_PATH,
     CADDY_PATH: process.env.CADDY_PATH,
     GITHUB_TOKEN: process.env.GITHUB_TOKEN,
+    NOTIFY_WEBHOOK_URL: process.env.NOTIFY_WEBHOOK_URL,
+    BACKUP_DIR: process.env.BACKUP_DIR,
+    BACKUP_ENABLED: undefined,
+    BACKUP_RETENTION_DAYS: undefined,
+    BACKUP_LAST_RUN: undefined,
+    PG_BIN_PATH: process.env.PG_BIN_PATH,
   }
   for (const [key, envValue] of Object.entries(envMap)) {
     if (!envValue) continue

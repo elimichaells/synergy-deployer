@@ -10,5 +10,14 @@ export async function register() {
     } catch (err) {
       console.error('[System] Failed to cleanup orphaned deployments:', err)
     }
+
+    // Nightly Postgres backup scheduler (runs when BACKUP_ENABLED=true)
+    try {
+      const { backupSchedulerTick } = await import('@/lib/backups')
+      setInterval(() => void backupSchedulerTick(), 10 * 60_000)
+      void backupSchedulerTick()
+    } catch (err) {
+      console.error('[System] Failed to start backup scheduler:', err)
+    }
   }
 }

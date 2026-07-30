@@ -295,7 +295,7 @@ export default function DeploymentsPage() {
 
       {/* Details Sheet */}
       <Sheet open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
-        <SheetContent className="sm:max-w-2xl w-full flex flex-col h-full p-0 border-l border-border/50 bg-[#0f1014]">
+        <SheetContent className="sm:max-w-2xl w-full flex flex-col h-full p-0 border-l border-border/50 bg-black/30">
           {selected && (
             <>
               <SheetHeader className="p-6 border-b border-border/40 bg-card/20">
@@ -316,7 +316,7 @@ export default function DeploymentsPage() {
                 </SheetDescription>
               </SheetHeader>
 
-              <div className="flex-1 overflow-auto bg-[#0a0a0c] p-4 font-mono text-xs">
+              <div className="flex-1 overflow-auto p-4 font-mono text-xs">
                 {loadingLog ? (
                   <div className="flex items-center justify-center h-full text-muted-foreground gap-2">
                     <Activity className="h-4 w-4 animate-spin" /> Loading logs...

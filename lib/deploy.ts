@@ -1,10 +1,37 @@
 import { query } from '@/lib/db'
 import { runCommand } from '@/lib/exec'
 import { getSetting } from '@/lib/settings'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { cp, rm } from 'fs/promises'
 import path from 'path'
+import { parse as parseDotenv } from 'dotenv'
 import { getProjectTypeDefaults, normalizeProjectType, type ProjectType } from '@/lib/project-types'
+import { notifyDeploy } from '@/lib/notify'
+
+/**
+ * Read the target project's own .env / .env.local directly and pass the
+ * values explicitly to install/pre-deploy/build child processes, instead of
+ * relying on the nested `next build` (or migration) process to load them
+ * itself. Deploys run in-process inside the manager's own long-lived Next.js
+ * server, and builds spawned that way have intermittently failed to see
+ * vars like DATABASE_URL that a manually-run build in the same directory
+ * picks up fine — root cause not pinned down, so this sidesteps it rather
+ * than depending on env-file auto-loading working inside a nested spawn.
+ * .env.local wins over .env for shared keys, matching Next's own precedence.
+ */
+function loadProjectEnvFile(rootPath: string): Record<string, string> {
+  const merged: Record<string, string> = {}
+  for (const filename of ['.env', '.env.local']) {
+    const filePath = path.join(rootPath, filename)
+    if (!existsSync(filePath)) continue
+    try {
+      Object.assign(merged, parseDotenv(readFileSync(filePath)))
+    } catch {
+      // Ignore unreadable/malformed env files — build will surface its own error if a var is missing
+    }
+  }
+  return merged
+}
 
 export interface DeployProject {
   id: string
@@ -15,6 +42,8 @@ export interface DeployProject {
   install_cmd: string | null
   build_cmd: string | null
   start_cmd: string | null
+  pre_deploy_cmd?: string | null
+  post_deploy_cmd?: string | null
   project_type?: ProjectType | null
   pm2_name: string
   port: number | null
@@ -22,7 +51,7 @@ export interface DeployProject {
 
 export interface DeployOptions {
   userId?: string | null
-  trigger: 'manual' | 'webhook' | 'promote'
+  trigger: 'manual' | 'webhook' | 'promote' | 'rollback'
   commitSha?: string
   /** When promoting, the staging branch to merge into the production branch */
   mergeBranch?: string
@@ -36,6 +65,21 @@ export interface DeployResult {
 }
 
 const GIT_NETWORK_TIMEOUT = 300_000 // 5 minutes
+
+// Cancellation flags shared across route bundles (deployments run in-process)
+const cancelledDeployments: Set<string> =
+  ((globalThis as unknown as { __cancelledDeployments?: Set<string> }).__cancelledDeployments ??= new Set())
+
+/** Flag a running deployment for cancellation — takes effect at the next step boundary */
+export function requestDeployCancel(deploymentId: string) {
+  cancelledDeployments.add(deploymentId)
+}
+
+function throwIfCancelled(deploymentId: string) {
+  if (cancelledDeployments.has(deploymentId)) {
+    throw new Error('Deployment cancelled by user')
+  }
+}
 const MANAGER_ROOT = process.cwd()
 const PM2_RUNNER = path.join(MANAGER_ROOT, 'scripts', 'pm2-runner.js')
 const STATIC_SERVER = path.join(MANAGER_ROOT, 'scripts', 'static-server.js')
@@ -419,6 +463,7 @@ async function runDeployAsync(
   options: DeployOptions,
   deploymentId: string
 ) {
+  const deployStartedAt = Date.now()
   let log = '[system] Starting deployment...\n'
 
   try {
@@ -452,9 +497,12 @@ async function runDeployAsync(
     }
   }
 
-  // Wrapper for runCommand to auto-append logs
+  // Wrapper for runCommand to auto-append logs; aborts between commands if cancelled
   const run = async (cmd: string, cwd?: string, timeout?: number, env?: Record<string, string>) => {
-    return runCommand(cmd, cwd, timeout, (data) => void append(data), env)
+    throwIfCancelled(deploymentId)
+    const result = await runCommand(cmd, cwd, timeout, (data) => void append(data), env)
+    throwIfCancelled(deploymentId)
+    return result
   }
 
   try {
@@ -602,6 +650,15 @@ async function runDeployAsync(
       if (install.code !== 0) throw new Error('Install failed')
     }
 
+    const projectEnv = loadProjectEnvFile(rootPath)
+
+    // Step 2.5: Pre-deploy script (migrations, codegen, …)
+    if (project.pre_deploy_cmd) {
+      await append(`[pre-deploy] ${project.pre_deploy_cmd}\n`)
+      const preDeploy = await run(project.pre_deploy_cmd, rootPath, undefined, { ...projectEnv, NODE_ENV: 'development' })
+      if (preDeploy.code !== 0) throw new Error('Pre-deploy script failed')
+    }
+
     // Step 3: Backup .next
     if (existsSync(nextDir)) {
       await append('[backup] Backing up .next -> .next.backup\n')
@@ -615,7 +672,7 @@ async function runDeployAsync(
     const buildCmd = getBuildCommand(project)
     if (buildCmd) {
       await append(`[build] ${buildCmd}\n`)
-      const build = await run(buildCmd, rootPath)
+      const build = await run(buildCmd, rootPath, undefined, projectEnv)
 
       if (build.code !== 0) {
         await append('[rollback] Build failed, restoring .next.backup\n')
@@ -681,6 +738,16 @@ async function runDeployAsync(
       await append('[health] OK\n')
     }
 
+    // Step 6.5: Post-deploy script (cache warmup, notifications, …)
+    // Failure is logged but does not fail the deployment — the app is already live.
+    if (project.post_deploy_cmd) {
+      await append(`[post-deploy] ${project.post_deploy_cmd}\n`)
+      const postDeploy = await run(project.post_deploy_cmd, rootPath)
+      if (postDeploy.code !== 0) {
+        await append('[post-deploy] Script failed (deployment is live, continuing)\n')
+      }
+    }
+
     // Step 7: pm2 save
     await run('pm2 save')
     await append('[pm2] State saved\n')
@@ -699,9 +766,20 @@ async function runDeployAsync(
       `UPDATE deployments SET status = 'success', finished_at = now(), log = $1, commit_sha = $2, branch = $3 WHERE id = $4`,
       [log, commitSha, branch, deploymentId]
     )
+
+    void notifyDeploy({
+      projectName: project.name,
+      status: 'success',
+      trigger: options.trigger,
+      durationMs: Date.now() - deployStartedAt,
+      commitSha,
+    })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Deployment failed'
     await append(`\n[error] ${message}\n`)
+
+    // Clear the cancel flag so the recovery restart below is not aborted too
+    cancelledDeployments.delete(deploymentId)
 
     // Attempt to restart the service if it was stopped and we failed
     try {
@@ -720,5 +798,15 @@ async function runDeployAsync(
       `UPDATE deployments SET status = 'failed', finished_at = now(), log = $1 WHERE id = $2`,
       [log, deploymentId]
     )
+
+    void notifyDeploy({
+      projectName: project.name,
+      status: 'failed',
+      trigger: options.trigger,
+      durationMs: Date.now() - deployStartedAt,
+      error: message,
+    })
+  } finally {
+    cancelledDeployments.delete(deploymentId)
   }
 }

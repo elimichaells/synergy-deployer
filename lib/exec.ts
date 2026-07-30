@@ -6,8 +6,7 @@ export interface CommandResult {
 }
 
 /** Kill a process tree on Windows using taskkill, falls back to SIGKILL */
-/** Kill a process tree on Windows using taskkill, falls back to SIGKILL */
-function killProcessTree(pid: number) {
+export function killProcessTree(pid: number) {
   try {
     execSync(`taskkill /T /F /PID ${pid}`, { windowsHide: true, stdio: 'ignore', timeout: 5000 })
   } catch {

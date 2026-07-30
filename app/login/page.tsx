@@ -33,24 +33,27 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0b0b0d] text-[#ededed] flex items-center justify-center px-6">
-      <Card className="w-full max-w-md border-[#26262d] bg-[#141419]/90">
-        <CardHeader>
-          <CardTitle className="text-[#f0f0f0]">Sign in</CardTitle>
-          <CardDescription className="text-[#b8bac0]">
+    <div className="flex min-h-screen items-center justify-center px-6 text-foreground">
+      <Card className="fade-in-up w-full max-w-md">
+        <CardHeader className="space-y-2 text-center">
+          <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-2xl border border-primary/25 bg-gradient-to-br from-primary/25 to-primary/5 shadow-[0_0_28px_-4px_hsl(199_95%_55%/0.45)]">
+            <svg className="h-5 w-5 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg>
+          </div>
+          <CardTitle className="text-shine text-2xl">NextOps Control</CardTitle>
+          <CardDescription>
             Use your manager credentials to access deployments.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form className="space-y-4" onSubmit={handleSubmit}>
             <input
-              className="w-full rounded-lg border border-[#2a2a31] bg-[#0f0f14] px-3 py-2 text-sm text-[#ededed]"
+              className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground transition-shadow focus:outline-none focus:ring-1 focus:ring-primary/60 focus:border-primary/40"
               placeholder="Email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
             <input
-              className="w-full rounded-lg border border-[#2a2a31] bg-[#0f0f14] px-3 py-2 text-sm text-[#ededed]"
+              className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground transition-shadow focus:outline-none focus:ring-1 focus:ring-primary/60 focus:border-primary/40"
               placeholder="Password"
               type="password"
               value={password}

@@ -4,27 +4,27 @@
 
 @layer base {
   :root {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 6%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 199 89% 48%;
-    /* Sophisticated Deep Blue */
-    --primary-foreground: 0 0% 100%;
-    --secondary: 240 5% 15%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 5% 12%;
-    --muted-foreground: 240 5% 65%;
-    --accent: 240 5% 15%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 84.2% 60.2%;
+    --background: 228 20% 4%;
+    --foreground: 220 15% 96%;
+    --card: 228 16% 7%;
+    --card-foreground: 220 15% 96%;
+    --popover: 228 18% 6%;
+    --popover-foreground: 220 15% 96%;
+    --primary: 199 95% 55%;
+    /* Luminous sky blue */
+    --primary-foreground: 228 30% 6%;
+    --secondary: 228 12% 14%;
+    --secondary-foreground: 220 15% 96%;
+    --muted: 228 12% 11%;
+    --muted-foreground: 225 8% 62%;
+    --accent: 228 12% 14%;
+    --accent-foreground: 220 15% 96%;
+    --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 5% 15%;
-    --input: 240 5% 15%;
-    --ring: 199 89% 48%;
-    --radius: 0.75rem;
+    --border: 228 12% 15%;
+    --input: 228 12% 16%;
+    --ring: 199 95% 55%;
+    --radius: 1rem;
   }
 }
 
@@ -33,28 +33,121 @@
     @apply border-border;
   }
 
+  html {
+    color-scheme: dark;
+  }
+
   body {
     @apply bg-background text-foreground antialiased selection:bg-primary/30;
+    background-image:
+      radial-gradient(ellipse 80% 50% at 20% -10%, hsl(217 90% 55% / 0.13), transparent 60%),
+      radial-gradient(ellipse 60% 45% at 85% 5%, hsl(190 95% 50% / 0.09), transparent 55%),
+      radial-gradient(ellipse 65% 55% at 60% 110%, hsl(265 80% 55% / 0.08), transparent 60%);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+
+  /* Slim translucent scrollbars everywhere */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: hsl(225 10% 40% / 0.35);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(225 10% 55% / 0.5);
+    border: 3px solid transparent;
+    background-clip: content-box;
   }
 }
 
 @layer components {
+
+  /* ── Liquid glass surfaces ─────────────────────────────────────────── */
+
+  /* Primary card surface: frosted glass with a soft inner top highlight */
+  .glass-card,
   .surface-card {
-    background: linear-gradient(to bottom right, hsl(var(--card)), hsl(240 10% 4%));
-    border: 1px solid hsl(var(--border));
-    box-shadow: 0 4px 20px -5px rgba(0, 0, 0, 0.5);
+    position: relative;
+    background:
+      linear-gradient(160deg, hsl(225 20% 60% / 0.07), hsl(228 20% 30% / 0.03) 40%, hsl(228 20% 10% / 0.02));
+    backdrop-filter: blur(20px) saturate(140%);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+    border: 1px solid hsl(220 30% 90% / 0.08);
+    border-radius: var(--radius);
+    box-shadow:
+      inset 0 1px 0 0 hsl(220 40% 95% / 0.07),
+      0 8px 32px -8px hsl(228 40% 2% / 0.6);
   }
 
+  /* Secondary / nested surface: lighter blur, quieter */
+  .glass-panel,
   .surface-panel {
-    background: hsl(240 10% 8% / 0.5);
-    backdrop-filter: blur(8px);
-    border: 1px solid hsl(var(--border) / 0.5);
+    background: hsl(228 16% 14% / 0.35);
+    backdrop-filter: blur(12px) saturate(120%);
+    -webkit-backdrop-filter: blur(12px) saturate(120%);
+    border: 1px solid hsl(220 30% 90% / 0.06);
+    border-radius: calc(var(--radius) - 0.25rem);
+    box-shadow: inset 0 1px 0 0 hsl(220 40% 95% / 0.04);
   }
 
+  /* Recessed terminal / code well */
+  .glass-well {
+    background: hsl(230 25% 3% / 0.75);
+    border: 1px solid hsl(220 30% 90% / 0.06);
+    box-shadow: inset 0 2px 12px hsl(230 40% 2% / 0.5);
+  }
+
+  /* Sticky translucent header */
   .glass-header {
-    background: hsl(var(--background) / 0.7);
-    backdrop-filter: blur(12px);
-    border-bottom: 1px solid hsl(var(--border) / 0.6);
+    background: hsl(var(--background) / 0.55);
+    backdrop-filter: blur(20px) saturate(150%);
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
+    border-bottom: 1px solid hsl(220 30% 90% / 0.06);
+  }
+
+  /* Sidebar glass */
+  .glass-sidebar {
+    background: hsl(228 18% 6% / 0.55);
+    backdrop-filter: blur(24px) saturate(140%);
+    -webkit-backdrop-filter: blur(24px) saturate(140%);
+    border-right: 1px solid hsl(220 30% 90% / 0.06);
+  }
+
+  /* Interactive glass hover lift */
+  .glass-hover {
+    transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease, background 200ms ease;
+  }
+
+  .glass-hover:hover {
+    border-color: hsl(199 95% 60% / 0.25);
+    box-shadow:
+      inset 0 1px 0 0 hsl(220 40% 95% / 0.08),
+      0 12px 40px -10px hsl(228 40% 2% / 0.7),
+      0 0 24px -6px hsl(199 95% 55% / 0.15);
+    transform: translateY(-1px);
+  }
+
+  /* ── Status glow dots ──────────────────────────────────────────────── */
+
+  .dot-live {
+    @apply h-2.5 w-2.5 rounded-full bg-emerald-400;
+    box-shadow: 0 0 10px hsl(160 84% 45% / 0.7), 0 0 20px hsl(160 84% 45% / 0.3);
+  }
+
+  .dot-dead {
+    @apply h-2.5 w-2.5 rounded-full bg-red-500;
+    box-shadow: 0 0 8px hsl(0 84% 60% / 0.5);
   }
 
   .heartbeat {
@@ -76,5 +169,40 @@
       transform: scale(1);
       opacity: 0.8;
     }
+  }
+
+  /* Soft fade-in for page content */
+  .fade-in-up {
+    animation: fadeInUp 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @keyframes fadeInUp {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
+@layer utilities {
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Gradient text for headings */
+  .text-shine {
+    background: linear-gradient(120deg, hsl(220 15% 98%), hsl(220 15% 75%));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
   }
 }

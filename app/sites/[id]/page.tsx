@@ -24,6 +24,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { AppShell } from '@/components/layout/app-shell'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet'
+import { EnvEditor } from '@/components/env-editor'
 
 interface Project {
   id: string
@@ -37,6 +38,8 @@ interface Project {
   install_cmd?: string | null
   build_cmd?: string | null
   start_cmd?: string | null
+  pre_deploy_cmd?: string | null
+  post_deploy_cmd?: string | null
   port: number | null
   url: string | null
   is_active: boolean
@@ -111,6 +114,8 @@ export default function SitePage() {
     installCmd: '',
     buildCmd: '',
     startCmd: '',
+    preDeployCmd: '',
+    postDeployCmd: '',
   })
   const [webhookSecret, setWebhookSecret] = useState<string | null>(null)
   const [webhookHasSecret, setWebhookHasSecret] = useState(false)
@@ -122,6 +127,14 @@ export default function SitePage() {
   const [ghHookRemoving, setGhHookRemoving] = useState(false)
   const [ghHookError, setGhHookError] = useState<string | null>(null)
   const [clearingLogs, setClearingLogs] = useState(false)
+  const [npmScripts, setNpmScripts] = useState<Record<string, string>>({})
+  const [npmCommand, setNpmCommand] = useState('')
+  const [npmOutput, setNpmOutput] = useState('')
+  const [npmRunning, setNpmRunning] = useState(false)
+  const npmAbortRef = useRef<AbortController | null>(null)
+  const npmOutputRef = useRef<HTMLDivElement>(null)
+  const [cancellingDeploy, setCancellingDeploy] = useState<string | null>(null)
+  const [rollingBack, setRollingBack] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     setError(null)
@@ -164,6 +177,8 @@ export default function SitePage() {
         installCmd: projectData.install_cmd || 'npm install',
         buildCmd: projectData.build_cmd || 'npm run build',
         startCmd: projectData.start_cmd || 'npm start',
+        preDeployCmd: projectData.pre_deploy_cmd || '',
+        postDeployCmd: projectData.post_deploy_cmd || '',
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load')
@@ -325,6 +340,8 @@ export default function SitePage() {
         installCmd: projectForm.installCmd.trim() || null,
         buildCmd: projectForm.buildCmd.trim() || null,
         startCmd: projectForm.startCmd.trim() || null,
+        preDeployCmd: projectForm.preDeployCmd.trim() || null,
+        postDeployCmd: projectForm.postDeployCmd.trim() || null,
       }
       const res = await fetch(`/api/sites/${siteId}`, {
         method: 'PATCH',
@@ -534,6 +551,127 @@ export default function SitePage() {
     }
   }
 
+  const loadNpmScripts = useCallback(async () => {
+    if (!siteId) return
+    try {
+      const res = await fetch(`/api/sites/${siteId}/npm`)
+      if (res.ok) {
+        const data = await res.json()
+        setNpmScripts(data.scripts || {})
+      }
+    } catch {
+      // ignore
+    }
+  }, [siteId])
+
+  const runNpmCommand = async (command: string) => {
+    if (!siteId || npmRunning) return
+    const trimmed = command.trim()
+    if (!trimmed) return
+    setNpmRunning(true)
+    setError(null)
+    setNpmOutput('')
+    const controller = new AbortController()
+    npmAbortRef.current = controller
+    try {
+      const res = await fetch(`/api/sites/${siteId}/npm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: trimmed }),
+        signal: controller.signal,
+      })
+      if (!res.ok || !res.body) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error || 'Failed to run command')
+      }
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        const chunk = decoder.decode(value, { stream: true })
+        setNpmOutput((prev) => prev + chunk)
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        setNpmOutput((prev) => prev + '\n[stopped] Command aborted by user\n')
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to run command')
+      }
+    } finally {
+      setNpmRunning(false)
+      npmAbortRef.current = null
+    }
+  }
+
+  const stopNpmCommand = () => {
+    npmAbortRef.current?.abort()
+  }
+
+  // Abort any running command stream on unmount
+  useEffect(() => {
+    return () => npmAbortRef.current?.abort()
+  }, [])
+
+  // Auto-scroll npm console output
+  useEffect(() => {
+    if (npmOutputRef.current) {
+      npmOutputRef.current.scrollTop = npmOutputRef.current.scrollHeight
+    }
+  }, [npmOutput])
+
+  const handleCancelDeployment = async (deploymentId: string) => {
+    setCancellingDeploy(deploymentId)
+    setError(null)
+    try {
+      const res = await fetch(`/api/deployments/${deploymentId}/cancel`, { method: 'POST' })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error || 'Failed to cancel deployment')
+      }
+      await refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to cancel deployment')
+    } finally {
+      setCancellingDeploy(null)
+    }
+  }
+
+  const formatDuration = (start: string, end: string) => {
+    const seconds = Math.max(0, Math.round((new Date(end).getTime() - new Date(start).getTime()) / 1000))
+    if (seconds < 60) return `${seconds}s`
+    return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+  }
+
+  const handleRollback = async (deployment: Deployment) => {
+    if (!deployment.commit_sha) return
+    const short = deployment.commit_sha.slice(0, 7)
+    if (!window.confirm(`Roll back to commit ${short}? This redeploys that exact version and replaces what is currently live.`)) return
+    setRollingBack(deployment.id)
+    setError(null)
+    try {
+      const res = await fetch(`/api/deployments/${deployment.id}/rollback`, { method: 'POST' })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body.error || 'Rollback failed')
+      await refresh()
+      if (body.deploymentId) {
+        void handleSelectDeployment({
+          id: body.deploymentId,
+          project_id: siteId!,
+          status: 'running',
+          branch: null,
+          commit_sha: deployment.commit_sha,
+          started_at: new Date().toISOString(),
+          finished_at: null,
+        })
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Rollback failed')
+    } finally {
+      setRollingBack(null)
+    }
+  }
+
   const renderLogLines = (text: string) => {
     const lines = text.split(/\r?\n/)
     return lines.map((line, index) => {
@@ -585,7 +723,7 @@ export default function SitePage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#09090b] text-slate-200">
+      <div className="flex min-h-screen items-center justify-center bg-transparent text-slate-200">
         <div className="flex flex-col items-center gap-4">
           <RefreshCw className="h-8 w-8 animate-spin text-primary" />
           <p className="text-sm text-muted-foreground">Loading site details...</p>
@@ -639,7 +777,7 @@ export default function SitePage() {
       <div className="space-y-6">
         {/* Header / Metrics Row */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <Card className="bg-[#09090b] border-[#27272a] shadow-sm">
+          <Card className="glass-hover">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Status</CardTitle>
               <Activity className="h-4 w-4 text-muted-foreground" />
@@ -647,37 +785,37 @@ export default function SitePage() {
             <CardContent>
               <div className="flex items-center gap-2">
                 <div className={`h-2.5 w-2.5 rounded-full ${project?.is_active ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-red-500'}`} />
-                <div className="text-2xl font-bold text-[#fafafa]">{project?.is_active ? 'Online' : 'Stopped'}</div>
+                <div className="text-2xl font-bold text-foreground">{project?.is_active ? 'Online' : 'Stopped'}</div>
               </div>
               <p className="text-xs text-muted-foreground mt-1">PM2 ID: {project?.pm2_name}</p>
             </CardContent>
           </Card>
 
-          <Card className="bg-[#09090b] border-[#27272a] shadow-sm">
+          <Card className="glass-hover">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Git Info</CardTitle>
               <Terminal className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-[#fafafa] truncate">{project?.default_branch || 'main'}</div>
+              <div className="text-2xl font-bold text-foreground truncate">{project?.default_branch || 'main'}</div>
               <p className="text-xs text-muted-foreground mt-1 truncate">{project?.repo_url?.replace('https://github.com/', '') || 'No repo'}</p>
             </CardContent>
           </Card>
 
-          <Card className="bg-[#09090b] border-[#27272a] shadow-sm">
+          <Card className="glass-hover">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Network</CardTitle>
               <Globe className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-[#fafafa]">{project?.port || 'N/A'}</div>
+              <div className="text-2xl font-bold text-foreground">{project?.port || 'N/A'}</div>
               <a href={project?.url || '#'} target="_blank" rel="noreferrer" className="text-xs text-blue-400 hover:underline mt-1 block truncate">
                 {project?.url || 'No URL configured'}
               </a>
             </CardContent>
           </Card>
 
-          <Card className="bg-[#09090b] border-[#27272a] shadow-sm">
+          <Card className="glass-hover">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Environment</CardTitle>
               <Database className="h-4 w-4 text-muted-foreground" />
@@ -700,10 +838,18 @@ export default function SitePage() {
           </div>
         )}
 
-        <Tabs defaultValue="overview" className="space-y-4" onValueChange={(v) => { if (v === 'config') void loadWebhook() }}>
-          <TabsList className="bg-[#09090b] border border-[#27272a]">
+        <Tabs
+          defaultValue="overview"
+          className="space-y-4"
+          onValueChange={(v) => {
+            if (v === 'config') void loadWebhook()
+            if (v === 'console') void loadNpmScripts()
+          }}
+        >
+          <TabsList className="bg-transparent border border-white/[0.08]">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="deployments">Deployments</TabsTrigger>
+            <TabsTrigger value="console">Console</TabsTrigger>
             <TabsTrigger value="config">Configuration</TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
@@ -711,9 +857,9 @@ export default function SitePage() {
           <TabsContent value="overview" className="space-y-4">
             {/* Quick Actions */}
             <div className="flex gap-4">
-              <Card className="flex-1 bg-[#09090b] border-[#27272a] p-4 flex items-center justify-between">
+              <Card className="flex-1 p-4 flex items-center justify-between">
                 <div>
-                  <h3 className="font-semibold text-[#fafafa] mb-1">Service Control</h3>
+                  <h3 className="font-semibold text-foreground mb-1">Service Control</h3>
                   <p className="text-xs text-muted-foreground">Manage the underlying PM2 process.</p>
                 </div>
                 <div className="flex gap-2">
@@ -727,9 +873,9 @@ export default function SitePage() {
                   </Button>
                 </div>
               </Card>
-              <Card className="flex-1 bg-[#09090b] border-[#27272a] p-4 flex items-center justify-between">
+              <Card className="flex-1 p-4 flex items-center justify-between">
                 <div>
-                  <h3 className="font-semibold text-[#fafafa] mb-1">Webhook Trigger</h3>
+                  <h3 className="font-semibold text-foreground mb-1">Webhook Trigger</h3>
                   <p className="text-xs text-muted-foreground">Auto-deploy on git push events.</p>
                 </div>
                 <Button variant="secondary" size="sm" onClick={() => { setPanel('webhook'); loadWebhook(); }}>
@@ -739,8 +885,8 @@ export default function SitePage() {
             </div>
 
             {/* Live Console Preview */}
-            <Card className="bg-[#09090b] border-[#27272a] overflow-hidden">
-              <CardHeader className="flex flex-row items-center justify-between border-b border-[#27272a] py-3 bg-[#09090b]">
+            <Card className="overflow-hidden">
+              <CardHeader className="flex flex-row items-center justify-between border-b border-white/[0.06] py-3">
                 <CardTitle className="text-sm font-medium">Live Console</CardTitle>
                 <div className="flex gap-2">
                   <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setLogsType(logsType === 'out' ? 'err' : 'out')}>
@@ -751,45 +897,65 @@ export default function SitePage() {
                   </Button>
                 </div>
               </CardHeader>
-              <div className="bg-[#0c0c0e] p-4 font-mono text-xs h-[400px] overflow-y-auto">
+              <div className="bg-black/30 p-4 font-mono text-xs h-[400px] overflow-y-auto">
                 {logs ? renderLogLines(logs) : <div className="text-muted-foreground italic p-4 text-center">No active logs. Start the service or trigger a deployment.</div>}
               </div>
             </Card>
           </TabsContent>
 
           <TabsContent value="deployments" className="space-y-4">
-            <Card className="bg-[#09090b] border-[#27272a]">
+            <Card className="">
               <CardHeader>
                 <CardTitle>Deployment History</CardTitle>
                 <CardDescription>All past and current deployments for this environment.</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="rounded-md border border-[#27272a]">
-                  <div className="grid grid-cols-5 gap-4 p-3 text-xs font-medium text-muted-foreground border-b border-[#27272a] bg-[#0c0c0e]">
+                <div className="rounded-md border border-white/[0.08]">
+                  <div className="grid grid-cols-5 gap-4 p-3 text-xs font-medium text-muted-foreground border-b border-white/[0.08] bg-black/30">
                     <div>Status</div>
                     <div>Commit</div>
                     <div>Started</div>
                     <div>Duration</div>
                     <div className="text-right">Action</div>
                   </div>
-                  <div className="divide-y divide-[#27272a]">
+                  <div className="divide-y divide-white/[0.06]">
                     {deployments.length === 0 ? (
                       <div className="p-8 text-center text-sm text-muted-foreground">No deployments found.</div>
                     ) : (
                       deployments.map((d) => (
-                        <div key={d.id} className="grid grid-cols-5 gap-4 p-3 text-sm items-center hover:bg-[#27272a]/50 transition-colors cursor-pointer" onClick={() => handleSelectDeployment(d)}>
+                        <div key={d.id} className="grid grid-cols-5 gap-4 p-3 text-sm items-center hover:bg-white/[0.04] transition-colors cursor-pointer" onClick={() => handleSelectDeployment(d)}>
                           <div className="flex items-center gap-2">
                             <div className={`h-2 w-2 rounded-full ${d.status === 'success' ? 'bg-emerald-500' :
                               d.status === 'failed' ? 'bg-red-500' :
                                 d.status === 'running' ? 'bg-blue-500 animate-pulse' : 'bg-gray-500'
                               }`} />
-                            <span className="capitalize text-[#fafafa]">{d.status}</span>
+                            <span className="capitalize text-foreground">{d.status}</span>
                           </div>
                           <div className="font-mono text-xs text-muted-foreground">{d.commit_sha ? d.commit_sha.substring(0, 7) : '-'}</div>
                           <div className="text-muted-foreground">{new Date(d.started_at!).toLocaleString()}</div>
-                          <div className="text-muted-foreground">{d.finished_at ? 'Completed' : 'Running...'}</div>
-                          <div className="text-right">
-                            <ChevronLeft className="ml-auto h-4 w-4 text-muted-foreground" />
+                          <div className="text-muted-foreground">
+                            {d.finished_at && d.started_at ? formatDuration(d.started_at, d.finished_at) : 'Running...'}
+                          </div>
+                          <div className="flex items-center justify-end gap-2">
+                            {d.status === 'success' && d.commit_sha && !hasRunningDeploy && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); void handleRollback(d) }}
+                                disabled={rollingBack !== null}
+                                className="rounded border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-400 transition-colors hover:bg-amber-500/20 disabled:opacity-50"
+                              >
+                                {rollingBack === d.id ? 'Rolling back…' : 'Rollback'}
+                              </button>
+                            )}
+                            {d.status === 'running' && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); void handleCancelDeployment(d.id) }}
+                                disabled={cancellingDeploy === d.id}
+                                className="rounded border border-red-500/20 bg-red-500/10 px-2 py-1 text-[11px] font-medium text-red-400 transition-colors hover:bg-red-500/20 disabled:opacity-50"
+                              >
+                                {cancellingDeploy === d.id ? 'Cancelling…' : 'Cancel'}
+                              </button>
+                            )}
+                            <ChevronLeft className="h-4 w-4 text-muted-foreground" />
                           </div>
                         </div>
                       ))
@@ -800,12 +966,12 @@ export default function SitePage() {
                 {/* Selected Deployment Detail Overlay/Section could go here, or remain modal-like logic */}
                 {/* Sheet for Deployment Details */}
                 <Sheet open={!!selectedDeployment} onOpenChange={(open) => !open && setSelectedDeployment(null)}>
-                  <SheetContent side="right" className="w-[85vw] sm:w-[50vw] sm:max-w-none bg-[#09090b] border-l border-[#27272a] text-[#f0f0f0] p-0 flex flex-col shadow-2xl">
-                    <SheetHeader className="px-6 py-5 border-b border-[#27272a] bg-[#0c0c0e]">
+                  <SheetContent side="right" className="w-[85vw] sm:w-[50vw] sm:max-w-none bg-background/95 backdrop-blur-2xl border-l border-white/[0.08] text-foreground p-0 flex flex-col shadow-2xl">
+                    <SheetHeader className="px-6 py-5 border-b border-white/[0.08] bg-black/30">
                       <div className="flex items-center justify-between pr-8">
                         <div className="flex flex-col gap-1.5">
-                          <SheetTitle className="text-[#f0f0f0] text-lg font-bold tracking-tight">Deployment Details</SheetTitle>
-                          <SheetDescription className="text-[#9ea0a6] text-xs font-mono">ID: {selectedDeployment?.id}</SheetDescription>
+                          <SheetTitle className="text-foreground text-lg font-bold tracking-tight">Deployment Details</SheetTitle>
+                          <SheetDescription className="text-muted-foreground text-xs font-mono">ID: {selectedDeployment?.id}</SheetDescription>
                         </div>
                         <Badge
                           className="text-sm px-3 py-1"
@@ -822,39 +988,39 @@ export default function SitePage() {
                       </div>
                     </SheetHeader>
 
-                    <div className="flex-1 overflow-hidden flex flex-col p-6 gap-6 bg-[#09090b]">
-                      <div className="grid grid-cols-2 gap-4 text-xs surface-card p-4 rounded-lg border border-[#27272a]">
+                    <div className="flex-1 overflow-hidden flex flex-col p-6 gap-6 bg-transparent">
+                      <div className="grid grid-cols-2 gap-4 text-xs surface-card p-4 rounded-lg border border-white/[0.08]">
                         <div className="space-y-1">
-                          <span className="text-[#9ea0a6] font-medium uppercase tracking-wider text-[10px]">Commit</span>
-                          <div className="font-mono text-[#f0f0f0]">{selectedDeployment?.commit_sha || '-'}</div>
+                          <span className="text-muted-foreground font-medium uppercase tracking-wider text-[10px]">Commit</span>
+                          <div className="font-mono text-foreground">{selectedDeployment?.commit_sha || '-'}</div>
                         </div>
                         <div className="space-y-1">
-                          <span className="text-[#9ea0a6] font-medium uppercase tracking-wider text-[10px]">Branch</span>
-                          <div className="font-mono text-[#f0f0f0]">{selectedDeployment?.branch || 'main'}</div>
+                          <span className="text-muted-foreground font-medium uppercase tracking-wider text-[10px]">Branch</span>
+                          <div className="font-mono text-foreground">{selectedDeployment?.branch || 'main'}</div>
                         </div>
                         <div className="space-y-1">
-                          <span className="text-[#9ea0a6] font-medium uppercase tracking-wider text-[10px]">Started</span>
-                          <div className="text-[#f0f0f0]">{selectedDeployment?.started_at ? new Date(selectedDeployment.started_at).toLocaleString() : '-'}</div>
+                          <span className="text-muted-foreground font-medium uppercase tracking-wider text-[10px]">Started</span>
+                          <div className="text-foreground">{selectedDeployment?.started_at ? new Date(selectedDeployment.started_at).toLocaleString() : '-'}</div>
                         </div>
                         <div className="space-y-1">
-                          <span className="text-[#9ea0a6] font-medium uppercase tracking-wider text-[10px]">Finished</span>
-                          <div className="text-[#f0f0f0]">{selectedDeployment?.finished_at ? new Date(selectedDeployment?.finished_at).toLocaleString() : 'Running...'}</div>
+                          <span className="text-muted-foreground font-medium uppercase tracking-wider text-[10px]">Finished</span>
+                          <div className="text-foreground">{selectedDeployment?.finished_at ? new Date(selectedDeployment?.finished_at).toLocaleString() : 'Running...'}</div>
                         </div>
                       </div>
 
-                      <div className="flex-1 flex flex-col min-h-0 border border-[#27272a] rounded-lg bg-[#0c0c0e] shadow-inner overflow-hidden">
-                        <div className="flex items-center justify-between px-4 py-2 border-b border-[#27272a] bg-[#121216]">
-                          <span className="text-xs font-semibold text-[#9ea0a6]">Build Logs</span>
+                      <div className="flex-1 flex flex-col min-h-0 border border-white/[0.08] rounded-lg bg-black/30 shadow-inner overflow-hidden">
+                        <div className="flex items-center justify-between px-4 py-2 border-b border-white/[0.08] bg-white/[0.03]">
+                          <span className="text-xs font-semibold text-muted-foreground">Build Logs</span>
                           {selectedDeployment?.status === 'running' && <RefreshCw className="h-3 w-3 animate-spin text-blue-400" />}
                         </div>
                         <div className="flex-1 overflow-auto p-4 font-mono text-xs leading-relaxed" ref={deployLogRef}>
                           {loadingDeploymentLog ? (
-                            <div className="flex h-full flex-col items-center justify-center gap-2 text-[#9ea0a6]">
+                            <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
                               <RefreshCw className="h-5 w-5 animate-spin opacity-50" />
                               <span>Loading logs...</span>
                             </div>
                           ) : (
-                            deploymentLog ? renderLogLines(deploymentLog) : <div className="flex h-full items-center justify-center text-[#9ea0a6] italic">No logs captured.</div>
+                            deploymentLog ? renderLogLines(deploymentLog) : <div className="flex h-full items-center justify-center text-muted-foreground italic">No logs captured.</div>
                           )}
                         </div>
                       </div>
@@ -865,31 +1031,133 @@ export default function SitePage() {
             </Card>
           </TabsContent>
 
+          <TabsContent value="console" className="space-y-4">
+            <Card className="">
+              <CardHeader>
+                <CardTitle>NPM Console</CardTitle>
+                <CardDescription>
+                  Run npm commands directly in <code className="bg-white/[0.08] px-1 rounded text-xs">{project?.root_path}</code>.
+                  Only npm / npx / pnpm / yarn commands are allowed.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Quick commands */}
+                <div className="flex flex-wrap gap-2">
+                  {['npm install', 'npm ci', 'npm run build', 'npm outdated', 'npm audit', 'npm dedupe'].map((cmd) => (
+                    <Button
+                      key={cmd}
+                      variant="outline"
+                      size="sm"
+                      className="font-mono text-xs"
+                      disabled={npmRunning}
+                      onClick={() => { setNpmCommand(cmd); void runNpmCommand(cmd) }}
+                    >
+                      {cmd}
+                    </Button>
+                  ))}
+                </div>
+
+                {/* package.json scripts */}
+                {Object.keys(npmScripts).length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground">package.json scripts</p>
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(npmScripts).map(([name, script]) => (
+                        <Button
+                          key={name}
+                          variant="secondary"
+                          size="sm"
+                          className="font-mono text-xs"
+                          disabled={npmRunning}
+                          title={script}
+                          onClick={() => { setNpmCommand(`npm run ${name}`); void runNpmCommand(`npm run ${name}`) }}
+                        >
+                          <Play className="mr-1.5 h-3 w-3" />
+                          {name}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Custom command input */}
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 font-mono text-xs text-muted-foreground">$</span>
+                    <input
+                      className="flex h-9 w-full rounded-md border border-white/[0.08] bg-black/30 pl-7 pr-3 py-1 font-mono text-sm text-foreground shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                      value={npmCommand}
+                      onChange={(e) => setNpmCommand(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && !npmRunning) void runNpmCommand(npmCommand) }}
+                      placeholder="npm run build"
+                      disabled={npmRunning}
+                      spellCheck={false}
+                    />
+                  </div>
+                  {npmRunning ? (
+                    <Button variant="destructive" size="sm" className="h-9" onClick={stopNpmCommand}>
+                      <Square className="mr-2 h-3.5 w-3.5" />
+                      Stop
+                    </Button>
+                  ) : (
+                    <Button size="sm" className="h-9" onClick={() => void runNpmCommand(npmCommand)} disabled={!npmCommand.trim()}>
+                      <Play className="mr-2 h-3.5 w-3.5" />
+                      Run
+                    </Button>
+                  )}
+                </div>
+
+                {/* Output terminal */}
+                <div className="rounded-md border border-white/[0.08] bg-black/30 overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-2 border-b border-white/[0.08] bg-white/[0.03]">
+                    <span className="text-xs font-semibold text-muted-foreground">Output</span>
+                    <div className="flex items-center gap-2">
+                      {npmRunning && <RefreshCw className="h-3 w-3 animate-spin text-blue-400" />}
+                      {npmOutput && !npmRunning && (
+                        <button
+                          onClick={() => setNpmOutput('')}
+                          className="text-[11px] text-muted-foreground hover:text-white transition-colors"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div ref={npmOutputRef} className="p-4 font-mono text-xs h-[400px] overflow-y-auto whitespace-pre-wrap break-words">
+                    {npmOutput
+                      ? renderLogLines(npmOutput)
+                      : <div className="text-muted-foreground italic p-4 text-center">Run a command to see output here.</div>}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
           <TabsContent value="config" className="space-y-4">
             <div className="grid gap-4 md:grid-cols-2">
               {/* Env Config */}
-              <Card className="bg-[#09090b] border-[#27272a]">
+              <Card className="">
                 <CardHeader>
                   <CardTitle className="text-base">Environment Variables</CardTitle>
                   <CardDescription>Manage your .env files.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="flex gap-2 border-b border-[#27272a] pb-2">
+                  <div className="flex gap-2 border-b border-white/[0.08] pb-2">
                     {['.env', '.env.local'].map((file) => (
                       <button
                         key={file}
                         onClick={() => setEnvFile(file)}
-                        className={`text-xs px-2 py-1 rounded-md transition-colors ${envFile === file ? 'bg-[#27272a] text-white' : 'text-muted-foreground hover:text-white'}`}
+                        className={`text-xs px-2 py-1 rounded-md transition-colors ${envFile === file ? 'bg-white/[0.08] text-white' : 'text-muted-foreground hover:text-white'}`}
                       >
                         {file}
                       </button>
                     ))}
                   </div>
-                  <textarea
-                    className="w-full h-64 bg-[#0c0c0e] border border-[#27272a] rounded-md p-3 font-mono text-xs text-[#fafafa] resize-none focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  <EnvEditor
+                    className="h-64"
                     value={envContent}
-                    onChange={(e) => setEnvContent(e.target.value)}
-                    spellCheck={false}
+                    onChange={setEnvContent}
+                    placeholder={`# ${envFile}\nKEY=value`}
                   />
                   <div className="flex justify-end">
                     <Button size="sm" onClick={handleSaveEnv} disabled={savingEnv}>
@@ -901,7 +1169,7 @@ export default function SitePage() {
 
               {/* Webhook & Build Settings */}
               <div className="space-y-4">
-                <Card className="bg-[#09090b] border-[#27272a]">
+                <Card className="">
                   <CardHeader>
                     <CardTitle className="text-base">Build Settings</CardTitle>
                     <CardDescription>Commands used for deployment.</CardDescription>
@@ -909,26 +1177,38 @@ export default function SitePage() {
                   <CardContent className="space-y-3">
                     <div className="grid gap-1">
                       <label className="text-xs font-medium text-muted-foreground">Project Type</label>
-                      <div className="bg-[#27272a]/50 p-2 rounded text-xs font-mono">
+                      <div className="bg-white/[0.06] p-2 rounded text-xs font-mono">
                         {projectTypeDefaults[project?.project_type || 'next'].label}
                       </div>
                     </div>
                     <div className="grid gap-1">
                       <label className="text-xs font-medium text-muted-foreground">Install Command</label>
-                      <div className="bg-[#27272a]/50 p-2 rounded text-xs font-mono">{project?.install_cmd || 'npm install'}</div>
+                      <div className="bg-white/[0.06] p-2 rounded text-xs font-mono">{project?.install_cmd || 'npm install'}</div>
                     </div>
                     <div className="grid gap-1">
                       <label className="text-xs font-medium text-muted-foreground">Build Command</label>
-                      <div className="bg-[#27272a]/50 p-2 rounded text-xs font-mono">{project?.build_cmd || 'npm run build'}</div>
+                      <div className="bg-white/[0.06] p-2 rounded text-xs font-mono">{project?.build_cmd || 'npm run build'}</div>
                     </div>
                     <div className="grid gap-1">
                       <label className="text-xs font-medium text-muted-foreground">Start Command</label>
-                      <div className="bg-[#27272a]/50 p-2 rounded text-xs font-mono">{project?.start_cmd || 'npm start'}</div>
+                      <div className="bg-white/[0.06] p-2 rounded text-xs font-mono">{project?.start_cmd || 'npm start'}</div>
                     </div>
+                    {project?.pre_deploy_cmd && (
+                      <div className="grid gap-1">
+                        <label className="text-xs font-medium text-muted-foreground">Pre-deploy Script</label>
+                        <div className="bg-white/[0.06] p-2 rounded text-xs font-mono">{project.pre_deploy_cmd}</div>
+                      </div>
+                    )}
+                    {project?.post_deploy_cmd && (
+                      <div className="grid gap-1">
+                        <label className="text-xs font-medium text-muted-foreground">Post-deploy Script</label>
+                        <div className="bg-white/[0.06] p-2 rounded text-xs font-mono">{project.post_deploy_cmd}</div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
 
-                <Card className="bg-[#09090b] border-[#27272a]">
+                <Card className="">
                   <CardHeader>
                     <CardTitle className="text-base">Webhook Integration</CardTitle>
                     <CardDescription>
@@ -963,7 +1243,7 @@ export default function SitePage() {
                     ) : (
                       <div className="space-y-4">
                         {/* GitHub connection status */}
-                        <div className={`flex items-center justify-between rounded-lg border p-3 ${ghHookInstalled ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-[#27272a] bg-[#111113]'}`}>
+                        <div className={`flex items-center justify-between rounded-lg border p-3 ${ghHookInstalled ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-white/[0.08] bg-white/[0.02]'}`}>
                           <div className="flex items-center gap-2">
                             <div className={`h-2 w-2 rounded-full ${ghHookInstalled ? 'bg-emerald-500' : 'bg-zinc-600'}`} />
                             <span className="text-xs font-medium">
@@ -996,7 +1276,7 @@ export default function SitePage() {
 
                         {ghHookInstalled && (
                           <p className="text-[11px] text-muted-foreground/70">
-                            One webhook covers all branches — pushes to <code className="bg-[#27272a] px-1 rounded">main</code> deploy production, pushes to <code className="bg-[#27272a] px-1 rounded">dev</code> deploy staging.
+                            One webhook covers all branches — pushes to <code className="bg-white/[0.08] px-1 rounded">main</code> deploy production, pushes to <code className="bg-white/[0.08] px-1 rounded">dev</code> deploy staging.
                           </p>
                         )}
 
@@ -1010,7 +1290,7 @@ export default function SitePage() {
                             <div className="grid gap-1">
                               <label className="text-xs font-medium text-muted-foreground">Payload URL</label>
                               <div className="flex gap-2">
-                                <code className="flex-1 bg-[#27272a]/50 p-2 rounded text-xs truncate">https://deploy.smartcloudgh.com/api/webhooks/github</code>
+                                <code className="flex-1 bg-white/[0.06] p-2 rounded text-xs truncate">https://deploy.smartcloudgh.com/api/webhooks/github</code>
                                 <Button size="icon" variant="outline" className="h-8 w-8 shrink-0" onClick={() => handleCopyWebhook('url')}>
                                   {webhookCopied === 'url' ? <Terminal className="h-3 w-3" /> : <Square className="h-3 w-3" />}
                                 </Button>
@@ -1019,7 +1299,7 @@ export default function SitePage() {
                             <div className="grid gap-1">
                               <label className="text-xs font-medium text-muted-foreground">Secret</label>
                               <div className="flex gap-2">
-                                <code className="flex-1 bg-[#27272a]/50 p-2 rounded text-xs truncate">{webhookSecret || '••••••••••••••••'}</code>
+                                <code className="flex-1 bg-white/[0.06] p-2 rounded text-xs truncate">{webhookSecret || '••••••••••••••••'}</code>
                                 <Button size="icon" variant="outline" className="h-8 w-8 shrink-0" onClick={() => handleCopyWebhook('secret')}>
                                   {webhookCopied === 'secret' ? <Terminal className="h-3 w-3" /> : <Square className="h-3 w-3" />}
                                 </Button>
@@ -1036,7 +1316,7 @@ export default function SitePage() {
           </TabsContent>
 
           <TabsContent value="settings" className="space-y-4">
-            <Card className="bg-[#09090b] border-[#27272a]">
+            <Card className="">
               <CardHeader>
                 <CardTitle>Project Settings</CardTitle>
                 <CardDescription>General configuration for this site.</CardDescription>
@@ -1105,7 +1385,7 @@ export default function SitePage() {
                     </div>
                   </div>
 
-                  <div className="h-px bg-[#27272a]" />
+                  <div className="h-px bg-white/[0.08]" />
 
                   {/* Git & Paths */}
                   <div className="grid gap-4 md:grid-cols-2">
@@ -1138,7 +1418,7 @@ export default function SitePage() {
                     </div>
                   </div>
 
-                  <div className="h-px bg-[#27272a]" />
+                  <div className="h-px bg-white/[0.08]" />
 
                   {/* Build Commands */}
                   <div className="grid gap-4">
@@ -1168,6 +1448,26 @@ export default function SitePage() {
                         onChange={(e) => setProjectForm({ ...projectForm, startCmd: e.target.value })}
                         placeholder="npm start"
                       />
+                    </div>
+                    <div className="grid gap-2">
+                      <label className="text-sm font-medium">Pre-deploy Script <span className="text-xs font-normal text-muted-foreground">(optional — runs after install, before build)</span></label>
+                      <input
+                        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring font-mono"
+                        value={projectForm.preDeployCmd}
+                        onChange={(e) => setProjectForm({ ...projectForm, preDeployCmd: e.target.value })}
+                        placeholder="npx prisma migrate deploy"
+                      />
+                      <p className="text-xs text-muted-foreground">Ideal for database migrations or code generation. A non-zero exit code aborts the deployment.</p>
+                    </div>
+                    <div className="grid gap-2">
+                      <label className="text-sm font-medium">Post-deploy Script <span className="text-xs font-normal text-muted-foreground">(optional — runs after the app is live)</span></label>
+                      <input
+                        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring font-mono"
+                        value={projectForm.postDeployCmd}
+                        onChange={(e) => setProjectForm({ ...projectForm, postDeployCmd: e.target.value })}
+                        placeholder="npm run warmup"
+                      />
+                      <p className="text-xs text-muted-foreground">Runs after the health check passes — cache warmup, notifications, cleanup. Failure does not roll back the deployment.</p>
                     </div>
                   </div>
 

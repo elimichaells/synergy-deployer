@@ -30,7 +30,7 @@ export async function POST(
       id: string
       name: string
     }>(
-      'select id, name, repo_url, default_branch, project_type, root_path, install_cmd, build_cmd, start_cmd, pm2_name, port from projects where id = $1',
+      'select id, name, repo_url, default_branch, project_type, root_path, install_cmd, build_cmd, start_cmd, pre_deploy_cmd, post_deploy_cmd, pm2_name, port from projects where id = $1',
       [id]
     )
 

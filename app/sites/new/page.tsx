@@ -186,8 +186,8 @@ export default function NewSitePage() {
       <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
         <Card className="surface-card">
           <CardHeader>
-            <CardTitle className="text-[#f0f0f0]">Site Registration</CardTitle>
-            <CardDescription className="text-[#b8bac0]">
+            <CardTitle className="text-foreground">Site Registration</CardTitle>
+            <CardDescription className="text-muted-foreground">
               Select a GitHub repository. The manager will assign paths, PM2 IDs, and ports automatically.
             </CardDescription>
           </CardHeader>
@@ -196,47 +196,47 @@ export default function NewSitePage() {
               <div className="md:col-span-2 space-y-3">
                 <div className="flex items-center justify-between gap-3">
                   <input
-                    className="w-full rounded-lg border border-[#2a2a31] bg-[#0f0f14] px-3 py-2 text-sm text-[#ededed]"
+                    className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
                     placeholder="Search GitHub repositories"
                     value={repoSearch}
                     onChange={(e) => setRepoSearch(e.target.value)}
                   />
-                  <Link href="/settings" className="text-xs text-[#9ea0a6] hover:text-white whitespace-nowrap">
+                  <Link href="/settings" className="text-xs text-muted-foreground hover:text-white whitespace-nowrap">
                     GitHub settings
                   </Link>
                 </div>
-                <div className="max-h-72 overflow-auto rounded-lg border border-[#27272a] bg-[#0f0f14]">
+                <div className="max-h-72 overflow-auto rounded-lg border border-white/[0.08] bg-black/30">
                   {reposLoading ? (
-                    <div className="px-4 py-6 text-sm text-[#9ea0a6]">Loading repositories...</div>
+                    <div className="px-4 py-6 text-sm text-muted-foreground">Loading repositories...</div>
                   ) : !githubConnected ? (
-                    <div className="px-4 py-6 text-sm text-[#b8bac0]">
+                    <div className="px-4 py-6 text-sm text-muted-foreground">
                       GitHub is not connected. Connect it in Settings to select repositories here.
                     </div>
                   ) : visibleRepos.length === 0 ? (
-                    <div className="px-4 py-6 text-sm text-[#9ea0a6]">No repositories found.</div>
+                    <div className="px-4 py-6 text-sm text-muted-foreground">No repositories found.</div>
                   ) : visibleRepos.map((repo) => (
                     <button
                       type="button"
                       key={repo.id}
                       onClick={() => handleSelectRepo(repo)}
                       disabled={repo.registered}
-                      className={`flex w-full items-center justify-between gap-3 border-b border-[#27272a] px-4 py-3 text-left last:border-b-0 transition-colors ${
-                        selectedRepo?.id === repo.id ? 'bg-blue-500/10' : 'hover:bg-[#18181d]'
+                      className={`flex w-full items-center justify-between gap-3 border-b border-white/[0.08] px-4 py-3 text-left last:border-b-0 transition-colors ${
+                        selectedRepo?.id === repo.id ? 'bg-blue-500/10' : 'hover:bg-white/[0.05]'
                       } ${repo.registered ? 'opacity-50' : ''}`}
                     >
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-[#ededed]">{repo.fullName}</p>
-                        <p className="text-xs text-[#9ea0a6]">
+                        <p className="truncate text-sm font-medium text-foreground">{repo.fullName}</p>
+                        <p className="text-xs text-muted-foreground">
                           {repo.private ? 'Private' : 'Public'} · {repo.defaultBranch}
                         </p>
                       </div>
-                      <span className="text-xs text-[#9ea0a6]">{repo.registered ? 'Registered' : 'Select'}</span>
+                      <span className="text-xs text-muted-foreground">{repo.registered ? 'Registered' : 'Select'}</span>
                     </button>
                   ))}
                 </div>
               </div>
               <select
-                className="rounded-lg border border-[#2a2a31] bg-[#0f0f14] px-3 py-2 text-sm text-[#ededed]"
+                className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
                 value={form.projectType}
                 onChange={(e) => {
                   const projectType = e.target.value as ProjectType
@@ -255,19 +255,19 @@ export default function NewSitePage() {
                 ))}
               </select>
               <input
-                className="rounded-lg border border-[#2a2a31] bg-[#0f0f14] px-3 py-2 text-sm text-[#ededed]"
+                className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
                 placeholder="Site name"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
               />
               <input
-                className="rounded-lg border border-[#2a2a31] bg-[#0f0f14] px-3 py-2 text-sm text-[#ededed]"
+                className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
                 placeholder="Default branch"
                 value={form.defaultBranch}
                 onChange={(e) => setForm({ ...form, defaultBranch: e.target.value })}
               />
               <input
-                className="rounded-lg border border-[#2a2a31] bg-[#0f0f14] px-3 py-2 text-sm text-[#ededed]"
+                className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
                 placeholder="Public URL (optional)"
                 value={form.url}
                 onChange={(e) => setForm({ ...form, url: e.target.value })}
@@ -275,32 +275,32 @@ export default function NewSitePage() {
               <button
                 type="button"
                 onClick={() => setShowAdvanced(!showAdvanced)}
-                className="md:col-span-2 text-left text-xs text-[#9ea0a6] hover:text-white"
+                className="md:col-span-2 text-left text-xs text-muted-foreground hover:text-white"
               >
                 {showAdvanced ? 'Hide advanced overrides' : 'Show advanced overrides'}
               </button>
               {showAdvanced && (
                 <>
                   <input
-                    className="rounded-lg border border-[#2a2a31] bg-[#0f0f14] px-3 py-2 text-sm text-[#ededed]"
+                    className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
                     placeholder="GitHub repo URL override"
                     value={form.repoUrl}
                     onChange={(e) => setForm({ ...form, repoUrl: e.target.value })}
                   />
                   <input
-                    className="rounded-lg border border-[#2a2a31] bg-[#0f0f14] px-3 py-2 text-sm text-[#ededed]"
+                    className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
                     placeholder="PM2 identifier override"
                     value={form.pm2Name}
                     onChange={(e) => setForm({ ...form, pm2Name: e.target.value })}
                   />
                   <input
-                    className="rounded-lg border border-[#2a2a31] bg-[#0f0f14] px-3 py-2 text-sm text-[#ededed]"
+                    className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
                     placeholder="Root path override"
                     value={form.rootPath}
                     onChange={(e) => setForm({ ...form, rootPath: e.target.value })}
                   />
                   <input
-                    className="rounded-lg border border-[#2a2a31] bg-[#0f0f14] px-3 py-2 text-sm text-[#ededed]"
+                    className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
                     placeholder="Port override"
                     value={form.port}
                     onChange={(e) => setForm({ ...form, port: e.target.value })}
@@ -308,31 +308,31 @@ export default function NewSitePage() {
                 </>
               )}
               <input
-                className="rounded-lg border border-[#2a2a31] bg-[#0f0f14] px-3 py-2 text-sm text-[#ededed]"
+                className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
                 placeholder="Install command"
                 value={form.installCmd}
                 onChange={(e) => setForm({ ...form, installCmd: e.target.value })}
               />
               <input
-                className="rounded-lg border border-[#2a2a31] bg-[#0f0f14] px-3 py-2 text-sm text-[#ededed]"
+                className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
                 placeholder="Build command"
                 value={form.buildCmd}
                 onChange={(e) => setForm({ ...form, buildCmd: e.target.value })}
               />
               <input
-                className="rounded-lg border border-[#2a2a31] bg-[#0f0f14] px-3 py-2 text-sm text-[#ededed]"
+                className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
                 placeholder="Start command"
                 value={form.startCmd}
                 onChange={(e) => setForm({ ...form, startCmd: e.target.value })}
               />
               <div className="md:col-span-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2.5">
                 <p className="text-xs font-medium text-amber-400">Automatic runtime setup</p>
-                <p className="text-[11px] text-[#9ea0a6] mt-0.5">
+                <p className="text-[11px] text-muted-foreground mt-0.5">
                   Production and staging folders, PM2 process names, and an available production/staging port pair will be assigned in the background.
                 </p>
               </div>
               <div className="md:col-span-2 flex items-center justify-between">
-                <p className="text-xs text-[#9ea0a6]">
+                <p className="text-xs text-muted-foreground">
                   Only admins/operators can add projects.
                 </p>
                 <Button type="submit" disabled={!canWrite || creating}>
@@ -345,12 +345,12 @@ export default function NewSitePage() {
 
         <Card className="surface-card">
           <CardHeader>
-            <CardTitle className="text-[#f0f0f0]">Sync From Production</CardTitle>
-            <CardDescription className="text-[#b8bac0]">
+            <CardTitle className="text-foreground">Sync From Production</CardTitle>
+            <CardDescription className="text-muted-foreground">
               Auto-register any folders under the production directory.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3 text-sm text-[#b8bac0]">
+          <CardContent className="space-y-3 text-sm text-muted-foreground">
             <p>
               This will scan the production folder and register any missing projects with their
               staging counterparts auto-created. You can update GitHub repo URLs later.

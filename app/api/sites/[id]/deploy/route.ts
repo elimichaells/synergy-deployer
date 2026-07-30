@@ -11,7 +11,7 @@ export async function POST(_: Request, context: { params: { id: string } }) {
     requireRole(user, ['admin', 'operator'])
 
     const { rows: projectRows } = await query<DeployProject>(
-      `SELECT id, name, repo_url, default_branch, project_type, root_path, install_cmd, build_cmd, start_cmd, pm2_name, port
+      `SELECT id, name, repo_url, default_branch, project_type, root_path, install_cmd, build_cmd, start_cmd, pre_deploy_cmd, post_deploy_cmd, pm2_name, port
        FROM projects WHERE id = $1`,
       [context.params.id]
     )

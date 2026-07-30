@@ -30,6 +30,11 @@ interface Settings {
   LOGS_PATH: string
   CADDY_PATH: string
   GITHUB_TOKEN: string
+  NOTIFY_WEBHOOK_URL: string
+  BACKUP_DIR: string
+  BACKUP_ENABLED: string
+  BACKUP_RETENTION_DAYS: string
+  PG_BIN_PATH: string
 }
 
 const EMPTY_SETTINGS: Settings = {
@@ -38,6 +43,11 @@ const EMPTY_SETTINGS: Settings = {
   LOGS_PATH: '',
   CADDY_PATH: '',
   GITHUB_TOKEN: '',
+  NOTIFY_WEBHOOK_URL: '',
+  BACKUP_DIR: '',
+  BACKUP_ENABLED: 'false',
+  BACKUP_RETENTION_DAYS: '14',
+  PG_BIN_PATH: '',
 }
 
 function GitHubConnection({ isAdmin }: { isAdmin: boolean }) {
@@ -154,8 +164,8 @@ function GitHubConnection({ isAdmin }: { isAdmin: boolean }) {
 
   if (!isAdmin) {
     return (
-      <div className="rounded-lg border border-[#2a2a31] bg-[#0f0f14] p-4">
-        <p className="text-sm text-[#b8bac0]">GitHub: {hasToken ? 'Connected' : 'Not connected'}</p>
+      <div className="rounded-lg border border-white/10 bg-black/30 p-4">
+        <p className="text-sm text-muted-foreground">GitHub: {hasToken ? 'Connected' : 'Not connected'}</p>
       </div>
     )
   }
@@ -196,7 +206,7 @@ function GitHubConnection({ isAdmin }: { isAdmin: boolean }) {
         <div className="text-center space-y-4">
           <Github className="h-8 w-8 text-blue-400 mx-auto" />
           <div>
-            <p className="text-sm font-medium text-[#ededed] mb-1">Enter this code on GitHub</p>
+            <p className="text-sm font-medium text-foreground mb-1">Enter this code on GitHub</p>
             <div className="flex items-center justify-center gap-2">
               <code className="text-2xl font-bold tracking-[0.3em] text-blue-300 bg-blue-500/10 px-4 py-2 rounded-lg border border-blue-500/20">
                 {userCode}
@@ -225,7 +235,7 @@ function GitHubConnection({ isAdmin }: { isAdmin: boolean }) {
 
           <button
             onClick={() => setStatus('idle')}
-            className="text-xs text-[#9ea0a6] hover:text-[#ededed] transition-colors"
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             Cancel
           </button>
@@ -249,11 +259,11 @@ function GitHubConnection({ isAdmin }: { isAdmin: boolean }) {
 
   // Idle / Requesting state
   return (
-    <div className="rounded-lg border border-[#2a2a31] bg-[#0f0f14] p-4">
+    <div className="rounded-lg border border-white/10 bg-black/30 p-4">
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-sm text-[#ededed] mb-0.5">GitHub</p>
-          <p className="text-[11px] text-[#9ea0a6]">Connect your GitHub account for automated deployments.</p>
+          <p className="text-sm text-foreground mb-0.5">GitHub</p>
+          <p className="text-[11px] text-muted-foreground">Connect your GitHub account for automated deployments.</p>
         </div>
         <Button
           onClick={startFlow}
@@ -282,6 +292,22 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [testingNotify, setTestingNotify] = useState(false)
+  const [notifyTestResult, setNotifyTestResult] = useState<'ok' | 'fail' | null>(null)
+
+  const handleTestNotification = async () => {
+    setTestingNotify(true)
+    setNotifyTestResult(null)
+    try {
+      const res = await fetch('/api/settings/test-notification', { method: 'POST' })
+      setNotifyTestResult(res.ok ? 'ok' : 'fail')
+    } catch {
+      setNotifyTestResult('fail')
+    } finally {
+      setTestingNotify(false)
+      setTimeout(() => setNotifyTestResult(null), 4000)
+    }
+  }
 
   useEffect(() => {
     const load = async () => {
@@ -339,7 +365,7 @@ export default function SettingsPage() {
   }
 
   const inputClass =
-    'w-full rounded-lg border border-[#2a2a31] bg-[#0f0f14] px-3 py-2 text-sm text-[#ededed] outline-none focus:border-[#4a4a55] disabled:opacity-50 disabled:cursor-not-allowed'
+    'w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/60 disabled:opacity-50 disabled:cursor-not-allowed'
 
   return (
     <AppShell
@@ -365,8 +391,8 @@ export default function SettingsPage() {
         {/* System Settings */}
         <Card className="surface-card">
           <CardHeader>
-            <CardTitle className="text-[#f0f0f0]">System Settings</CardTitle>
-            <CardDescription className="text-[#b8bac0]">
+            <CardTitle className="text-foreground">System Settings</CardTitle>
+            <CardDescription className="text-muted-foreground">
               Server paths and integration tokens.{' '}
               {!isAdmin && <span className="text-amber-400/80">View only — admin access required to edit.</span>}
             </CardDescription>
@@ -374,10 +400,10 @@ export default function SettingsPage() {
           <CardContent className="space-y-5">
             {/* Paths Section */}
             <div>
-              <h4 className="mb-3 text-xs font-medium uppercase tracking-wider text-[#9ea0a6]">Paths</h4>
+              <h4 className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">Paths</h4>
               <div className="space-y-3">
                 <div>
-                  <label className="mb-1 block text-xs text-[#b8bac0]">Production Path</label>
+                  <label className="mb-1 block text-xs text-muted-foreground">Production Path</label>
                   <input
                     type="text"
                     className={inputClass}
@@ -387,7 +413,7 @@ export default function SettingsPage() {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-[#b8bac0]">Staging Path</label>
+                  <label className="mb-1 block text-xs text-muted-foreground">Staging Path</label>
                   <input
                     type="text"
                     className={inputClass}
@@ -397,7 +423,7 @@ export default function SettingsPage() {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-[#b8bac0]">Logs Path</label>
+                  <label className="mb-1 block text-xs text-muted-foreground">Logs Path</label>
                   <input
                     type="text"
                     className={inputClass}
@@ -407,7 +433,7 @@ export default function SettingsPage() {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-[#b8bac0]">Caddy Path</label>
+                  <label className="mb-1 block text-xs text-muted-foreground">Caddy Path</label>
                   <input
                     type="text"
                     className={inputClass}
@@ -421,8 +447,92 @@ export default function SettingsPage() {
 
             {/* Integrations Section */}
             <div>
-              <h4 className="mb-3 text-xs font-medium uppercase tracking-wider text-[#9ea0a6]">Integrations</h4>
+              <h4 className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">Integrations</h4>
               <GitHubConnection isAdmin={isAdmin} />
+            </div>
+
+            {/* Notifications Section */}
+            <div>
+              <h4 className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">Notifications</h4>
+              <div className="space-y-3">
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">
+                    Webhook URL <span className="opacity-60">(Slack, Discord, or any JSON endpoint — deploy results are posted here)</span>
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      className={inputClass}
+                      placeholder="https://discord.com/api/webhooks/… or https://hooks.slack.com/…"
+                      value={form.NOTIFY_WEBHOOK_URL}
+                      onChange={(e) => setForm({ ...form, NOTIFY_WEBHOOK_URL: e.target.value })}
+                      disabled={!isAdmin}
+                    />
+                    {isAdmin && (
+                      <Button
+                        variant="outline"
+                        onClick={handleTestNotification}
+                        disabled={testingNotify || !settings.NOTIFY_WEBHOOK_URL || hasChanges}
+                        title={hasChanges ? 'Save settings first, then test' : 'Send a test notification'}
+                        className="shrink-0"
+                      >
+                        {testingNotify ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Test'}
+                      </Button>
+                    )}
+                  </div>
+                  {notifyTestResult === 'ok' && <p className="mt-1 text-xs text-emerald-400">Test notification sent — check the channel.</p>}
+                  {notifyTestResult === 'fail' && <p className="mt-1 text-xs text-red-400">Failed to send. Verify the URL is saved and reachable.</p>}
+                </div>
+              </div>
+            </div>
+
+            {/* Backups Section */}
+            <div>
+              <h4 className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">Postgres Backups</h4>
+              <div className="space-y-3">
+                <label className="flex items-center gap-2 text-sm text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={form.BACKUP_ENABLED === 'true'}
+                    onChange={(e) => setForm({ ...form, BACKUP_ENABLED: e.target.checked ? 'true' : 'false' })}
+                    disabled={!isAdmin}
+                    className="accent-sky-500"
+                  />
+                  Nightly automatic backups of all databases (runs at ~3:00 AM)
+                </label>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Backup Directory</label>
+                    <input
+                      type="text"
+                      className={inputClass}
+                      value={form.BACKUP_DIR}
+                      onChange={(e) => setForm({ ...form, BACKUP_DIR: e.target.value })}
+                      disabled={!isAdmin}
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-muted-foreground">Retention (days)</label>
+                    <input
+                      type="number"
+                      className={inputClass}
+                      value={form.BACKUP_RETENTION_DAYS}
+                      onChange={(e) => setForm({ ...form, BACKUP_RETENTION_DAYS: e.target.value })}
+                      disabled={!isAdmin}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">PostgreSQL bin path (pg_dump / pg_restore)</label>
+                  <input
+                    type="text"
+                    className={inputClass}
+                    value={form.PG_BIN_PATH}
+                    onChange={(e) => setForm({ ...form, PG_BIN_PATH: e.target.value })}
+                    disabled={!isAdmin}
+                  />
+                </div>
+              </div>
             </div>
 
             {/* Save Button */}
@@ -448,12 +558,12 @@ export default function SettingsPage() {
         <div className="space-y-6">
           <Card className="surface-card">
             <CardHeader>
-              <CardTitle className="text-[#f0f0f0]">Account</CardTitle>
-              <CardDescription className="text-[#b8bac0]">
+              <CardTitle className="text-foreground">Account</CardTitle>
+              <CardDescription className="text-muted-foreground">
                 Signed-in user details.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-1 text-sm text-[#ededed]">
+            <CardContent className="space-y-1 text-sm text-foreground">
               <p>Name: {user?.name}</p>
               <p>Email: {user?.email}</p>
               <p>Role: {user?.role}</p>
@@ -462,17 +572,17 @@ export default function SettingsPage() {
 
           <Card className="surface-card">
             <CardHeader>
-              <CardTitle className="text-[#f0f0f0]">Database</CardTitle>
-              <CardDescription className="text-[#b8bac0]">
+              <CardTitle className="text-foreground">Database</CardTitle>
+              <CardDescription className="text-muted-foreground">
                 Connection configured via environment.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-1 text-xs text-[#b8bac0]">
+            <CardContent className="space-y-1 text-xs text-muted-foreground">
               <p>These settings remain in .env.local:</p>
-              <p className="font-mono text-[#9ea0a6]">DATABASE_HOST, DATABASE_PORT, DATABASE_NAME</p>
-              <p className="font-mono text-[#9ea0a6]">DATABASE_USER, DATABASE_PASSWORD, JWT_SECRET</p>
+              <p className="font-mono text-muted-foreground">DATABASE_HOST, DATABASE_PORT, DATABASE_NAME</p>
+              <p className="font-mono text-muted-foreground">DATABASE_USER, DATABASE_PASSWORD, JWT_SECRET</p>
               <div className="pt-2">
-                <Link href="/services" className="text-[#d6d7db] underline">
+                <Link href="/services" className="text-foreground underline">
                   Manage services and Caddy
                 </Link>
               </div>
@@ -485,26 +595,26 @@ export default function SettingsPage() {
       {isAdmin && (
         <Card className="mt-6 surface-card">
           <CardHeader>
-            <CardTitle className="text-[#f0f0f0]">Users</CardTitle>
-            <CardDescription className="text-[#b8bac0]">
+            <CardTitle className="text-foreground">Users</CardTitle>
+            <CardDescription className="text-muted-foreground">
               Admin-only user list.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
             {users.length === 0 ? (
-              <p className="text-sm text-[#b8bac0]">No users found.</p>
+              <p className="text-sm text-muted-foreground">No users found.</p>
             ) : (
               users.map((row) => (
                 <div
                   key={row.id}
-                  className="rounded-lg border border-[#2a2a31] bg-[#0f0f14] p-3 text-xs text-[#ededed]"
+                  className="rounded-lg border border-white/10 bg-black/30 p-3 text-xs text-foreground"
                 >
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-sm text-[#f0f0f0]">{row.name}</p>
-                      <p className="text-[11px] text-[#9ea0a6]">{row.email}</p>
+                      <p className="text-sm text-foreground">{row.name}</p>
+                      <p className="text-[11px] text-muted-foreground">{row.email}</p>
                     </div>
-                    <div className="text-right text-[11px] text-[#9ea0a6]">
+                    <div className="text-right text-[11px] text-muted-foreground">
                       <p>{row.role}</p>
                       <p>{row.status}</p>
                     </div>

@@ -11,6 +11,11 @@ const VALID_KEYS: SettingKey[] = [
   'LOGS_PATH',
   'CADDY_PATH',
   'GITHUB_TOKEN',
+  'NOTIFY_WEBHOOK_URL',
+  'BACKUP_DIR',
+  'BACKUP_ENABLED',
+  'BACKUP_RETENTION_DAYS',
+  'PG_BIN_PATH',
 ]
 
 export async function GET() {

@@ -1,0 +1,109 @@
+[system] Starting deployment...
+[clone] https://github.com/elimichaells/synergyOS.git -> C:\web\production\synergyos
+Cloning into 'C:\web\production\synergyos'...
+[33m[PM2][WARN] [39msynergyos doesn't exist
+[install] npm install
+npm warn ERESOLVE overriding peer dependency
+npm warn While resolving: @napi-rs/wasm-runtime@1.2.0
+npm warn Found: @emnapi/core@1.10.0
+npm warn node_modules/@emnapi/core
+npm warn   @emnapi/core@"1.10.0" from @unrs/resolver-binding-wasm32-wasi@1.12.2
+npm warn   node_modules/@unrs/resolver-binding-wasm32-wasi
+npm warn     optional @unrs/resolver-binding-wasm32-wasi@"1.12.2" from unrs-resolver@1.12.2
+npm warn     node_modules/unrs-resolver
+npm warn
+npm warn Could not resolve dependency:
+npm warn peer @emnapi/core@"^2.0.0-alpha.3" from @napi-rs/wasm-runtime@1.2.0
+npm warn node_modules/@unrs/resolver-binding-wasm32-wasi/node_modules/@napi-rs/wasm-runtime
+npm warn   @napi-rs/wasm-runtime@"^1.1.4" from @unrs/resolver-binding-wasm32-wasi@1.12.2
+npm warn   node_modules/@unrs/resolver-binding-wasm32-wasi
+npm warn
+npm warn Conflicting peer dependency: @emnapi/core@2.0.0-alpha.3
+npm warn node_modules/@emnapi/core
+npm warn   peer @emnapi/core@"^2.0.0-alpha.3" from @napi-rs/wasm-runtime@1.2.0
+npm warn   node_modules/@unrs/resolver-binding-wasm32-wasi/node_modules/@napi-rs/wasm-runtime
+npm warn     @napi-rs/wasm-runtime@"^1.1.4" from @unrs/resolver-binding-wasm32-wasi@1.12.2
+npm warn     node_modules/@unrs/resolver-binding-wasm32-wasi
+npm warn ERESOLVE overriding peer dependency
+npm warn While resolving: @napi-rs/wasm-runtime@1.2.0
+npm warn Found: @emnapi/runtime@1.10.0
+npm warn node_modules/@unrs/resolver-binding-wasm32-wasi/node_modules/@emnapi/runtime
+npm warn   @emnapi/runtime@"1.10.0" from @unrs/resolver-binding-wasm32-wasi@1.12.2
+npm warn   node_modules/@unrs/resolver-binding-wasm32-wasi
+npm warn     optional @unrs/resolver-binding-wasm32-wasi@"1.12.2" from unrs-resolver@1.12.2
+npm warn     node_modules/unrs-resolver
+npm warn
+npm warn Could not resolve dependency:
+npm warn peer @emnapi/runtime@"^2.0.0-alpha.3" from @napi-rs/wasm-runtime@1.2.0
+npm warn node_modules/@unrs/resolver-binding-wasm32-wasi/node_modules/@napi-rs/wasm-runtime
+npm warn   @napi-rs/wasm-runtime@"^1.1.4" from @unrs/resolver-binding-wasm32-wasi@1.12.2
+npm warn   node_modules/@unrs/resolver-binding-wasm32-wasi
+npm warn
+npm warn Conflicting peer dependency: @emnapi/runtime@2.0.0-alpha.3
+npm warn node_modules/@emnapi/runtime
+npm warn   peer @emnapi/runtime@"^2.0.0-alpha.3" from @napi-rs/wasm-runtime@1.2.0
+npm warn   node_modules/@unrs/resolver-binding-wasm32-wasi/node_modules/@napi-rs/wasm-runtime
+npm warn     @napi-rs/wasm-runtime@"^1.1.4" from @unrs/resolver-binding-wasm32-wasi@1.12.2
+npm warn     node_modules/@unrs/resolver-binding-wasm32-wasi
+npm warn deprecated boolean@3.2.0: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
+
+added 627 packages, and audited 628 packages in 3m
+
+181 packages are looking for funding
+  run `npm fund` for details
+
+15 high severity vulnerabilities
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues possible (including breaking changes), run:
+  npm audit fix --force
+
+Some issues need review, and may require choosing
+a different dependency.
+
+Run `npm audit` for details.
+[build] npm run build
+
+> synergyos@0.1.0 build
+> npm run prisma:generate && next build
+
+
+> synergyos@0.1.0 prisma:generate
+> prisma generate
+
+Loaded Prisma config from prisma.config.ts.
+
+Prisma schema loaded from prisma\schema.prisma.
+
+✔ Generated Prisma Client (v7.9.1) to .\src\generated\prisma in 551ms
+
+Start by importing your Prisma Client (See: https://pris.ly/d/importing-client)
+
+
+▲ Next.js 16.2.12 (Turbopack)
+- Environments: .env.local, .env
+- Experiments (use with caution):
+  · proxyClientMaxBodySize: "50mb"
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 24.8s
+  Running TypeScript ...
+  Finished TypeScript in 14.9s ...
+  Collecting page data using 7 workers ...
+Error: DATABASE_URL is not set. Copy .env.example to .env and configure it.
+    at <unknown> (C:\web\production\synergyos\.next\server\chunks\[root-of-the-server]__0gnsekb._.js:1:1864)
+Error: DATABASE_URL is not set. Copy .env.example to .env and configure it.
+    at <unknown> (C:\web\production\synergyos\.next\server\chunks\[root-of-the-server]__1dtsqt_._.js:1:2641)
+
+> Build error occurred
+Error: Failed to collect page data for /api/auth/employee/consume
+    at ignore-listed frames {
+  type: 'Error'
+}
+[rollback] Build failed, restoring .next.backup
+
+[error] Build failed
+[33m[PM2][WARN] [39msynergyos doesn't exist
+

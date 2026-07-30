@@ -10,7 +10,7 @@ export async function GET(_: Request, context: { params: { id: string } }) {
     requireRole(user, ['admin', 'operator', 'viewer'])
 
     const { rows } = await query(
-      `select p.id, p.name, p.slug, p.repo_url, p.default_branch, p.project_type, p.root_path, p.install_cmd, p.build_cmd, p.start_cmd, p.pm2_name, p.port, p.url, p.is_active, p.environment, p.production_id, p.created_at, p.updated_at,
+      `select p.id, p.name, p.slug, p.repo_url, p.default_branch, p.project_type, p.root_path, p.install_cmd, p.build_cmd, p.start_cmd, p.pre_deploy_cmd, p.post_deploy_cmd, p.pm2_name, p.port, p.url, p.is_active, p.environment, p.production_id, p.created_at, p.updated_at,
               s.id as staging_id, s.name as staging_name,
               prod.name as production_name
        from projects p
@@ -49,6 +49,8 @@ export async function PATCH(request: Request, context: { params: { id: string } 
       installCmd: 'install_cmd',
       buildCmd: 'build_cmd',
       startCmd: 'start_cmd',
+      preDeployCmd: 'pre_deploy_cmd',
+      postDeployCmd: 'post_deploy_cmd',
       pm2Name: 'pm2_name',
       port: 'port',
       url: 'url',
@@ -74,7 +76,7 @@ export async function PATCH(request: Request, context: { params: { id: string } 
     const { rows } = await query(
       `update projects set ${updates.join(', ')}, updated_at = now()
        where id = $${updates.length + 1}
-       returning id, name, slug, repo_url, default_branch, project_type, root_path, install_cmd, build_cmd, start_cmd, pm2_name, port, url, is_active, created_at, updated_at`,
+       returning id, name, slug, repo_url, default_branch, project_type, root_path, install_cmd, build_cmd, start_cmd, pre_deploy_cmd, post_deploy_cmd, pm2_name, port, url, is_active, created_at, updated_at`,
       values
     )
 
