@@ -2,8 +2,8 @@ import { NextResponse } from 'next/server'
 import { getSessionFromCookie } from '@/lib/auth'
 import { requireRole } from '@/lib/rbac'
 import { jsonError } from '@/lib/api'
-import { getSetting } from '@/lib/settings'
 import { query } from '@/lib/db'
+import { getGitHubConnectionToken } from '@/lib/github-connections'
 
 interface GithubRepo {
   id: number
@@ -25,12 +25,13 @@ export async function GET(request: Request) {
     const user = getSessionFromCookie()
     requireRole(user, ['admin', 'operator'])
 
-    const token = await getSetting('GITHUB_TOKEN')
+    const url = new URL(request.url)
+    const connectionId = url.searchParams.get('connectionId')
+    const token = await getGitHubConnectionToken(connectionId || null)
     if (!token) {
       return NextResponse.json({ connected: false, repos: [] })
     }
 
-    const url = new URL(request.url)
     const q = url.searchParams.get('q')?.trim()
     const page = url.searchParams.get('page') || '1'
     const endpoint = `https://api.github.com/user/repos?affiliation=owner,collaborator,organization_member&sort=updated&direction=desc&per_page=100&page=${page}`
@@ -67,6 +68,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       connected: true,
+      connectionId: connectionId || null,
       repos: repos.map((repo) => ({
         id: repo.id,
         name: repo.name,

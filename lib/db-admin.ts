@@ -252,6 +252,17 @@ export async function createDatabase(
   return { database: name, owner: { username, password } }
 }
 
+export async function rotateDatabaseRolePassword(roleName: string) {
+  const roleError = validateIdentifier(roleName, 'Database role')
+  if (roleError) throw new Error(roleError)
+  const { rows } = await query('select 1 from pg_roles where rolname=$1 and rolcanlogin=true', [roleName])
+  if (!rows[0]) throw new Error(`Database role "${roleName}" not found`)
+  const { randomBytes } = await import('crypto')
+  const password = randomBytes(24).toString('base64url')
+  await query(`alter role ${quoteIdent(roleName)} with login password ${quoteLiteral(password)}`)
+  return password
+}
+
 /** Drop a database after terminating its active connections. Protected databases are refused. */
 export async function dropDatabase(name: string) {
   const nameError = validateIdentifier(name, 'Database name')
@@ -260,6 +271,15 @@ export async function dropDatabase(name: string) {
     throw new Error(`"${name}" is protected and cannot be dropped from the manager`)
   }
   await assertDatabase(name)
+  const { rows: linkedProjects } = await query<{ project_name: string; environment: string }>(
+    `select p.name as project_name,p.environment
+       from project_databases pd join projects p on p.id=pd.project_id
+      where pd.database_name=$1`,
+    [name]
+  )
+  if (linkedProjects[0]) {
+    throw new Error(`Database "${name}" belongs to ${linkedProjects[0].project_name} (${linkedProjects[0].environment}) and cannot be dropped directly`)
+  }
 
   // Close and forget our own pool for this database first
   const pool = pools.get(name)

@@ -40,10 +40,11 @@ export async function GET() {
     requireRole(user, ['admin', 'operator', 'viewer'])
 
     const { rows } = await query(
-      `select p.id, p.name, p.slug, p.repo_url, p.default_branch, p.project_type, p.root_path, p.pm2_name, p.port, p.url, p.is_active, p.environment, p.production_id, p.created_at, p.updated_at,
-              s.id as staging_id
+      `select p.id, p.name, p.slug, p.repo_url, p.default_branch, p.project_type, p.root_path, p.pm2_name, p.port, p.url, p.auto_deploy, p.github_connection_id, p.is_active, p.environment, p.production_id, p.created_at, p.updated_at,
+              s.id as staging_id, gc.name as github_connection_name, gc.account_login as github_account_login
        from projects p
        left join projects s on s.production_id = p.id and s.environment = 'staging'
+       left join github_connections gc on gc.id=p.github_connection_id
        order by p.environment asc, p.created_at desc`
     )
 
@@ -64,6 +65,18 @@ export async function POST(request: Request) {
     if (!body?.repoUrl && !body?.name) {
       return NextResponse.json({ error: 'Select a GitHub repo or enter a site name' }, { status: 400 })
     }
+    if (body.deployScript !== undefined && body.deployScript !== null &&
+        (typeof body.deployScript !== 'string' || body.deployScript.length > 50_000)) {
+      return NextResponse.json({ error: 'Deployment script must be at most 50,000 characters' }, { status: 400 })
+    }
+    if (body.autoDeploy !== undefined && typeof body.autoDeploy !== 'boolean') {
+      return NextResponse.json({ error: 'Auto deploy must be true or false' }, { status: 400 })
+    }
+    const githubConnectionId = body.githubConnectionId ? String(body.githubConnectionId) : null
+    if (githubConnectionId) {
+      const { rows } = await query<{ id: string }>('select id from github_connections where id=$1', [githubConnectionId])
+      if (!rows[0]) return NextResponse.json({ error: 'GitHub connection not found' }, { status: 404 })
+    }
 
     const inferredName = body.name || inferRepoName(body.repoUrl || '')
     if (!inferredName) {
@@ -82,9 +95,9 @@ export async function POST(request: Request) {
     // Create the production project
     const { rows } = await query(
       `insert into projects
-        (name, slug, repo_url, default_branch, project_type, root_path, install_cmd, build_cmd, start_cmd, pm2_name, port, url, environment)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'production')
-      returning id, name, slug, repo_url, default_branch, project_type, root_path, pm2_name, port, url, is_active, environment, created_at, updated_at`,
+        (name, slug, repo_url, default_branch, project_type, root_path, install_cmd, build_cmd, deploy_script, start_cmd, pm2_name, port, url, auto_deploy, github_connection_id, environment)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'production')
+      returning id, name, slug, repo_url, default_branch, project_type, root_path, pm2_name, port, url, auto_deploy, github_connection_id, is_active, environment, created_at, updated_at`,
       [
         inferredName,
         slug,
@@ -94,10 +107,13 @@ export async function POST(request: Request) {
         rootPath,
         body.installCmd || null,
         body.buildCmd || null,
+        body.deployScript?.trim() || null,
         body.startCmd || null,
         pm2Name,
         port,
         body.url || null,
+        false,
+        githubConnectionId,
       ]
     )
 
@@ -106,9 +122,9 @@ export async function POST(request: Request) {
     // Auto-create staging counterpart
     const { rows: stagingRows } = await query(
       `insert into projects
-        (name, slug, repo_url, default_branch, project_type, root_path, install_cmd, build_cmd, start_cmd, pm2_name, port, environment, production_id)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'staging',$12)
-      returning id, name, slug`,
+        (name, slug, repo_url, default_branch, project_type, root_path, install_cmd, build_cmd, deploy_script, start_cmd, pm2_name, port, auto_deploy, github_connection_id, environment, production_id)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'staging',$15)
+      returning id, name, slug, auto_deploy, github_connection_id`,
       [
         `${inferredName} (Staging)`,
         await uniqueValue(`${slug}-staging`, 'slug'),
@@ -118,12 +134,32 @@ export async function POST(request: Request) {
         path.join(stagingBase, path.basename(rootPath)),
         body.installCmd || null,
         body.buildCmd || null,
+        body.deployScript?.trim() || null,
         body.startCmd || null,
         await uniqueValue(`staging-${pm2Name}`, 'pm2_name'),
         stagingPort,
+        false,
+        githubConnectionId,
         production.id,
       ]
     )
+
+    const staging = stagingRows[0]
+    if (body.autoDeploy === true) {
+      try {
+        const { ensureGitHubWebhook } = await import('@/lib/github-webhooks')
+        await ensureGitHubWebhook(production.id)
+        await query(
+          'update projects set auto_deploy = true, updated_at = now() where id = any($1::uuid[])',
+          [[production.id, staging.id]]
+        )
+        production.auto_deploy = true
+        staging.auto_deploy = true
+      } catch (error) {
+        await query('delete from projects where id = $1 or production_id = $1', [production.id])
+        throw error
+      }
+    }
 
     // Update Caddy for production if URL/Port available
     if (production.url && production.port) {
@@ -131,7 +167,7 @@ export async function POST(request: Request) {
       await updateCaddy(production.url, production.port)
     }
 
-    return NextResponse.json({ ...production, staging: stagingRows[0] }, { status: 201 })
+    return NextResponse.json({ ...production, staging }, { status: 201 })
   } catch (error) {
     return jsonError(error)
   }

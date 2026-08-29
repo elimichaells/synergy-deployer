@@ -5,7 +5,8 @@ import Link from 'next/link'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { AppShell } from '@/components/layout/app-shell'
-import { Save, Check, Github, Copy, Loader2, Unlink } from 'lucide-react'
+import { Save, Check, Github, Copy, Loader2, Trash2, RefreshCw, Plus } from 'lucide-react'
+import { RuntimeManager } from '@/components/runtime-manager'
 
 interface SessionUser {
   id: string
@@ -50,26 +51,53 @@ const EMPTY_SETTINGS: Settings = {
   PG_BIN_PATH: '',
 }
 
+interface GitHubConnectionRow {
+  id: string
+  name: string
+  account_login: string
+  account_name: string | null
+  avatar_url: string | null
+  token_last_four: string
+  token_scopes: string[]
+  last_validated_at: string | null
+  last_error: string | null
+  project_count: number
+}
+
 function GitHubConnection({ isAdmin }: { isAdmin: boolean }) {
   const [status, setStatus] = useState<'idle' | 'requesting' | 'waiting' | 'polling' | 'connected' | 'error'>('idle')
   const [userCode, setUserCode] = useState('')
   const [verificationUri, setVerificationUri] = useState('')
   const [deviceCode, setDeviceCode] = useState('')
   const [interval, setIntervalMs] = useState(5)
-  const [githubUser, setGithubUser] = useState<{ login: string; name: string; avatar: string } | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
   const [copied, setCopied] = useState(false)
   const [hasToken, setHasToken] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
+  const [connections, setConnections] = useState<GitHubConnectionRow[]>([])
+  const [connectionName, setConnectionName] = useState('')
+  const [connectionBusy, setConnectionBusy] = useState<string | null>(null)
+  const [showConnectForm, setShowConnectForm] = useState(false)
 
-  // Check if a token exists on mount
+  const loadConnections = async () => {
+    const response = await fetch('/api/github/connections')
+    if (!response.ok) return
+    const data = await response.json()
+    const nextConnections = data.connections || []
+    setConnections(nextConnections)
+    setHasToken(nextConnections.length > 0)
+  }
+
   useEffect(() => {
-    fetch('/api/settings').then(r => r.ok ? r.json() : null).then(data => {
-      if (data?.GITHUB_TOKEN) setHasToken(true)
-    }).catch(() => { })
+    void loadConnections()
   }, [])
 
   const startFlow = async () => {
+    if (!connectionName.trim()) {
+      setErrorMsg('Enter a name for this GitHub connection.')
+      setStatus('error')
+      return
+    }
     setStatus('requesting')
     setErrorMsg('')
     try {
@@ -105,13 +133,14 @@ function GitHubConnection({ isAdmin }: { isAdmin: boolean }) {
         const res = await fetch('/api/auth/github/poll', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ deviceCode }),
+          body: JSON.stringify({ deviceCode, connectionName: connectionName.trim() }),
         })
         const data = await res.json()
 
         if (data.status === 'success') {
-          setGithubUser(data.githubUser)
-          setHasToken(true)
+          await loadConnections()
+          setConnectionName('')
+          setShowConnectForm(false)
           setStatus('connected')
           return
         }
@@ -144,21 +173,36 @@ function GitHubConnection({ isAdmin }: { isAdmin: boolean }) {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const handleDisconnect = async () => {
+  const handleDisconnect = async (connection: GitHubConnectionRow) => {
+    if (!window.confirm(`Remove GitHub connection "${connection.name}"?`)) return
     setDisconnecting(true)
+    setConnectionBusy(connection.id)
+    setErrorMsg('')
     try {
-      await fetch('/api/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ GITHUB_TOKEN: '' }),
-      })
-      setHasToken(false)
-      setGithubUser(null)
-      setStatus('idle')
-    } catch {
-      // ignore
+      const response = await fetch(`/api/github/connections/${connection.id}`, { method: 'DELETE' })
+      const body = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(body.error || 'Failed to remove GitHub connection')
+      await loadConnections()
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : 'Failed to remove GitHub connection')
     } finally {
       setDisconnecting(false)
+      setConnectionBusy(null)
+    }
+  }
+
+  const handleTestConnection = async (connection: GitHubConnectionRow) => {
+    setConnectionBusy(connection.id)
+    setErrorMsg('')
+    try {
+      const response = await fetch(`/api/github/connections/${connection.id}/test`, { method: 'POST' })
+      const body = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(body.error || 'GitHub connection test failed')
+      await loadConnections()
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : 'GitHub connection test failed')
+    } finally {
+      setConnectionBusy(null)
     }
   }
 
@@ -171,30 +215,34 @@ function GitHubConnection({ isAdmin }: { isAdmin: boolean }) {
   }
 
   // Connected state
-  if (hasToken && status !== 'waiting' && status !== 'polling' && status !== 'requesting') {
+  if (hasToken && !showConnectForm && status !== 'waiting' && status !== 'polling' && status !== 'requesting') {
     return (
-      <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4">
+      <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-500/10">
-              <Github className="h-5 w-5 text-emerald-400" />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-emerald-300">
-                {githubUser ? `Connected as ${githubUser.login}` : 'GitHub Connected'}
-              </p>
-              <p className="text-[11px] text-emerald-400/60">Token stored securely in database</p>
-            </div>
-          </div>
-          <button
-            onClick={handleDisconnect}
-            disabled={disconnecting}
-            className="flex items-center gap-1.5 rounded-md border border-red-500/20 bg-red-500/10 px-2.5 py-1.5 text-xs text-red-400 hover:bg-red-500/20 transition-colors disabled:opacity-50"
-          >
-            <Unlink className="h-3 w-3" />
-            {disconnecting ? 'Disconnecting...' : 'Disconnect'}
-          </button>
+          <div><p className="text-sm font-medium">GitHub connections</p><p className="text-[11px] text-muted-foreground">Assign a connection independently on each project.</p></div>
+          <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => { setShowConnectForm(true); setStatus('idle'); setErrorMsg('') }}>
+            <Plus className="h-3.5 w-3.5" /> Add connection
+          </Button>
         </div>
+        <div className="divide-y divide-border rounded-md border border-border">
+          {connections.map((connection) => (
+            <div key={connection.id} className="flex flex-wrap items-center gap-3 px-3 py-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-muted text-xs font-semibold uppercase">{connection.account_login.slice(0, 1)}</div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium">{connection.name}</p>
+                <p className="truncate text-[11px] text-muted-foreground">@{connection.account_login} · token ending {connection.token_last_four} · {connection.project_count} project{connection.project_count === 1 ? '' : 's'}</p>
+                {connection.last_error && <p className="mt-1 text-[11px] text-red-400">{connection.last_error}</p>}
+              </div>
+              <button type="button" title="Test connection" aria-label={`Test ${connection.name}`} onClick={() => void handleTestConnection(connection)} disabled={!!connectionBusy} className="rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40">
+                <RefreshCw className={`h-4 w-4 ${connectionBusy === connection.id ? 'animate-spin' : ''}`} />
+              </button>
+              <button type="button" title={connection.project_count ? 'Reassign projects before removing' : 'Remove connection'} aria-label={`Remove ${connection.name}`} onClick={() => void handleDisconnect(connection)} disabled={disconnecting || connection.project_count > 0} className="rounded-md p-2 text-muted-foreground hover:bg-red-500/10 hover:text-red-400 disabled:opacity-40">
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+        {errorMsg && <p className="text-xs text-red-400">{errorMsg}</p>}
       </div>
     )
   }
@@ -234,7 +282,7 @@ function GitHubConnection({ isAdmin }: { isAdmin: boolean }) {
           )}
 
           <button
-            onClick={() => setStatus('idle')}
+            onClick={() => { setStatus('idle'); setShowConnectForm(false) }}
             className="text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             Cancel
@@ -259,15 +307,16 @@ function GitHubConnection({ isAdmin }: { isAdmin: boolean }) {
 
   // Idle / Requesting state
   return (
-    <div className="rounded-lg border border-white/10 bg-black/30 p-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm text-foreground mb-0.5">GitHub</p>
-          <p className="text-[11px] text-muted-foreground">Connect your GitHub account for automated deployments.</p>
-        </div>
+    <div className="rounded-lg border border-white/10 bg-black/30 p-4 space-y-3">
+      <div>
+        <p className="text-sm text-foreground mb-0.5">New GitHub connection</p>
+        <p className="text-[11px] text-muted-foreground">Give this account a recognizable name, then authorize it with GitHub.</p>
+      </div>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <input value={connectionName} onChange={(event) => setConnectionName(event.target.value)} placeholder="e.g. Synergy Africa" className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring" />
         <Button
           onClick={startFlow}
-          disabled={status === 'requesting'}
+          disabled={status === 'requesting' || !connectionName.trim()}
           variant="outline"
           size="sm"
           className="gap-2"
@@ -280,6 +329,7 @@ function GitHubConnection({ isAdmin }: { isAdmin: boolean }) {
           Connect GitHub
         </Button>
       </div>
+      {hasToken && <button type="button" onClick={() => { setShowConnectForm(false); setStatus('connected'); setErrorMsg('') }} className="text-xs text-muted-foreground hover:text-foreground">Cancel</button>}
     </div>
   )
 }
@@ -449,6 +499,11 @@ export default function SettingsPage() {
             <div>
               <h4 className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">Integrations</h4>
               <GitHubConnection isAdmin={isAdmin} />
+            </div>
+
+            <div>
+              <h4 className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">Dependencies</h4>
+              <RuntimeManager isAdmin={isAdmin} />
             </div>
 
             {/* Notifications Section */}

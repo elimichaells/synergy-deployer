@@ -2,36 +2,40 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { ReactNode } from 'react'
-import {
-  LayoutDashboard,
-  Boxes,
-  Server,
-  Rocket,
-  Database,
-  Settings,
-  ChevronRight,
-  LogOut,
-  User
-} from 'lucide-react'
+import { ReactNode, useState } from 'react'
+import { Boxes, Database, Gauge, LogOut, Menu, Rocket, Server, Settings, User, Workflow, X } from 'lucide-react'
 
-const navItems = [
-  { href: '/', label: 'Board', icon: LayoutDashboard },
-  { href: '/sites', label: 'Sites', icon: Boxes },
-  { href: '/services', label: 'Services', icon: Server },
-  { href: '/deployments', label: 'Deployments', icon: Rocket },
-  { href: '/database', label: 'Database', icon: Database },
-  { href: '/settings', label: 'Settings', icon: Settings },
+const navGroups = [
+  { label: 'Operate', items: [
+    { href: '/', label: 'Overview', icon: Gauge },
+    { href: '/sites', label: 'Applications', icon: Boxes },
+    { href: '/deployments', label: 'Deployments', icon: Rocket },
+    { href: '/automation', label: 'Automation', icon: Workflow },
+  ] },
+  { label: 'Infrastructure', items: [
+    { href: '/services', label: 'Runtime & proxy', icon: Server },
+    { href: '/database', label: 'Databases', icon: Database },
+  ] },
+  { label: 'Administration', items: [
+    { href: '/settings', label: 'Settings', icon: Settings },
+  ] },
 ]
 
+function ProductMark() {
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-cyan-400/30 bg-cyan-400/10">
+        <Rocket className="h-4 w-4 text-cyan-300" />
+      </div>
+      <div className="min-w-0">
+        <p className="truncate text-sm font-semibold text-foreground">Manager</p>
+        <p className="truncate text-[11px] text-muted-foreground">Deployment control plane</p>
+      </div>
+    </div>
+  )
+}
 
-export function AppShell({
-  children,
-  title,
-  subtitle,
-  user,
-  actions,
-}: {
+export function AppShell({ children, title, subtitle, user, actions }: {
   children: ReactNode
   title: string
   subtitle?: string
@@ -40,9 +44,11 @@ export function AppShell({
 }) {
   const pathname = usePathname()
   const router = useRouter()
+  const [mobileOpen, setMobileOpen] = useState(false)
 
-  const isActive = (href: string) =>
-    href === '/' ? pathname === '/' : pathname === href || pathname.startsWith(`${href}/`)
+  const isActive = (href: string) => href === '/'
+    ? pathname === '/'
+    : pathname === href || pathname.startsWith(`${href}/`)
 
   const handleLogout = async () => {
     try {
@@ -52,84 +58,94 @@ export function AppShell({
     }
   }
 
-  return (
-    <div className="min-h-screen text-foreground selection:bg-primary/20">
-      <div className="flex h-screen">
-        {/* Sidebar */}
-        <aside className="glass-sidebar hidden w-72 flex-col md:flex">
-          <div className="flex h-20 items-center px-8">
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-primary/25 bg-gradient-to-br from-primary/25 to-primary/5 shadow-[0_0_20px_-4px_hsl(199_95%_55%/0.4)]">
-                <Rocket className="h-4 w-4 text-primary" />
-              </div>
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">Manager</p>
-                <p className="text-sm font-semibold text-shine">NextOps Control</p>
-              </div>
-            </div>
-          </div>
-
-          <nav className="flex-1 space-y-1 px-4 py-4">
-            {navItems.map((item) => {
+  const navigation = (
+    <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-5" aria-label="Primary navigation">
+      {navGroups.map((group) => (
+        <div key={group.label}>
+          <p className="mb-2 px-3 text-[10px] font-semibold uppercase text-muted-foreground/70">{group.label}</p>
+          <div className="space-y-1">
+            {group.items.map((item) => {
               const active = isActive(item.href)
               return (
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={`group flex items-center justify-between rounded-xl px-4 py-2.5 text-sm font-medium transition-all duration-200 ${
-                    active
-                      ? 'border border-primary/20 bg-primary/10 text-primary shadow-[inset_0_1px_0_hsl(199_95%_75%/0.1),0_0_20px_-8px_hsl(199_95%_55%/0.5)]'
-                      : 'border border-transparent text-muted-foreground hover:bg-white/[0.04] hover:text-foreground'
+                  onClick={() => setMobileOpen(false)}
+                  aria-current={active ? 'page' : undefined}
+                  className={`flex h-10 items-center gap-3 rounded-md border-l-2 px-3 text-sm transition-colors ${active
+                    ? 'border-cyan-400 bg-cyan-400/10 text-foreground'
+                    : 'border-transparent text-muted-foreground hover:bg-white/[0.04] hover:text-foreground'
                   }`}
                 >
-                  <div className="flex items-center gap-3">
-                    <item.icon className={`h-4 w-4 transition-transform group-hover:scale-110 ${active ? 'text-primary' : ''}`} />
-                    {item.label}
-                  </div>
-                  <ChevronRight className={`h-3 w-3 transition-all ${active ? 'opacity-60' : 'opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0'}`} />
+                  <item.icon className={`h-4 w-4 ${active ? 'text-cyan-300' : ''}`} />
+                  <span className="truncate">{item.label}</span>
                 </Link>
               )
             })}
-          </nav>
-
-          <div className="mt-auto p-4">
-            <div className="glass-panel p-4">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-gradient-to-br from-white/10 to-transparent">
-                  <User className="h-5 w-5 text-muted-foreground" />
-                </div>
-                <div className="flex-1 overflow-hidden">
-                  <p className="truncate text-xs font-semibold text-foreground">{user?.name || 'Signed in'}</p>
-                  <p className="text-[10px] capitalize text-muted-foreground">{user?.role || 'operator'}</p>
-                </div>
-                <button
-                  onClick={() => void handleLogout()}
-                  title="Sign out"
-                  className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-red-400"
-                >
-                  <LogOut className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
           </div>
+        </div>
+      ))}
+    </nav>
+  )
+
+  const account = (
+    <div className="border-t border-border/70 p-3">
+      <div className="flex items-center gap-3 rounded-md px-3 py-2">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-secondary">
+          <User className="h-4 w-4 text-muted-foreground" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-xs font-medium">{user?.name || 'Signed in'}</p>
+          <p className="text-[10px] capitalize text-muted-foreground">{user?.role || 'operator'}</p>
+        </div>
+        <button onClick={() => void handleLogout()} title="Sign out" aria-label="Sign out" className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-300">
+          <LogOut className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  )
+
+  return (
+    <div className="h-screen overflow-hidden bg-background text-foreground">
+      <div className="flex h-full">
+        <aside className="hidden w-60 shrink-0 flex-col border-r border-border bg-[hsl(var(--sidebar))] md:flex">
+          <div className="flex h-16 items-center border-b border-border px-5"><ProductMark /></div>
+          {navigation}
+          {account}
         </aside>
 
-        {/* Main Content */}
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <header className="glass-header sticky top-0 z-10">
-            <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-8">
-              <div>
-                <h1 className="text-2xl font-bold tracking-tight text-shine">{title}</h1>
-                {subtitle && <p className="mt-0.5 text-sm text-muted-foreground">{subtitle}</p>}
+        {mobileOpen && (
+          <div className="fixed inset-0 z-50 md:hidden">
+            <button className="absolute inset-0 bg-black/70" onClick={() => setMobileOpen(false)} aria-label="Close navigation" />
+            <aside className="relative flex h-full w-[min(19rem,85vw)] flex-col border-r border-border bg-[hsl(var(--sidebar))] shadow-2xl">
+              <div className="flex h-16 items-center justify-between border-b border-border px-5">
+                <ProductMark />
+                <button onClick={() => setMobileOpen(false)} aria-label="Close navigation" className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground">
+                  <X className="h-4 w-4" />
+                </button>
               </div>
-              <div className="flex items-center gap-4">{actions}</div>
+              {navigation}
+              {account}
+            </aside>
+          </div>
+        )}
+
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="shrink-0 border-b border-border bg-background/95 backdrop-blur">
+            <div className="mx-auto flex min-h-16 max-w-[1440px] flex-wrap items-center gap-3 px-4 py-3 sm:flex-nowrap sm:px-6 lg:px-8">
+              <button onClick={() => setMobileOpen(true)} aria-label="Open navigation" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-secondary hover:text-foreground md:hidden">
+                <Menu className="h-4 w-4" />
+              </button>
+              <div className="min-w-0 flex-1">
+                <h1 className="truncate text-lg font-semibold leading-6 sm:text-xl">{title}</h1>
+                {subtitle && <p className="truncate text-xs text-muted-foreground sm:text-sm">{subtitle}</p>}
+              </div>
+              {actions && <div className="flex w-full shrink-0 items-center gap-2 overflow-x-auto pb-1 sm:w-auto sm:pb-0">{actions}</div>}
             </div>
           </header>
 
-          <main className="flex-1 overflow-y-auto overflow-x-hidden">
-            <div className="fade-in-up mx-auto max-w-7xl p-8">
-              {children}
-            </div>
+          <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
+            <div className="mx-auto max-w-[1440px] p-4 sm:p-6 lg:p-8">{children}</div>
           </main>
         </div>
       </div>

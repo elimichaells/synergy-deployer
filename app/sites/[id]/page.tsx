@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { AppShell } from '@/components/layout/app-shell'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -37,9 +38,14 @@ interface Project {
   pm2_name: string
   install_cmd?: string | null
   build_cmd?: string | null
+  deploy_script?: string | null
   start_cmd?: string | null
   pre_deploy_cmd?: string | null
   post_deploy_cmd?: string | null
+  auto_deploy: boolean
+  github_connection_id: string | null
+  github_connection_name: string | null
+  github_account_login: string | null
   port: number | null
   url: string | null
   is_active: boolean
@@ -50,6 +56,12 @@ interface Project {
   production_name: string | null
 }
 
+interface GitHubConnectionOption {
+  id: string
+  name: string
+  account_login: string
+}
+
 interface Deployment {
   id: string
   project_id: string
@@ -58,6 +70,16 @@ interface Deployment {
   commit_sha: string | null
   started_at: string | null
   finished_at: string | null
+}
+
+interface ManagedProjectDatabase {
+  project_id: string
+  project_name: string
+  environment: 'production' | 'staging'
+  database_name: string
+  role_name: string
+  created_at: string
+  updated_at: string
 }
 
 const projectTypeDefaults = {
@@ -101,6 +123,7 @@ export default function SitePage() {
   const deployStreamRef = useRef<EventSource | null>(null)
   const [editing, setEditing] = useState(false)
   const [savingProject, setSavingProject] = useState(false)
+  const [savingAutoDeploy, setSavingAutoDeploy] = useState(false)
   const [actionBusy, setActionBusy] = useState<string | null>(null)
   const [projectForm, setProjectForm] = useState({
     name: '',
@@ -113,10 +136,14 @@ export default function SitePage() {
     url: '',
     installCmd: '',
     buildCmd: '',
+    deployScript: '',
     startCmd: '',
     preDeployCmd: '',
     postDeployCmd: '',
+    autoDeploy: true,
+    githubConnectionId: '',
   })
+  const [githubConnections, setGithubConnections] = useState<GitHubConnectionOption[]>([])
   const [webhookSecret, setWebhookSecret] = useState<string | null>(null)
   const [webhookHasSecret, setWebhookHasSecret] = useState(false)
   const [webhookLoading, setWebhookLoading] = useState(false)
@@ -135,19 +162,26 @@ export default function SitePage() {
   const npmOutputRef = useRef<HTMLDivElement>(null)
   const [cancellingDeploy, setCancellingDeploy] = useState<string | null>(null)
   const [rollingBack, setRollingBack] = useState<string | null>(null)
+  const [managedDatabase, setManagedDatabase] = useState<ManagedProjectDatabase | null>(null)
+  const [databaseBusy, setDatabaseBusy] = useState(false)
+  const [databaseNotice, setDatabaseNotice] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     setError(null)
     try {
-      const [projectRes, deploymentsRes] = await Promise.all([
+      const [projectRes, deploymentsRes, connectionsRes, databaseRes] = await Promise.all([
         fetch(`/api/sites/${siteId}`),
         fetch('/api/deployments'),
+        fetch('/api/github/connections'),
+        fetch(`/api/sites/${siteId}/database`),
       ])
       if (!projectRes.ok) throw new Error('Failed to load site')
       if (!deploymentsRes.ok) throw new Error('Failed to load deployments')
 
       const projectData = await projectRes.json()
       const deploymentsData = await deploymentsRes.json()
+      if (connectionsRes.ok) setGithubConnections((await connectionsRes.json()).connections || [])
+      if (databaseRes.ok) setManagedDatabase((await databaseRes.json()).database || null)
       if (projectData.environment === 'staging' && projectData.production_id) {
         // Fetch latest successful production deployment to compare
         try {
@@ -176,9 +210,12 @@ export default function SitePage() {
         url: projectData.url || '',
         installCmd: projectData.install_cmd || 'npm install',
         buildCmd: projectData.build_cmd || 'npm run build',
+        deployScript: projectData.deploy_script || '',
         startCmd: projectData.start_cmd || 'npm start',
         preDeployCmd: projectData.pre_deploy_cmd || '',
         postDeployCmd: projectData.post_deploy_cmd || '',
+        autoDeploy: projectData.auto_deploy !== false,
+        githubConnectionId: projectData.github_connection_id || '',
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load')
@@ -186,6 +223,28 @@ export default function SitePage() {
       setLoading(false)
     }
   }, [siteId])
+
+  const manageProjectDatabase = async (action: 'create' | 'rotate_password') => {
+    setDatabaseBusy(true)
+    setDatabaseNotice(null)
+    try {
+      const response = await fetch(`/api/sites/${siteId}/database`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error || 'Database operation failed')
+      setManagedDatabase(body.database)
+      setDatabaseNotice(action === 'create'
+        ? 'Isolated database created. Credentials will be injected during deployments.'
+        : 'Database password rotated. Redeploy the application to refresh its runtime environment.')
+    } catch (err) {
+      setDatabaseNotice(err instanceof Error ? err.message : 'Database operation failed')
+    } finally {
+      setDatabaseBusy(false)
+    }
+  }
 
   const loadEnv = useCallback(async (file: string) => {
     setError(null)
@@ -339,9 +398,12 @@ export default function SitePage() {
         url: projectForm.url.trim() || null,
         installCmd: projectForm.installCmd.trim() || null,
         buildCmd: projectForm.buildCmd.trim() || null,
+        deployScript: projectForm.deployScript.trim() || null,
         startCmd: projectForm.startCmd.trim() || null,
         preDeployCmd: projectForm.preDeployCmd.trim() || null,
         postDeployCmd: projectForm.postDeployCmd.trim() || null,
+        autoDeploy: projectForm.autoDeploy,
+        githubConnectionId: projectForm.githubConnectionId || null,
       }
       const res = await fetch(`/api/sites/${siteId}`, {
         method: 'PATCH',
@@ -358,6 +420,35 @@ export default function SitePage() {
       setError(err instanceof Error ? err.message : 'Failed to save project')
     } finally {
       setSavingProject(false)
+    }
+  }
+
+  const handleToggleAutoDeploy = async () => {
+    if (!siteId || !project || savingAutoDeploy) return
+    const previousValue = project.auto_deploy
+    const nextValue = !previousValue
+
+    setSavingAutoDeploy(true)
+    setError(null)
+    setProject({ ...project, auto_deploy: nextValue })
+    setProjectForm((current) => ({ ...current, autoDeploy: nextValue }))
+
+    try {
+      const res = await fetch(`/api/sites/${siteId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ autoDeploy: nextValue }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error || 'Failed to update auto deployment')
+      }
+    } catch (err) {
+      setProject({ ...project, auto_deploy: previousValue })
+      setProjectForm((current) => ({ ...current, autoDeploy: previousValue }))
+      setError(err instanceof Error ? err.message : 'Failed to update auto deployment')
+    } finally {
+      setSavingAutoDeploy(false)
     }
   }
 
@@ -750,6 +841,20 @@ export default function SitePage() {
               <ArrowUpRight className={`h-3.5 w-3.5 ${promoting ? 'animate-bounce' : ''}`} />
               {promoting ? 'Promoting...' : 'Promote'}
             </button>
+          )}
+          {project && (
+            <div className="flex h-8 items-center gap-2 rounded-md border border-border bg-muted/30 px-2.5">
+              <span className={`hidden text-xs font-medium sm:inline ${project.auto_deploy ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+                Auto deploy
+              </span>
+              <Switch
+                aria-label="Auto deploy"
+                checked={project.auto_deploy}
+                disabled={savingAutoDeploy}
+                onCheckedChange={() => void handleToggleAutoDeploy()}
+                title={project.auto_deploy ? 'Disable auto deploy' : 'Enable auto deploy'}
+              />
+            </div>
           )}
           <button
             onClick={handleDeploy}
@@ -1154,7 +1259,7 @@ export default function SitePage() {
                     ))}
                   </div>
                   <EnvEditor
-                    className="h-64"
+                    className="h-[32rem] lg:h-[38rem]"
                     value={envContent}
                     onChange={setEnvContent}
                     placeholder={`# ${envFile}\nKEY=value`}
@@ -1171,8 +1276,8 @@ export default function SitePage() {
               <div className="space-y-4">
                 <Card className="">
                   <CardHeader>
-                    <CardTitle className="text-base">Build Settings</CardTitle>
-                    <CardDescription>Commands used for deployment.</CardDescription>
+                    <CardTitle className="text-base">Deployment Configuration</CardTitle>
+                    <CardDescription>Script and runtime command used for this application.</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <div className="grid gap-1">
@@ -1181,30 +1286,24 @@ export default function SitePage() {
                         {projectTypeDefaults[project?.project_type || 'next'].label}
                       </div>
                     </div>
-                    <div className="grid gap-1">
-                      <label className="text-xs font-medium text-muted-foreground">Install Command</label>
-                      <div className="bg-white/[0.06] p-2 rounded text-xs font-mono">{project?.install_cmd || 'npm install'}</div>
-                    </div>
-                    <div className="grid gap-1">
-                      <label className="text-xs font-medium text-muted-foreground">Build Command</label>
-                      <div className="bg-white/[0.06] p-2 rounded text-xs font-mono">{project?.build_cmd || 'npm run build'}</div>
-                    </div>
+                    {project?.deploy_script ? (
+                      <div className="grid gap-1">
+                        <label className="text-xs font-medium text-muted-foreground">Deployment Script</label>
+                        <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded bg-white/[0.06] p-3 text-xs font-mono leading-5">{project.deploy_script}</pre>
+                      </div>
+                    ) : (
+                      <div className="grid gap-2 rounded border border-border bg-muted/20 p-3">
+                        <p className="text-xs font-medium text-muted-foreground">Legacy deployment steps</p>
+                        <code className="text-xs">{project?.install_cmd || 'npm install'}</code>
+                        {project?.pre_deploy_cmd && <code className="text-xs">{project.pre_deploy_cmd}</code>}
+                        <code className="text-xs">{project?.build_cmd || 'npm run build'}</code>
+                        {project?.post_deploy_cmd && <code className="text-xs">{project.post_deploy_cmd}</code>}
+                      </div>
+                    )}
                     <div className="grid gap-1">
                       <label className="text-xs font-medium text-muted-foreground">Start Command</label>
                       <div className="bg-white/[0.06] p-2 rounded text-xs font-mono">{project?.start_cmd || 'npm start'}</div>
                     </div>
-                    {project?.pre_deploy_cmd && (
-                      <div className="grid gap-1">
-                        <label className="text-xs font-medium text-muted-foreground">Pre-deploy Script</label>
-                        <div className="bg-white/[0.06] p-2 rounded text-xs font-mono">{project.pre_deploy_cmd}</div>
-                      </div>
-                    )}
-                    {project?.post_deploy_cmd && (
-                      <div className="grid gap-1">
-                        <label className="text-xs font-medium text-muted-foreground">Post-deploy Script</label>
-                        <div className="bg-white/[0.06] p-2 rounded text-xs font-mono">{project.post_deploy_cmd}</div>
-                      </div>
-                    )}
                   </CardContent>
                 </Card>
 
@@ -1212,7 +1311,9 @@ export default function SitePage() {
                   <CardHeader>
                     <CardTitle className="text-base">Webhook Integration</CardTitle>
                     <CardDescription>
-                      {project?.environment === 'staging'
+                      {!project?.auto_deploy
+                        ? 'Auto deployment is disabled. Push events are ignored; manual deployments remain available.'
+                        : project?.environment === 'staging'
                         ? `Auto-deploys on push to \`${project.default_branch || 'dev'}\` branch.`
                         : 'Auto-deploy on git push via GitHub webhook.'}
                     </CardDescription>
@@ -1220,9 +1321,9 @@ export default function SitePage() {
                   <CardContent className="space-y-4">
                     {project?.environment === 'staging' ? (
                       <div className="space-y-3">
-                        <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-400/80 space-y-1">
-                          <p className="font-medium text-amber-400">Auto-deploy enabled</p>
-                          <p>Pushing to <code className="bg-amber-500/10 px-1 rounded">{project.default_branch || 'dev'}</code> will automatically deploy this staging project.</p>
+                        <div className={`rounded-md border p-3 text-xs space-y-1 ${project.auto_deploy ? 'border-emerald-500/20 bg-emerald-500/5 text-emerald-300/80' : 'border-border bg-muted/30 text-muted-foreground'}`}>
+                          <p className="font-medium">Auto-deploy {project.auto_deploy ? 'enabled' : 'paused'}</p>
+                          <p>Pushes to <code className="bg-black/20 px-1 rounded">{project.default_branch || 'dev'}</code> will {project.auto_deploy ? 'automatically deploy this staging project' : 'be ignored'}.</p>
                           <p className="text-muted-foreground mt-1">Configure the webhook on the linked production project — one GitHub webhook handles both branches.</p>
                         </div>
                         {project.production_id && (
@@ -1343,6 +1444,19 @@ export default function SitePage() {
                       />
                     </div>
                     <div className="grid gap-2">
+                      <label className="text-sm font-medium">GitHub connection</label>
+                      <select
+                        className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        value={projectForm.githubConnectionId}
+                        onChange={(event) => setProjectForm({ ...projectForm, githubConnectionId: event.target.value })}
+                      >
+                        <option value="">Legacy default connection</option>
+                        {githubConnections.map((connection) => (
+                          <option key={connection.id} value={connection.id}>{connection.name} (@{connection.account_login})</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="grid gap-2">
                       <label className="text-sm font-medium">Project Type</label>
                       <select
                         className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
@@ -1420,54 +1534,51 @@ export default function SitePage() {
 
                   <div className="h-px bg-white/[0.08]" />
 
-                  {/* Build Commands */}
+                  {/* Deployment automation */}
                   <div className="grid gap-4">
-                    <div className="grid gap-2">
-                      <label className="text-sm font-medium">Install Command</label>
-                      <input
-                        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 font-mono"
-                        value={projectForm.installCmd}
-                        onChange={(e) => setProjectForm({ ...projectForm, installCmd: e.target.value })}
-                        placeholder="npm install"
+                    <div className="flex items-center justify-between rounded-md border border-border bg-muted/30 p-4">
+                      <div>
+                        <p className="text-sm font-medium">Auto deployment</p>
+                        <p className="text-xs text-muted-foreground">Deploy this environment when GitHub pushes to <code className="font-mono">{projectForm.defaultBranch || 'main'}</code>.</p>
+                      </div>
+                      <Switch
+                        checked={projectForm.autoDeploy}
+                        onCheckedChange={(checked) => setProjectForm({ ...projectForm, autoDeploy: checked })}
+                        aria-label="Auto deployment"
                       />
                     </div>
                     <div className="grid gap-2">
-                      <label className="text-sm font-medium">Build Command</label>
-                      <input
-                        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 font-mono"
-                        value={projectForm.buildCmd}
-                        onChange={(e) => setProjectForm({ ...projectForm, buildCmd: e.target.value })}
-                        placeholder="npm run build"
+                      <label className="text-sm font-medium">Deployment script</label>
+                      <textarea
+                        rows={15}
+                        className="min-h-72 w-full resize-y rounded-md border border-input bg-[#090b0e] px-3 py-3 font-mono text-sm leading-6 shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        value={projectForm.deployScript}
+                        onChange={(e) => setProjectForm({ ...projectForm, deployScript: e.target.value })}
+                        placeholder={`git pull origin $BRANCH
+
+composer install --no-interaction --prefer-dist --optimize-autoloader
+php artisan migrate --force
+
+php artisan optimize:clear
+php artisan optimize
+
+npm install
+npm run build
+
+echo "✅ Deployment completed successfully!"`}
                       />
+                      <p className="text-xs text-muted-foreground">Commands run from the project root, one line at a time, and stop on the first failure. <code className="font-mono">$BRANCH</code> resolves to the configured default branch.</p>
                     </div>
                     <div className="grid gap-2">
-                      <label className="text-sm font-medium">Start Command</label>
-                      <input
-                        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 font-mono"
+                      <label className="text-sm font-medium">Runtime start command</label>
+                      <textarea
+                        rows={3}
+                        className="min-h-20 w-full resize-y rounded-md border border-input bg-[#090b0e] px-3 py-2 font-mono text-sm leading-5 shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                         value={projectForm.startCmd}
                         onChange={(e) => setProjectForm({ ...projectForm, startCmd: e.target.value })}
                         placeholder="npm start"
                       />
-                    </div>
-                    <div className="grid gap-2">
-                      <label className="text-sm font-medium">Pre-deploy Script <span className="text-xs font-normal text-muted-foreground">(optional — runs after install, before build)</span></label>
-                      <input
-                        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring font-mono"
-                        value={projectForm.preDeployCmd}
-                        onChange={(e) => setProjectForm({ ...projectForm, preDeployCmd: e.target.value })}
-                        placeholder="npx prisma migrate deploy"
-                      />
-                      <p className="text-xs text-muted-foreground">Ideal for database migrations or code generation. A non-zero exit code aborts the deployment.</p>
-                    </div>
-                    <div className="grid gap-2">
-                      <label className="text-sm font-medium">Post-deploy Script <span className="text-xs font-normal text-muted-foreground">(optional — runs after the app is live)</span></label>
-                      <input
-                        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring font-mono"
-                        value={projectForm.postDeployCmd}
-                        onChange={(e) => setProjectForm({ ...projectForm, postDeployCmd: e.target.value })}
-                        placeholder="npm run warmup"
-                      />
-                      <p className="text-xs text-muted-foreground">Runs after the health check passes — cache warmup, notifications, cleanup. Failure does not roll back the deployment.</p>
+                      <p className="text-xs text-muted-foreground">PM2 uses this command to run the application after the deployment script succeeds.</p>
                     </div>
                   </div>
 
@@ -1477,6 +1588,52 @@ export default function SitePage() {
                     </Button>
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2"><Database className="h-4 w-4" /> Application Database</CardTitle>
+                <CardDescription>
+                  Dedicated PostgreSQL ownership for this {project?.environment} environment. Credentials are encrypted and injected into deployment and PM2 runtime variables.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {project?.project_type === 'angular' ? (
+                  <p className="text-sm text-muted-foreground">Angular is browser-side. Connect it to a backend API instead of placing database credentials in the application.</p>
+                ) : managedDatabase ? (
+                  <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <p className="text-xs text-muted-foreground">Database</p>
+                        <p className="mt-1 font-mono text-sm">{managedDatabase.database_name}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Application role</p>
+                        <p className="mt-1 font-mono text-sm">{managedDatabase.role_name}</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button asChild variant="outline" size="sm">
+                        <Link href={`/database?database=${encodeURIComponent(managedDatabase.database_name)}`}>Manage data</Link>
+                      </Button>
+                      <Button asChild variant="outline" size="sm">
+                        <a href={`/postgres/connect/${project?.id}`} target="_blank" rel="noreferrer">Open SQL client</a>
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => void manageProjectDatabase('rotate_password')} disabled={databaseBusy}>
+                        {databaseBusy ? 'Working...' : 'Rotate password'}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-center justify-between gap-4">
+                    <p className="max-w-2xl text-sm text-muted-foreground">Create a separate database and login role for this environment. Production and staging databases are provisioned independently.</p>
+                    <Button onClick={() => void manageProjectDatabase('create')} disabled={databaseBusy}>
+                      {databaseBusy ? 'Creating...' : 'Create isolated database'}
+                    </Button>
+                  </div>
+                )}
+                {databaseNotice && <p className="text-xs text-muted-foreground">{databaseNotice}</p>}
               </CardContent>
             </Card>
 

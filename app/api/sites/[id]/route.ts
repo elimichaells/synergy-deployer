@@ -10,12 +10,13 @@ export async function GET(_: Request, context: { params: { id: string } }) {
     requireRole(user, ['admin', 'operator', 'viewer'])
 
     const { rows } = await query(
-      `select p.id, p.name, p.slug, p.repo_url, p.default_branch, p.project_type, p.root_path, p.install_cmd, p.build_cmd, p.start_cmd, p.pre_deploy_cmd, p.post_deploy_cmd, p.pm2_name, p.port, p.url, p.is_active, p.environment, p.production_id, p.created_at, p.updated_at,
+      `select p.id, p.name, p.slug, p.repo_url, p.default_branch, p.project_type, p.root_path, p.install_cmd, p.build_cmd, p.deploy_script, p.start_cmd, p.pre_deploy_cmd, p.post_deploy_cmd, p.pm2_name, p.port, p.url, p.auto_deploy, p.github_connection_id, p.is_active, p.environment, p.production_id, p.created_at, p.updated_at,
               s.id as staging_id, s.name as staging_name,
-              prod.name as production_name
+              prod.name as production_name, gc.name as github_connection_name, gc.account_login as github_account_login
        from projects p
        left join projects s on s.production_id = p.id and s.environment = 'staging'
        left join projects prod on p.production_id = prod.id
+       left join github_connections gc on gc.id = p.github_connection_id
        where p.id = $1`,
       [context.params.id]
     )
@@ -40,6 +41,28 @@ export async function PATCH(request: Request, context: { params: { id: string } 
       return NextResponse.json({ error: 'Invalid payload' }, { status: 400 })
     }
 
+    if (body.deployScript !== undefined && body.deployScript !== null) {
+      if (typeof body.deployScript !== 'string' || body.deployScript.length > 50_000) {
+        return NextResponse.json({ error: 'Deployment script must be at most 50,000 characters' }, { status: 400 })
+      }
+    }
+    if (body.autoDeploy !== undefined && typeof body.autoDeploy !== 'boolean') {
+      return NextResponse.json({ error: 'Auto deploy must be true or false' }, { status: 400 })
+    }
+
+    const { rows: previousRows } = await query<{ auto_deploy: boolean; github_connection_id: string | null }>(
+      'select auto_deploy,github_connection_id from projects where id=$1',
+      [context.params.id]
+    )
+    if (!previousRows[0]) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    const previous = previousRows[0]
+
+    if (body.githubConnectionId !== undefined && body.githubConnectionId !== null) {
+      if (typeof body.githubConnectionId !== 'string') return NextResponse.json({ error: 'Invalid GitHub connection' }, { status: 400 })
+      const { rows } = await query<{ id: string }>('select id from github_connections where id=$1', [body.githubConnectionId])
+      if (!rows[0]) return NextResponse.json({ error: 'GitHub connection not found' }, { status: 404 })
+    }
+
     const fieldMap: Record<string, string> = {
       name: 'name',
       repoUrl: 'repo_url',
@@ -48,9 +71,12 @@ export async function PATCH(request: Request, context: { params: { id: string } 
       rootPath: 'root_path',
       installCmd: 'install_cmd',
       buildCmd: 'build_cmd',
+      deployScript: 'deploy_script',
       startCmd: 'start_cmd',
       preDeployCmd: 'pre_deploy_cmd',
       postDeployCmd: 'post_deploy_cmd',
+      autoDeploy: 'auto_deploy',
+      githubConnectionId: 'github_connection_id',
       pm2Name: 'pm2_name',
       port: 'port',
       url: 'url',
@@ -76,19 +102,45 @@ export async function PATCH(request: Request, context: { params: { id: string } 
     const { rows } = await query(
       `update projects set ${updates.join(', ')}, updated_at = now()
        where id = $${updates.length + 1}
-       returning id, name, slug, repo_url, default_branch, project_type, root_path, install_cmd, build_cmd, start_cmd, pre_deploy_cmd, post_deploy_cmd, pm2_name, port, url, is_active, created_at, updated_at`,
+       returning id, name, slug, repo_url, default_branch, project_type, root_path, install_cmd, build_cmd, deploy_script, start_cmd, pre_deploy_cmd, post_deploy_cmd, pm2_name, port, url, auto_deploy, github_connection_id, is_active, created_at, updated_at`,
       values
     )
 
     const updatedProject = rows[0]
+    let webhook: { action: 'created' | 'updated'; repository: string } | null = null
+    const shouldEnsureWebhook = body.autoDeploy === true || (body.githubConnectionId !== undefined && previous.auto_deploy)
+    if (shouldEnsureWebhook) {
+      try {
+        const { ensureGitHubWebhook } = await import('@/lib/github-webhooks')
+        webhook = await ensureGitHubWebhook(context.params.id)
+      } catch (error) {
+        await query(
+          'update projects set auto_deploy=$1,github_connection_id=$2,updated_at=now() where id=$3',
+          [previous.auto_deploy, previous.github_connection_id, context.params.id]
+        )
+        throw error
+      }
+    }
 
-    // Update Caddy if URL/Port changed and valid
-    if (updatedProject.url && updatedProject.port) {
+    // Only regenerate Caddy when a routing field changed.
+    const routingChanged = body.url !== undefined || body.port !== undefined
+    if (routingChanged && updatedProject.url && updatedProject.port) {
       const { updateCaddy } = await import('@/lib/caddy')
       await updateCaddy(updatedProject.url, updatedProject.port)
     }
 
-    return NextResponse.json(updatedProject)
+    if (body.autoDeploy !== undefined) {
+      await query(
+        `insert into audit_logs (user_id, action, resource, details)
+         values ($1, 'project_auto_deploy_updated', $2, $3)`,
+        [user?.id, `project:${context.params.id}`, JSON.stringify({ enabled: body.autoDeploy, webhook: webhook ? { action: webhook.action, repository: webhook.repository } : null })]
+      )
+    }
+
+    return NextResponse.json({
+      ...updatedProject,
+      auto_deploy_ready: updatedProject.auto_deploy ? (shouldEnsureWebhook ? !!webhook : true) : false,
+    })
   } catch (error) {
     return jsonError(error)
   }

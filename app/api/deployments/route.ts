@@ -38,7 +38,9 @@ export async function GET(request: Request) {
       sql += ` where ${conditions.join(' and ')}`
     }
 
-    sql += ` order by d.started_at desc limit $${params.length + 1}`
+    sql += ` order by case d.status when 'running' then 0 when 'queued' then 1 else 2 end,
+                    d.started_at desc
+              limit $${params.length + 1}`
     params.push(limit)
 
     const { rows } = await query(sql, params)

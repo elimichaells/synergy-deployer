@@ -39,6 +39,7 @@ create table if not exists projects (
   root_path text not null,
   install_cmd text,
   build_cmd text,
+  deploy_script text,
   start_cmd text,
   pm2_name text not null,
   port integer,
@@ -46,10 +47,30 @@ create table if not exists projects (
   webhook_secret text,
   environment project_environment not null default 'production',
   production_id uuid references projects(id) on delete set null,
+  auto_deploy boolean not null default false,
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+create table if not exists github_connections (
+  id uuid primary key default gen_random_uuid(),
+  name text unique not null,
+  account_login text not null,
+  account_name text,
+  avatar_url text,
+  token_ciphertext text not null,
+  token_last_four text not null,
+  token_scopes text[] not null default '{}',
+  last_validated_at timestamptz,
+  last_error text,
+  created_by uuid references users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table projects add column if not exists github_connection_id uuid references github_connections(id) on delete set null;
+create index if not exists projects_github_connection_idx on projects (github_connection_id);
 
 create table if not exists deployments (
   id uuid primary key default gen_random_uuid(),
@@ -71,6 +92,85 @@ create table if not exists audit_logs (
   resource text not null,
   details jsonb,
   created_at timestamptz not null default now()
+);
+
+create table if not exists cron_jobs (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid references projects(id) on delete cascade,
+  name text unique not null,
+  description text,
+  language text not null default 'custom',
+  schedule text not null,
+  timezone text not null default 'UTC',
+  command text not null,
+  working_directory text not null,
+  timeout_seconds integer not null default 300 check (timeout_seconds between 1 and 86400),
+  enabled boolean not null default true,
+  next_run_at timestamptz,
+  last_started_at timestamptz,
+  last_finished_at timestamptz,
+  last_status text not null default 'idle',
+  last_exit_code integer,
+  last_output text,
+  created_by uuid references users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists cron_jobs_due_idx
+  on cron_jobs (next_run_at)
+  where enabled = true;
+
+create index if not exists cron_jobs_project_idx
+  on cron_jobs (project_id);
+
+create table if not exists backup_schedules (
+  id uuid primary key default gen_random_uuid(),
+  database_name text unique not null,
+  frequency text not null check (frequency in ('daily', 'weekly', 'monthly', 'yearly')),
+  time_of_day text not null default '03:00',
+  timezone text not null default 'UTC',
+  day_of_week integer not null default 0 check (day_of_week between 0 and 6),
+  day_of_month integer not null default 1 check (day_of_month between 1 and 28),
+  month_of_year integer not null default 1 check (month_of_year between 1 and 12),
+  retention_count integer not null default 30 check (retention_count between 1 and 365),
+  enabled boolean not null default true,
+  next_run_at timestamptz,
+  last_started_at timestamptz,
+  last_finished_at timestamptz,
+  last_status text not null default 'idle',
+  last_file text,
+  last_error text,
+  created_by uuid references users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists backup_schedules_due_idx
+  on backup_schedules (next_run_at)
+  where enabled = true;
+
+create table if not exists project_databases (
+  project_id uuid primary key references projects(id) on delete cascade,
+  database_name text unique not null,
+  role_name text unique not null,
+  password_ciphertext text not null,
+  created_by uuid references users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists workers (
+  id uuid primary key default gen_random_uuid(),
+  name text unique not null,
+  description text,
+  command text not null,
+  working_directory text not null,
+  pm2_name text unique not null,
+  enabled boolean not null default true,
+  created_by uuid references users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
 create table if not exists settings (

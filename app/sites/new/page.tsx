@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { AppShell } from '@/components/layout/app-shell'
 
@@ -26,6 +27,12 @@ interface GithubRepo {
   htmlUrl: string
   updatedAt: string
   registered: boolean
+}
+
+interface GitHubConnectionOption {
+  id: string
+  name: string
+  account_login: string
 }
 
 const projectTypeDefaults = {
@@ -51,6 +58,8 @@ export default function NewSitePage() {
   const [repos, setRepos] = useState<GithubRepo[]>([])
   const [reposLoading, setReposLoading] = useState(true)
   const [githubConnected, setGithubConnected] = useState(false)
+  const [githubConnections, setGithubConnections] = useState<GitHubConnectionOption[]>([])
+  const [githubConnectionId, setGithubConnectionId] = useState('')
   const [selectedRepo, setSelectedRepo] = useState<GithubRepo | null>(null)
   const [repoSearch, setRepoSearch] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
@@ -61,31 +70,46 @@ export default function NewSitePage() {
     repoUrl: '',
     defaultBranch: 'main',
     rootPath: '',
-    installCmd: 'npm install',
-    buildCmd: 'npm run build',
+    deployScript: '',
     startCmd: 'npm start',
     pm2Name: '',
     port: '',
     url: '',
+    autoDeploy: true,
   })
 
   useEffect(() => {
     const load = async () => {
-      const [meRes, reposRes] = await Promise.all([
+      const [meRes, connectionsRes] = await Promise.all([
         fetch('/api/auth/me'),
-        fetch('/api/github/repos'),
+        fetch('/api/github/connections'),
       ])
       const meData = meRes.ok ? await meRes.json() : { user: null }
       setUser(meData.user)
-      if (reposRes.ok) {
-        const reposData = await reposRes.json()
-        setGithubConnected(!!reposData.connected)
-        setRepos(reposData.repos || [])
+      if (connectionsRes.ok) {
+        const connections = (await connectionsRes.json()).connections || []
+        setGithubConnections(connections)
+        setGithubConnectionId(connections[0]?.id || '')
       }
-      setReposLoading(false)
     }
     void load()
   }, [])
+
+  useEffect(() => {
+    if (!githubConnectionId) {
+      setRepos([])
+      setGithubConnected(false)
+      setReposLoading(false)
+      return
+    }
+    setReposLoading(true)
+    setSelectedRepo(null)
+    fetch(`/api/github/repos?connectionId=${encodeURIComponent(githubConnectionId)}`)
+      .then(async (response) => response.ok ? response.json() : { connected: false, repos: [] })
+      .then((data) => { setGithubConnected(!!data.connected); setRepos(data.repos || []) })
+      .catch(() => { setGithubConnected(false); setRepos([]) })
+      .finally(() => setReposLoading(false))
+  }, [githubConnectionId])
 
   const canWrite = user?.role === 'admin' || user?.role === 'operator'
   const visibleRepos = useMemo(() => {
@@ -104,8 +128,6 @@ export default function NewSitePage() {
       name: repo.name,
       repoUrl: repo.cloneUrl,
       defaultBranch: repo.defaultBranch || 'main',
-      installCmd: defaults.installCmd,
-      buildCmd: defaults.buildCmd,
       startCmd: defaults.startCmd,
       pm2Name: '',
       rootPath: '',
@@ -144,12 +166,13 @@ export default function NewSitePage() {
       repoUrl: form.repoUrl.trim() || selectedRepo?.cloneUrl || '',
       defaultBranch: form.defaultBranch.trim(),
       rootPath: form.rootPath.trim() || null,
-      installCmd: form.installCmd.trim() || null,
-      buildCmd: form.buildCmd.trim() || null,
+      deployScript: form.deployScript.trim() || null,
       startCmd: form.startCmd.trim() || null,
       pm2Name: form.pm2Name.trim() || null,
       port: form.port ? Number(form.port) : null,
       url: form.url.trim() || null,
+      autoDeploy: form.autoDeploy,
+      githubConnectionId: githubConnectionId || null,
     }
 
     try {
@@ -194,6 +217,16 @@ export default function NewSitePage() {
           <CardContent>
             <form className="grid gap-4 md:grid-cols-2" onSubmit={handleCreate}>
               <div className="md:col-span-2 space-y-3">
+                <select
+                  className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
+                  value={githubConnectionId}
+                  onChange={(event) => setGithubConnectionId(event.target.value)}
+                >
+                  <option value="">Select GitHub connection</option>
+                  {githubConnections.map((connection) => (
+                    <option key={connection.id} value={connection.id}>{connection.name} (@{connection.account_login})</option>
+                  ))}
+                </select>
                 <div className="flex items-center justify-between gap-3">
                   <input
                     className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
@@ -210,7 +243,7 @@ export default function NewSitePage() {
                     <div className="px-4 py-6 text-sm text-muted-foreground">Loading repositories...</div>
                   ) : !githubConnected ? (
                     <div className="px-4 py-6 text-sm text-muted-foreground">
-                      GitHub is not connected. Connect it in Settings to select repositories here.
+                      Add or select a GitHub connection in Settings to browse repositories here.
                     </div>
                   ) : visibleRepos.length === 0 ? (
                     <div className="px-4 py-6 text-sm text-muted-foreground">No repositories found.</div>
@@ -244,8 +277,6 @@ export default function NewSitePage() {
                   setForm({
                     ...form,
                     projectType,
-                    installCmd: defaults.installCmd,
-                    buildCmd: defaults.buildCmd,
                     startCmd: defaults.startCmd,
                   })
                 }}
@@ -307,24 +338,45 @@ export default function NewSitePage() {
                   />
                 </>
               )}
+              <div className="md:col-span-2 grid gap-2">
+                <label className="text-sm font-medium text-foreground">Deployment script</label>
+                <textarea
+                  rows={12}
+                  className="min-h-64 w-full resize-y rounded-lg border border-white/10 bg-black/30 px-3 py-3 font-mono text-sm leading-6 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+                  value={form.deployScript}
+                  onChange={(e) => setForm({ ...form, deployScript: e.target.value })}
+                  placeholder={`git pull origin $BRANCH
+
+composer install --no-interaction --prefer-dist --optimize-autoloader
+php artisan migrate --force
+
+php artisan optimize:clear
+php artisan optimize
+
+npm install
+npm run build
+
+echo "✅ Deployment completed successfully!"`}
+                />
+                <p className="text-xs text-muted-foreground">Commands run from the project root and stop on the first failure. <code className="font-mono">$BRANCH</code> resolves to the default branch.</p>
+              </div>
               <input
                 className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
-                placeholder="Install command"
-                value={form.installCmd}
-                onChange={(e) => setForm({ ...form, installCmd: e.target.value })}
-              />
-              <input
-                className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
-                placeholder="Build command"
-                value={form.buildCmd}
-                onChange={(e) => setForm({ ...form, buildCmd: e.target.value })}
-              />
-              <input
-                className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
-                placeholder="Start command"
+                placeholder="Runtime start command"
                 value={form.startCmd}
                 onChange={(e) => setForm({ ...form, startCmd: e.target.value })}
               />
+              <div className="flex items-center justify-between rounded-lg border border-white/10 bg-black/20 px-3 py-2.5">
+                <div>
+                  <p className="text-xs font-medium text-foreground">Auto deploy</p>
+                  <p className="text-[11px] text-muted-foreground">Deploy when GitHub pushes to this branch.</p>
+                </div>
+                <Switch
+                  checked={form.autoDeploy}
+                  onCheckedChange={(checked) => setForm({ ...form, autoDeploy: checked })}
+                  aria-label="Auto deploy"
+                />
+              </div>
               <div className="md:col-span-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2.5">
                 <p className="text-xs font-medium text-amber-400">Automatic runtime setup</p>
                 <p className="text-[11px] text-muted-foreground mt-0.5">

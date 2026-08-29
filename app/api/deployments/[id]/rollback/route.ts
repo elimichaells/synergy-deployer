@@ -20,7 +20,7 @@ export async function POST(_request: Request, context: { params: { id: string } 
     }>(
       `select d.id as deployment_id, d.status as deployment_status, d.commit_sha as deployment_commit,
               p.id, p.name, p.name as project_name, p.repo_url, p.default_branch, p.project_type, p.root_path,
-              p.install_cmd, p.build_cmd, p.start_cmd, p.pre_deploy_cmd, p.post_deploy_cmd, p.pm2_name, p.port
+              p.install_cmd, p.build_cmd, p.deploy_script, p.start_cmd, p.pre_deploy_cmd, p.post_deploy_cmd, p.pm2_name, p.port, p.github_connection_id
        from deployments d
        join projects p on p.id = d.project_id
        where d.id = $1`,

@@ -55,12 +55,12 @@ export async function POST(request: Request) {
     }
 
     // Find ALL active projects matching this repo URL (staging + production)
-    const { rows: allProjects } = await query<DeployProject & { webhook_secret: string | null }>(
-      `SELECT id, name, repo_url, default_branch, project_type, root_path, install_cmd, build_cmd, start_cmd, pre_deploy_cmd, post_deploy_cmd, pm2_name, port, webhook_secret
+    const { rows: allProjects } = await query<DeployProject & { webhook_secret: string | null; auto_deploy: boolean }>(
+      `SELECT id, name, repo_url, default_branch, project_type, root_path, install_cmd, build_cmd, deploy_script, start_cmd, pre_deploy_cmd, post_deploy_cmd, pm2_name, port, github_connection_id, webhook_secret, auto_deploy
        FROM projects
        WHERE is_active = true AND (
-         repo_url = $1 OR repo_url = $2 OR repo_url = $3 OR
-         repo_url = $4 OR repo_url = $5 OR repo_url = $6
+         lower(repo_url) = lower($1) OR lower(repo_url) = lower($2) OR lower(repo_url) = lower($3) OR
+         lower(repo_url) = lower($4) OR lower(repo_url) = lower($5) OR lower(repo_url) = lower($6)
        )`,
       [
         `https://github.com/${repoFullName}`,
@@ -91,38 +91,44 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
     }
 
-    // Route to the project whose default_branch matches the pushed branch
-    const targetProject = allProjects.find(p => (p.default_branch || 'main') === pushedBranch)
+    // A repository and branch may intentionally feed more than one project.
+    const branchProjects = allProjects.filter(p => (p.default_branch || 'main') === pushedBranch)
 
-    if (!targetProject) {
+    if (branchProjects.length === 0) {
       return NextResponse.json({
         status: 'ignored',
         reason: `no project configured for branch "${pushedBranch}"`,
       })
     }
 
-    const commitSha = payload.head_commit?.id || 'unknown'
-    const commitMsg = payload.head_commit?.message || ''
-
-    // Start deploy async — creates DB record immediately, builds in background
-    const deploymentId = await startDeploy(targetProject, { trigger: 'webhook' })
-
-    if (!deploymentId) {
+    const targetProjects = branchProjects.filter(p => p.auto_deploy)
+    if (targetProjects.length === 0) {
       return NextResponse.json({
-        status: 'skipped',
-        reason: 'deploy already running',
-        project: targetProject.name,
+        status: 'ignored',
+        reason: `auto deploy is disabled for projects on branch "${pushedBranch}"`,
       })
     }
 
+    const commitSha = payload.head_commit?.id || 'unknown'
+    const commitMsg = payload.head_commit?.message || ''
+
+    const results = await Promise.all(targetProjects.map(async (project) => ({
+      project: project.name,
+      deploymentId: await startDeploy(project, { trigger: 'webhook' }),
+    })))
+    const deployments = results.filter((result) => result.deploymentId)
+    const skipped = results.filter((result) => !result.deploymentId).map((result) => result.project)
+
+    console.log(`[webhook] ${deliveryId || 'unknown'} ${repoFullName}@${pushedBranch}: started ${deployments.length}, skipped ${skipped.length}`)
+
     return NextResponse.json({
-      status: 'deploying',
-      project: targetProject.name,
+      status: deployments.length > 0 ? 'deploying' : 'skipped',
       branch: pushedBranch,
       commit: commitSha.substring(0, 7),
       message: commitMsg.substring(0, 100),
       deliveryId,
-      deploymentId,
+      deployments,
+      skipped,
     })
   } catch (error) {
     console.error('[webhook] Error:', error)

@@ -165,6 +165,16 @@ async function cleanupOldBackups(retentionDays: number): Promise<number> {
   return removed
 }
 
+export async function cleanupDatabaseBackups(database: string, retentionCount: number): Promise<number> {
+  const backups = (await listBackups()).filter((backup) => backup.database === database)
+  let removed = 0
+  for (const backup of backups.slice(Math.max(1, retentionCount))) {
+    await deleteBackup(backup.file).catch(() => undefined)
+    removed++
+  }
+  return removed
+}
+
 /** Nightly job: back up every database (except 'postgres'), then apply retention */
 export async function runScheduledBackups(): Promise<void> {
   const databases = await listDatabases()
@@ -204,6 +214,10 @@ export async function runScheduledBackups(): Promise<void> {
  */
 export async function backupSchedulerTick(): Promise<void> {
   try {
+    const { backupScheduleTick } = await import('@/lib/backup-schedules')
+    const configuredSchedules = await backupScheduleTick()
+    if (configuredSchedules > 0) return
+
     const enabled = await getSetting('BACKUP_ENABLED')
     if (enabled !== 'true') return
 

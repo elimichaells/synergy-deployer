@@ -1,12 +1,13 @@
 import { query } from '@/lib/db'
 import { runCommand } from '@/lib/exec'
-import { getSetting } from '@/lib/settings'
+import { getGitHubConnectionToken } from '@/lib/github-connections'
 import { existsSync, readFileSync } from 'fs'
 import { cp, rm } from 'fs/promises'
 import path from 'path'
 import { parse as parseDotenv } from 'dotenv'
 import { getProjectTypeDefaults, normalizeProjectType, type ProjectType } from '@/lib/project-types'
 import { notifyDeploy } from '@/lib/notify'
+import { getProjectDatabaseEnv } from '@/lib/project-databases'
 
 /**
  * Read the target project's own .env / .env.local directly and pass the
@@ -41,12 +42,14 @@ export interface DeployProject {
   root_path: string
   install_cmd: string | null
   build_cmd: string | null
+  deploy_script?: string | null
   start_cmd: string | null
   pre_deploy_cmd?: string | null
   post_deploy_cmd?: string | null
   project_type?: ProjectType | null
   pm2_name: string
   port: number | null
+  github_connection_id?: string | null
 }
 
 export interface DeployOptions {
@@ -92,6 +95,31 @@ function getBuildCommand(project: DeployProject) {
   return project.build_cmd ?? getProjectTypeDefaults(project.project_type).buildCmd
 }
 
+async function executeDeploymentScript(
+  script: string,
+  branch: string,
+  execute: (command: string) => Promise<{ code: number; output: string }>,
+  append: (chunk: string) => void | Promise<void>
+) {
+  const lines = script.replace(/\r\n/g, '\n').split('\n')
+
+  for (let index = 0; index < lines.length; index++) {
+    const source = lines[index].trim()
+    if (!source || source.startsWith('#')) continue
+
+    // Manager runs on Windows, where cmd.exe expands %BRANCH% instead of $BRANCH.
+    const command = process.platform === 'win32'
+      ? source.replace(/\$\{BRANCH\}|\$BRANCH\b/g, '%BRANCH%')
+      : source
+
+    await append(`[script:${index + 1}] ${source}\n`)
+    const result = await execute(command)
+    if (result.code !== 0) {
+      throw new Error(`Deployment script failed at line ${index + 1}`)
+    }
+  }
+}
+
 function getStartCommand(project: DeployProject) {
   return project.start_cmd ?? getProjectTypeDefaults(project.project_type).startCmd
 }
@@ -117,9 +145,10 @@ function getPm2StartCommand(project: DeployProject, rootPath: string) {
   return `pm2 start "${PM2_RUNNER}" --interpreter node --name "${project.pm2_name}"`
 }
 
-function getRuntimeEnv(project: DeployProject, rootPath: string): Record<string, string> {
+function getRuntimeEnv(project: DeployProject, rootPath: string, databaseEnv: Record<string, string> = {}): Record<string, string> {
   const startCmd = getStartCommand(project)
   return {
+    ...databaseEnv,
     HOSTNAME: normalizeProjectType(project.project_type) === 'angular' ? '127.0.0.1' : '0.0.0.0',
     MANAGER_APP_CWD: rootPath,
     MANAGER_PORT: project.port ? project.port.toString() : '',
@@ -168,21 +197,21 @@ async function runGitCommandWithRetry(
   return { code: 1, output: 'Max retries reached' } // Should return last result ideally, but this loop structure returns last result if code != 0
 }
 
-async function withGithubToken(repoUrl: string) {
-  const token = await getSetting('GITHUB_TOKEN')
-  if (!token) return repoUrl
-  if (repoUrl.startsWith('https://github.com/')) {
+async function withGithubToken(project: DeployProject) {
+  const token = await getGitHubConnectionToken(project.github_connection_id)
+  if (!token) return project.repo_url
+  if (project.repo_url.startsWith('https://github.com/')) {
     // Use token directly as username (works for both classic and fine-grained tokens)
-    return repoUrl.replace('https://', `https://${token}@`)
+    return project.repo_url.replace('https://', `https://${token}@`)
   }
-  return repoUrl
+  return project.repo_url
 }
 
-async function requireGithubToken(repoUrl: string) {
-  if (repoUrl.startsWith('https://')) {
-    const token = await getSetting('GITHUB_TOKEN')
+async function requireGithubToken(project: DeployProject) {
+  if (project.repo_url.startsWith('https://')) {
+    const token = await getGitHubConnectionToken(project.github_connection_id)
     if (!token) {
-      throw new Error('GITHUB_TOKEN is not set. Go to Settings and add your GitHub token before deploying.')
+      throw new Error('Assign a GitHub connection to this project before deploying.')
     }
   }
 }
@@ -261,8 +290,8 @@ export async function runDeploy(project: DeployProject, options: DeployOptions):
     await query(`UPDATE deployments SET log = $1 WHERE id = $2`, [log, deploymentId])
   }
 
-  await requireGithubToken(project.repo_url)
-  const repoUrl = await withGithubToken(project.repo_url)
+  await requireGithubToken(project)
+  const repoUrl = await withGithubToken(project)
   const rootPath = project.root_path
   const branch = project.default_branch || 'main'
   const nextDir = path.join(rootPath, '.next')
@@ -317,13 +346,19 @@ export async function runDeploy(project: DeployProject, options: DeployOptions):
     }
     await flush()
 
-    // Step 2: install dependencies
-    const installCmd = getInstallCommand(project)
-    if (installCmd) {
-      append(`[install] ${installCmd}\n`)
-      const install = await runCommand(installCmd, rootPath)
-      append(install.output)
-      if (install.code !== 0) throw new Error('Install failed')
+    const deploymentScript = project.deploy_script?.trim()
+    const managedDatabaseEnv = await getProjectDatabaseEnv(project.id)
+    const projectEnv = { ...loadProjectEnvFile(rootPath), ...managedDatabaseEnv, BRANCH: branch }
+
+    // Legacy command fields remain the fallback until a deployment script is saved.
+    if (!deploymentScript) {
+      const installCmd = getInstallCommand(project)
+      if (installCmd) {
+        append(`[install] ${installCmd}\n`)
+        const install = await runCommand(installCmd, rootPath)
+        append(install.output)
+        if (install.code !== 0) throw new Error('Install failed')
+      }
     }
     await flush()
 
@@ -336,28 +371,46 @@ export async function runDeploy(project: DeployProject, options: DeployOptions):
       await cp(nextDir, backupDir, { recursive: true })
     }
 
-    // Step 4: Build
-    const buildCmd = getBuildCommand(project)
-    if (buildCmd) {
-      append(`[build] ${buildCmd}\n`)
-      const build = await runCommand(buildCmd, rootPath)
-      append(build.output)
-      if (build.code !== 0) {
-        // Build failed — restore backup
-        append('[rollback] Build failed, restoring .next.backup\n')
+    // Step 4: Run the unified deployment script or the legacy build command.
+    if (deploymentScript) {
+      try {
+        await executeDeploymentScript(
+          deploymentScript,
+          branch,
+          (command) => runCommand(command, rootPath, undefined, undefined, { ...projectEnv, NODE_ENV: 'development' }),
+          append
+        )
+      } catch (error) {
+        append('[rollback] Deployment script failed, restoring .next.backup\n')
         if (existsSync(backupDir)) {
           if (existsSync(nextDir)) await rm(nextDir, { recursive: true, force: true })
           await cp(backupDir, nextDir, { recursive: true })
           await rm(backupDir, { recursive: true, force: true })
         }
-        throw new Error('Build failed')
+        throw error
+      }
+    } else {
+      const buildCmd = getBuildCommand(project)
+      if (buildCmd) {
+        append(`[build] ${buildCmd}\n`)
+        const build = await runCommand(buildCmd, rootPath)
+        append(build.output)
+        if (build.code !== 0) {
+          append('[rollback] Build failed, restoring .next.backup\n')
+          if (existsSync(backupDir)) {
+            if (existsSync(nextDir)) await rm(nextDir, { recursive: true, force: true })
+            await cp(backupDir, nextDir, { recursive: true })
+            await rm(backupDir, { recursive: true, force: true })
+          }
+          throw new Error('Build failed')
+        }
       }
     }
     await flush()
 
     // Step 5: PM2 restart (or start if first deploy)
     const pm2Check = await runCommand(`pm2 describe "${project.pm2_name}"`)
-    const syncEnv = getRuntimeEnv(project, rootPath)
+    const syncEnv = getRuntimeEnv(project, rootPath, managedDatabaseEnv)
     if (pm2Check.code !== 0) {
       append(`[pm2] Starting ${project.pm2_name} (first deploy)\n`)
       const start = await runCommand(
@@ -506,8 +559,8 @@ async function runDeployAsync(
   }
 
   try {
-    await requireGithubToken(project.repo_url)
-    const repoUrl = await withGithubToken(project.repo_url)
+    await requireGithubToken(project)
+    const repoUrl = await withGithubToken(project)
     const rootPath = project.root_path
     const branch = project.default_branch || 'main'
     const nextDir = path.join(rootPath, '.next')
@@ -520,7 +573,7 @@ async function runDeployAsync(
       const cloneResult = await run(`git clone --branch ${branch} ${repoUrl} "${rootPath}"`, undefined, GIT_NETWORK_TIMEOUT)
       if (cloneResult.code !== 0) {
         if (cloneResult.output.includes('Cannot prompt') || cloneResult.output.includes('Authentication failed')) {
-          throw new Error('Authentication failed. Please check your GITHUB_TOKEN in Settings.')
+          throw new Error('Authentication failed. Check the GitHub connection assigned to this project.')
         }
         throw new Error('Clone failed')
       }
@@ -569,7 +622,7 @@ async function runDeployAsync(
       }
       if (fetchResult.code !== 0) {
         if (fetchResult.output.includes('Cannot prompt') || fetchResult.output.includes('Authentication failed')) {
-          throw new Error('Authentication failed. Please check your GITHUB_TOKEN in Settings.')
+          throw new Error('Authentication failed. Check the GitHub connection assigned to this project.')
         }
         throw new Error('Fetch failed')
       }
@@ -621,7 +674,7 @@ async function runDeployAsync(
 
       if (fetch.code !== 0) {
         if (fetch.output.includes('Cannot prompt') || fetch.output.includes('Authentication failed')) {
-          throw new Error('Authentication failed. Please check your GITHUB_TOKEN in Settings.')
+          throw new Error('Authentication failed. Check the GitHub connection assigned to this project.')
         }
         throw new Error('Fetch failed')
       }
@@ -641,22 +694,25 @@ async function runDeployAsync(
       await run(`pm2 stop "${project.pm2_name}"`)
     }
 
-    // Step 2: install dependencies
-    const installCmd = getInstallCommand(project)
-    if (installCmd) {
-      await append(`[install] ${installCmd}\n`)
-      // Force development environment to ensure devDependencies (like @tailwindcss/postcss) are installed
-      const install = await run(installCmd, rootPath, undefined, { NODE_ENV: 'development' })
-      if (install.code !== 0) throw new Error('Install failed')
-    }
+    const managedDatabaseEnv = await getProjectDatabaseEnv(project.id)
+    const projectEnv = { ...loadProjectEnvFile(rootPath), ...managedDatabaseEnv }
+    const deploymentScript = project.deploy_script?.trim()
 
-    const projectEnv = loadProjectEnvFile(rootPath)
+    // Legacy command fields remain active until a unified deployment script is saved.
+    if (!deploymentScript) {
+      const installCmd = getInstallCommand(project)
+      if (installCmd) {
+        await append(`[install] ${installCmd}\n`)
+        // Force development environment so build-time dependencies are available.
+        const install = await run(installCmd, rootPath, undefined, { NODE_ENV: 'development' })
+        if (install.code !== 0) throw new Error('Install failed')
+      }
 
-    // Step 2.5: Pre-deploy script (migrations, codegen, …)
-    if (project.pre_deploy_cmd) {
-      await append(`[pre-deploy] ${project.pre_deploy_cmd}\n`)
-      const preDeploy = await run(project.pre_deploy_cmd, rootPath, undefined, { ...projectEnv, NODE_ENV: 'development' })
-      if (preDeploy.code !== 0) throw new Error('Pre-deploy script failed')
+      if (project.pre_deploy_cmd) {
+        await append(`[pre-deploy] ${project.pre_deploy_cmd}\n`)
+        const preDeploy = await run(project.pre_deploy_cmd, rootPath, undefined, { ...projectEnv, NODE_ENV: 'development' })
+        if (preDeploy.code !== 0) throw new Error('Pre-deploy script failed')
+      }
     }
 
     // Step 3: Backup .next
@@ -668,26 +724,49 @@ async function runDeployAsync(
       await cp(nextDir, backupDir, { recursive: true })
     }
 
-    // Step 4: Build
-    const buildCmd = getBuildCommand(project)
-    if (buildCmd) {
-      await append(`[build] ${buildCmd}\n`)
-      const build = await run(buildCmd, rootPath, undefined, projectEnv)
-
-      if (build.code !== 0) {
-        await append('[rollback] Build failed, restoring .next.backup\n')
+    // Step 4: Run the unified deployment script or the legacy build command.
+    if (deploymentScript) {
+      try {
+        await executeDeploymentScript(
+          deploymentScript,
+          branch,
+          (command) => run(command, rootPath, undefined, {
+            ...projectEnv,
+            BRANCH: branch,
+            NODE_ENV: 'development',
+          }),
+          append
+        )
+      } catch (error) {
+        await append('[rollback] Deployment script failed, restoring .next.backup\n')
         if (existsSync(backupDir)) {
           if (existsSync(nextDir)) await rm(nextDir, { recursive: true, force: true })
           await cp(backupDir, nextDir, { recursive: true })
           await rm(backupDir, { recursive: true, force: true })
         }
-        throw new Error('Build failed')
+        throw error
+      }
+    } else {
+      const buildCmd = getBuildCommand(project)
+      if (buildCmd) {
+        await append(`[build] ${buildCmd}\n`)
+        const build = await run(buildCmd, rootPath, undefined, projectEnv)
+
+        if (build.code !== 0) {
+          await append('[rollback] Build failed, restoring .next.backup\n')
+          if (existsSync(backupDir)) {
+            if (existsSync(nextDir)) await rm(nextDir, { recursive: true, force: true })
+            await cp(backupDir, nextDir, { recursive: true })
+            await rm(backupDir, { recursive: true, force: true })
+          }
+          throw new Error('Build failed')
+        }
       }
     }
 
     // Step 5: PM2 restart (or start if first deploy)
     const pm2Check = await run(`pm2 describe "${project.pm2_name}"`)
-    const env = getRuntimeEnv(project, rootPath)
+    const env = getRuntimeEnv(project, rootPath, managedDatabaseEnv)
 
     if (pm2Check.code !== 0) {
       await append(`[pm2] Starting ${project.pm2_name} (first deploy)\n`)
@@ -740,7 +819,7 @@ async function runDeployAsync(
 
     // Step 6.5: Post-deploy script (cache warmup, notifications, …)
     // Failure is logged but does not fail the deployment — the app is already live.
-    if (project.post_deploy_cmd) {
+    if (!deploymentScript && project.post_deploy_cmd) {
       await append(`[post-deploy] ${project.post_deploy_cmd}\n`)
       const postDeploy = await run(project.post_deploy_cmd, rootPath)
       if (postDeploy.code !== 0) {

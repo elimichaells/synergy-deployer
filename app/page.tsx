@@ -77,8 +77,8 @@ export default function Dashboard() {
 
   return (
     <AppShell
-      title="System Board"
-      subtitle="Complete operational overview of your infrastructure."
+      title="Overview"
+      subtitle="Deployment and application health at a glance."
       user={{ name: user?.name, role: user?.role }}
       actions={
         <button
@@ -86,7 +86,7 @@ export default function Dashboard() {
           className="flex items-center gap-2 rounded-lg bg-primary/10 px-4 py-2 text-xs font-semibold text-primary transition-colors hover:bg-primary/20"
         >
           <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
-          Refresh Data
+          <span className="hidden sm:inline">Refresh</span>
         </button>
       }
     >

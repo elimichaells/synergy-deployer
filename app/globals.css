@@ -4,27 +4,27 @@
 
 @layer base {
   :root {
-    --background: 228 20% 4%;
+    --background: 220 12% 7%;
     --foreground: 220 15% 96%;
-    --card: 228 16% 7%;
+    --card: 220 11% 10%;
     --card-foreground: 220 15% 96%;
-    --popover: 228 18% 6%;
+    --popover: 220 12% 9%;
     --popover-foreground: 220 15% 96%;
-    --primary: 199 95% 55%;
-    /* Luminous sky blue */
-    --primary-foreground: 228 30% 6%;
-    --secondary: 228 12% 14%;
+    --primary: 188 82% 48%;
+    --primary-foreground: 220 20% 6%;
+    --secondary: 220 9% 15%;
     --secondary-foreground: 220 15% 96%;
-    --muted: 228 12% 11%;
-    --muted-foreground: 225 8% 62%;
-    --accent: 228 12% 14%;
+    --muted: 220 9% 13%;
+    --muted-foreground: 218 8% 64%;
+    --accent: 220 9% 15%;
     --accent-foreground: 220 15% 96%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 98%;
-    --border: 228 12% 15%;
-    --input: 228 12% 16%;
-    --ring: 199 95% 55%;
-    --radius: 1rem;
+    --border: 220 9% 19%;
+    --input: 220 9% 18%;
+    --ring: 188 82% 48%;
+    --sidebar: 220 13% 8%;
+    --radius: 0.5rem;
   }
 }
 
@@ -39,11 +39,6 @@
 
   body {
     @apply bg-background text-foreground antialiased selection:bg-primary/30;
-    background-image:
-      radial-gradient(ellipse 80% 50% at 20% -10%, hsl(217 90% 55% / 0.13), transparent 60%),
-      radial-gradient(ellipse 60% 45% at 85% 5%, hsl(190 95% 50% / 0.09), transparent 55%),
-      radial-gradient(ellipse 65% 55% at 60% 110%, hsl(265 80% 55% / 0.08), transparent 60%);
-    background-attachment: fixed;
     min-height: 100vh;
   }
 
@@ -73,32 +68,21 @@
 
 @layer components {
 
-  /* ── Liquid glass surfaces ─────────────────────────────────────────── */
-
-  /* Primary card surface: frosted glass with a soft inner top highlight */
   .glass-card,
   .surface-card {
     position: relative;
-    background:
-      linear-gradient(160deg, hsl(225 20% 60% / 0.07), hsl(228 20% 30% / 0.03) 40%, hsl(228 20% 10% / 0.02));
-    backdrop-filter: blur(20px) saturate(140%);
-    -webkit-backdrop-filter: blur(20px) saturate(140%);
-    border: 1px solid hsl(220 30% 90% / 0.08);
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
     border-radius: var(--radius);
-    box-shadow:
-      inset 0 1px 0 0 hsl(220 40% 95% / 0.07),
-      0 8px 32px -8px hsl(228 40% 2% / 0.6);
+    box-shadow: 0 1px 2px hsl(220 20% 2% / 0.35);
   }
 
   /* Secondary / nested surface: lighter blur, quieter */
   .glass-panel,
   .surface-panel {
-    background: hsl(228 16% 14% / 0.35);
-    backdrop-filter: blur(12px) saturate(120%);
-    -webkit-backdrop-filter: blur(12px) saturate(120%);
-    border: 1px solid hsl(220 30% 90% / 0.06);
-    border-radius: calc(var(--radius) - 0.25rem);
-    box-shadow: inset 0 1px 0 0 hsl(220 40% 95% / 0.04);
+    background: hsl(var(--muted) / 0.65);
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
   }
 
   /* Recessed terminal / code well */
@@ -108,22 +92,6 @@
     box-shadow: inset 0 2px 12px hsl(230 40% 2% / 0.5);
   }
 
-  /* Sticky translucent header */
-  .glass-header {
-    background: hsl(var(--background) / 0.55);
-    backdrop-filter: blur(20px) saturate(150%);
-    -webkit-backdrop-filter: blur(20px) saturate(150%);
-    border-bottom: 1px solid hsl(220 30% 90% / 0.06);
-  }
-
-  /* Sidebar glass */
-  .glass-sidebar {
-    background: hsl(228 18% 6% / 0.55);
-    backdrop-filter: blur(24px) saturate(140%);
-    -webkit-backdrop-filter: blur(24px) saturate(140%);
-    border-right: 1px solid hsl(220 30% 90% / 0.06);
-  }
-
   /* Interactive glass hover lift */
   .glass-hover {
     transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease, background 200ms ease;
@@ -131,11 +99,7 @@
 
   .glass-hover:hover {
     border-color: hsl(199 95% 60% / 0.25);
-    box-shadow:
-      inset 0 1px 0 0 hsl(220 40% 95% / 0.08),
-      0 12px 40px -10px hsl(228 40% 2% / 0.7),
-      0 0 24px -6px hsl(199 95% 55% / 0.15);
-    transform: translateY(-1px);
+    box-shadow: 0 4px 14px hsl(220 20% 2% / 0.35);
   }
 
   /* ── Status glow dots ──────────────────────────────────────────────── */

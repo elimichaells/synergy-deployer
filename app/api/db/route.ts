@@ -4,6 +4,7 @@ import { requireRole } from '@/lib/rbac'
 import { jsonError } from '@/lib/api'
 import { listDatabases, createDatabase, PROTECTED_DATABASES } from '@/lib/db-admin'
 import { audit } from '@/lib/audit'
+import { listProjectDatabases } from '@/lib/project-databases'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,8 +13,8 @@ export async function GET() {
     const user = getSessionFromCookie()
     requireRole(user, ['admin'])
 
-    const databases = await listDatabases()
-    return NextResponse.json({ databases, protected: PROTECTED_DATABASES })
+    const [databases, projectDatabases] = await Promise.all([listDatabases(), listProjectDatabases()])
+    return NextResponse.json({ databases, projectDatabases, protected: PROTECTED_DATABASES })
   } catch (error) {
     return jsonError(error)
   }

@@ -4,6 +4,7 @@ import { requireRole } from '@/lib/rbac'
 import { jsonError } from '@/lib/api'
 import { runCommand } from '@/lib/exec'
 import { getSetting } from '@/lib/settings'
+import { readFile, stat } from 'fs/promises'
 
 type CaddyMode = 'pm2' | 'service' | 'cli' | 'unknown'
 type CaddyStatus = 'running' | 'stopped' | 'unknown'
@@ -58,10 +59,27 @@ async function detectPm2() {
   return match.pm2_env?.status || 'unknown'
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const user = getSessionFromCookie()
     requireRole(user, ['admin', 'operator', 'viewer'])
+
+    const includeConfig = new URL(request.url).searchParams.get('includeConfig') === '1'
+    let configDetails: { config: string; configSize: number; configModifiedAt: string } | undefined
+
+    if (includeConfig) {
+      requireRole(user, ['admin'])
+      const configPath = await getConfigPath()
+      const configStat = await stat(configPath)
+      if (configStat.size > 1024 * 1024) {
+        return NextResponse.json({ error: 'Caddyfile is too large to display' }, { status: 413 })
+      }
+      configDetails = {
+        config: await readFile(configPath, 'utf8'),
+        configSize: configStat.size,
+        configModifiedAt: configStat.mtime.toISOString(),
+      }
+    }
 
     const pm2Status = await detectPm2()
     if (pm2Status) {
@@ -69,6 +87,7 @@ export async function GET() {
         mode: 'pm2' as CaddyMode,
         status: pm2Status,
         configPath: await getConfigPath(),
+        ...configDetails,
       })
     }
 
@@ -80,6 +99,7 @@ export async function GET() {
         status: serviceStatus,
         configPath: await getConfigPath(),
         ...(version.code === 0 && { version: version.output.trim() }),
+        ...configDetails,
       })
     }
 
@@ -92,6 +112,7 @@ export async function GET() {
         status: (running ? 'running' : 'stopped') as CaddyStatus,
         configPath: await getConfigPath(),
         version: version.output.trim(),
+        ...configDetails,
       })
     }
 
@@ -99,6 +120,7 @@ export async function GET() {
       mode: 'unknown' as CaddyMode,
       status: 'unknown' as CaddyStatus,
       configPath: await getConfigPath(),
+      ...configDetails,
     })
   } catch (error) {
     return jsonError(error)
@@ -112,12 +134,20 @@ export async function POST(request: Request) {
 
     const body = await request.json().catch(() => null)
     const action = body?.action as string | undefined
-    if (!action || !['start', 'stop', 'reload', 'restart'].includes(action)) {
+    if (!action || !['start', 'stop', 'reload', 'restart', 'validate'].includes(action)) {
       return NextResponse.json({ error: 'Invalid action' }, { status: 400 })
     }
 
     const caddyExe = await getCaddyExe()
     const configPath = await getConfigPath()
+
+    if (action === 'validate') {
+      const result = await runCommand(`${caddyExe} validate --config "${configPath}" --adapter caddyfile`)
+      return NextResponse.json(
+        { mode: 'validation', valid: result.code === 0, output: result.output },
+        { status: result.code === 0 ? 200 : 422 },
+      )
+    }
 
     const pm2Status = await detectPm2()
     if (pm2Status) {

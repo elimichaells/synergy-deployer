@@ -27,6 +27,13 @@ export function runCommand(
   env?: Record<string, string>
 ): Promise<CommandResult> {
   return new Promise((resolve) => {
+    const pathEntries = [
+      'C:\\Program Files\\Go\\bin',
+      'C:\\Program Files\\PostgreSQL\\18\\bin',
+      'C:\\ProgramData\\chocolatey\\bin',
+      process.env.APPDATA ? `${process.env.APPDATA}\\npm` : '',
+    ].filter(Boolean)
+    const managedPath = [...pathEntries, process.env.Path || process.env.PATH || ''].join(';')
     const child = spawn(command, {
       cwd,
       shell: true,
@@ -34,6 +41,8 @@ export function runCommand(
       env: {
         ...process.env,
         ...env,
+        Path: managedPath,
+        PATH: managedPath,
         // Prevent git credential manager from opening GUI prompts in non-interactive PM2
         GIT_TERMINAL_PROMPT: '0',
         // Use GITHUB_TOKEN via deploy.ts withGithubToken() instead of credential manager

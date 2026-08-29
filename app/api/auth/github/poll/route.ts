@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSessionFromCookie } from '@/lib/auth'
 import { requireRole } from '@/lib/rbac'
 import { jsonError } from '@/lib/api'
-import { query } from '@/lib/db'
+import { createGitHubConnection } from '@/lib/github-connections'
 
 /**
  * GitHub Device Flow — Step 2: Poll for access token
@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
         }
 
         const body = await request.json()
-        const { deviceCode } = body
+        const { deviceCode, connectionName } = body
 
         if (!deviceCode) {
             return NextResponse.json({ error: 'deviceCode is required' }, { status: 400 })
@@ -65,14 +65,6 @@ export async function POST(request: NextRequest) {
         }
 
         if (data.access_token) {
-            // Save the token to the database
-            await query(
-                `INSERT INTO settings (key, value)
-         VALUES ('GITHUB_TOKEN', $1)
-         ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()`,
-                [data.access_token]
-            )
-
             // Verify the token by fetching user info
             const userRes = await fetch('https://api.github.com/user', {
                 headers: {
@@ -91,10 +83,17 @@ export async function POST(request: NextRequest) {
                 }
             }
 
+            const connection = await createGitHubConnection(
+                String(connectionName || githubUser?.login || 'GitHub connection'),
+                data.access_token,
+                user?.id
+            )
+
             return NextResponse.json({
                 status: 'success',
                 scope: data.scope,
                 githubUser,
+                connection,
             })
         }
 

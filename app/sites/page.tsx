@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { AppShell } from '@/components/layout/app-shell'
 
@@ -37,6 +38,10 @@ interface Project {
   pm2_name: string
   port: number | null
   url: string | null
+  auto_deploy: boolean
+  github_connection_id: string | null
+  github_connection_name: string | null
+  github_account_login: string | null
   is_active: boolean
   environment: 'production' | 'staging'
   production_id: string | null
@@ -73,6 +78,7 @@ export default function ProjectsPage() {
   const [discovering, setDiscovering] = useState(false)
   const [deployingId, setDeployingId] = useState<string | null>(null)
   const [promotingId, setPromotingId] = useState<string | null>(null)
+  const [autoDeployBusyId, setAutoDeployBusyId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
 
   const canWrite = user?.role === 'admin' || user?.role === 'operator'
@@ -143,6 +149,35 @@ export default function ProjectsPage() {
     }
   }
 
+  const handleAutoDeploy = async (project: Project) => {
+    if (!canWrite || autoDeployBusyId) return
+    const nextValue = !project.auto_deploy
+    setError(null)
+    setAutoDeployBusyId(project.id)
+    setProjects((current) => current.map((item) =>
+      item.id === project.id ? { ...item, auto_deploy: nextValue } : item
+    ))
+
+    try {
+      const res = await fetch(`/api/sites/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ autoDeploy: nextValue }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error || 'Failed to update auto deployment')
+      }
+    } catch (err) {
+      setProjects((current) => current.map((item) =>
+        item.id === project.id ? { ...item, auto_deploy: project.auto_deploy } : item
+      ))
+      setError(err instanceof Error ? err.message : 'Failed to update auto deployment')
+    } finally {
+      setAutoDeployBusyId(null)
+    }
+  }
+
   const handleDiscover = async () => {
     if (!canWrite) return
     setDiscovering(true)
@@ -181,8 +216,8 @@ export default function ProjectsPage() {
 
   return (
     <AppShell
-      title="Dashboard"
-      subtitle="Overview of your application ecosystem."
+      title="Applications"
+      subtitle="Environments, releases, and runtime assignments."
       user={{ name: user?.name, role: user?.role }}
       actions={
         <div className="flex items-center gap-3">
@@ -295,18 +330,19 @@ export default function ProjectsPage() {
           ) : (
             <div className="space-y-3">
               {/* Table Header */}
-              <div className="hidden md:grid grid-cols-[2fr_120px_1.5fr_1fr_140px] gap-4 px-6 py-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
+              <div className="hidden md:grid grid-cols-[2fr_110px_1.5fr_1fr_100px_140px] gap-4 px-6 py-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
                 <div>Name</div>
                 <div>Environment</div>
                 <div>Branch / Repo</div>
                 <div>Process</div>
+                <div>Auto Deploy</div>
                 <div className="text-right">Actions</div>
               </div>
 
               {filteredProjects.map(project => (
                 <div
                   key={project.id}
-                  className="group relative grid grid-cols-1 md:grid-cols-[2fr_120px_1.5fr_1fr_140px] items-center gap-4 rounded-xl border border-border/40 bg-card/30 p-4 transition-all hover:border-primary/30 hover:bg-card/60 hover:shadow-lg hover:shadow-black/20"
+                  className="group relative grid grid-cols-1 md:grid-cols-[2fr_110px_1.5fr_1fr_100px_140px] items-center gap-4 rounded-xl border border-border/40 bg-card/30 p-4 transition-all hover:border-primary/30 hover:bg-card/60 hover:shadow-lg hover:shadow-black/20"
                 >
                   {/* Name & Status */}
                   <div className="flex items-center gap-3 overflow-hidden">
@@ -346,6 +382,7 @@ export default function ProjectsPage() {
                       <Folder className="h-3 w-3" />
                       <span className="truncate">{project.repo_url?.split('/').slice(-2).join('/') || 'No Repo'}</span>
                     </div>
+                    <span className="truncate text-[10px] opacity-70">{project.github_connection_name ? `${project.github_connection_name} (@${project.github_account_login})` : 'Legacy GitHub connection'}</span>
                   </div>
 
                   {/* Process Info */}
@@ -355,6 +392,19 @@ export default function ProjectsPage() {
                     {project.port && (
                       <span className="px-1.5 py-0.5 rounded bg-secondary/50 text-[10px] font-bold text-foreground/70">:{project.port}</span>
                     )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      aria-label={`Auto deploy ${project.name}`}
+                      checked={project.auto_deploy}
+                      disabled={!canWrite || autoDeployBusyId === project.id}
+                      onCheckedChange={() => void handleAutoDeploy(project)}
+                      title={project.auto_deploy ? 'Disable auto deploy' : 'Enable auto deploy'}
+                    />
+                    <span className={`text-[10px] font-medium ${project.auto_deploy ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+                      {project.auto_deploy ? 'On' : 'Off'}
+                    </span>
                   </div>
 
                   {/* Actions */}

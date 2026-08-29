@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Database,
   Table2,
@@ -19,18 +19,31 @@ import {
   KeyRound,
   Archive,
   Download,
-  History
+  History,
+  CalendarClock,
+  Pencil
 } from 'lucide-react'
 import { AppShell } from '@/components/layout/app-shell'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { Switch } from '@/components/ui/switch'
+import Link from 'next/link'
 
 interface DatabaseInfo {
   name: string
   size_bytes: number
   size_pretty: string
   connections: number
+}
+
+interface ProjectDatabaseLink {
+  project_id: string
+  project_name: string
+  environment: 'production' | 'staging'
+  database_name: string
+  role_name: string
 }
 
 interface TableInfo {
@@ -75,11 +88,44 @@ interface BackupFile {
   created_at: string
 }
 
+type BackupFrequency = 'daily' | 'weekly' | 'monthly' | 'yearly'
+interface BackupSchedule {
+  id: string
+  database_name: string
+  frequency: BackupFrequency
+  time_of_day: string
+  timezone: string
+  day_of_week: number
+  day_of_month: number
+  month_of_year: number
+  retention_count: number
+  enabled: boolean
+  next_run_at: string | null
+  last_status: 'idle' | 'running' | 'success' | 'failed' | 'interrupted'
+  last_file: string | null
+  last_error: string | null
+}
+
+const backupTimezones = ['UTC', 'Africa/Accra', 'Europe/London', 'America/New_York', 'America/Los_Angeles', 'Asia/Dubai']
+const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+const emptyBackupSchedule = {
+  database: '', frequency: 'daily' as BackupFrequency, timeOfDay: '03:00', timezone: 'UTC',
+  dayOfWeek: 0, dayOfMonth: 1, monthOfYear: 1, retentionCount: 30, enabled: true,
+}
+
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+function backupScheduleLabel(schedule: BackupSchedule) {
+  if (schedule.frequency === 'daily') return `Daily at ${schedule.time_of_day}`
+  if (schedule.frequency === 'weekly') return `${weekdays[schedule.day_of_week]} at ${schedule.time_of_day}`
+  if (schedule.frequency === 'monthly') return `Day ${schedule.day_of_month} monthly at ${schedule.time_of_day}`
+  return `${months[schedule.month_of_year - 1]} ${schedule.day_of_month} yearly at ${schedule.time_of_day}`
 }
 
 function CellValue({ value }: { value: unknown }) {
@@ -143,6 +189,7 @@ export default function DatabasePage() {
   const [user, setUser] = useState<SessionUser | null>(null)
   const [userLoaded, setUserLoaded] = useState(false)
   const [databases, setDatabases] = useState<DatabaseInfo[]>([])
+  const [projectDatabases, setProjectDatabases] = useState<ProjectDatabaseLink[]>([])
   const [selectedDb, setSelectedDb] = useState<string | null>(null)
   const [tables, setTables] = useState<TableInfo[]>([])
   const [tablesLoading, setTablesLoading] = useState(false)
@@ -171,6 +218,10 @@ export default function DatabasePage() {
   const [dropping, setDropping] = useState(false)
 
   const [backups, setBackups] = useState<BackupFile[]>([])
+  const [backupSchedules, setBackupSchedules] = useState<BackupSchedule[]>([])
+  const [backupScheduleEditor, setBackupScheduleEditor] = useState<BackupSchedule | 'new' | null>(null)
+  const [backupScheduleForm, setBackupScheduleForm] = useState(emptyBackupSchedule)
+  const [backupScheduleBusy, setBackupScheduleBusy] = useState<string | null>(null)
   const [backupDbChoice, setBackupDbChoice] = useState('')
   const [creatingBackup, setCreatingBackup] = useState(false)
   const [backupNotice, setBackupNotice] = useState<string | null>(null)
@@ -178,6 +229,7 @@ export default function DatabasePage() {
   const [restoreTarget, setRestoreTarget] = useState('')
   const [restoring, setRestoring] = useState(false)
   const [deletingBackup, setDeletingBackup] = useState<string | null>(null)
+  const deepLinkHandled = useRef(false)
 
   useEffect(() => {
     fetch('/api/auth/me')
@@ -197,6 +249,7 @@ export default function DatabasePage() {
       }
       const data = await res.json()
       setDatabases(data.databases || [])
+      setProjectDatabases(data.projectDatabases || [])
       setProtectedDbs(data.protected || [])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load databases')
@@ -273,7 +326,7 @@ export default function DatabasePage() {
     if (user?.role === 'admin') void loadDatabases()
   }, [user, loadDatabases])
 
-  const selectDatabase = async (name: string) => {
+  const selectDatabase = useCallback(async (name: string) => {
     setSelectedDb(name)
     setSelectedTable(null)
     setRowsResult(null)
@@ -295,7 +348,16 @@ export default function DatabasePage() {
     } finally {
       setTablesLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    if (deepLinkHandled.current || databases.length === 0) return
+    const requested = new URLSearchParams(window.location.search).get('database')
+    deepLinkHandled.current = true
+    if (requested && databases.some((database) => database.name === requested)) {
+      void selectDatabase(requested)
+    }
+  }, [databases, selectDatabase])
 
   const loadRows = useCallback(async (db: string, schema: string, table: string, page: number) => {
     setRowsLoading(true)
@@ -345,11 +407,12 @@ export default function DatabasePage() {
 
   const loadBackups = useCallback(async () => {
     try {
-      const res = await fetch('/api/db/backups')
-      if (res.ok) {
-        const data = await res.json()
-        setBackups(data.backups || [])
-      }
+      const [backupsRes, schedulesRes] = await Promise.all([
+        fetch('/api/db/backups'),
+        fetch('/api/db/backups/schedules'),
+      ])
+      if (backupsRes.ok) setBackups((await backupsRes.json()).backups || [])
+      if (schedulesRes.ok) setBackupSchedules((await schedulesRes.json()).schedules || [])
     } catch {
       // ignore
     }
@@ -358,6 +421,78 @@ export default function DatabasePage() {
   useEffect(() => {
     if (user?.role === 'admin') void loadBackups()
   }, [user, loadBackups])
+
+  useEffect(() => {
+    if (!backupSchedules.some((schedule) => schedule.last_status === 'running')) return
+    const timer = window.setInterval(() => void loadBackups(), 5000)
+    return () => window.clearInterval(timer)
+  }, [backupSchedules, loadBackups])
+
+  const openBackupSchedule = (schedule: BackupSchedule | 'new') => {
+    setBackupScheduleEditor(schedule)
+    setBackupScheduleForm(schedule === 'new' ? {
+      ...emptyBackupSchedule,
+      database: backupDbChoice || selectedDb || '',
+    } : {
+      database: schedule.database_name,
+      frequency: schedule.frequency,
+      timeOfDay: schedule.time_of_day,
+      timezone: schedule.timezone,
+      dayOfWeek: schedule.day_of_week,
+      dayOfMonth: schedule.day_of_month,
+      monthOfYear: schedule.month_of_year,
+      retentionCount: schedule.retention_count,
+      enabled: schedule.enabled,
+    })
+  }
+
+  const saveBackupSchedule = async () => {
+    if (!backupScheduleEditor || backupScheduleBusy) return
+    setBackupScheduleBusy('save')
+    setError(null)
+    try {
+      const isNew = backupScheduleEditor === 'new'
+      const res = await fetch(isNew ? '/api/db/backups/schedules' : `/api/db/backups/schedules/${backupScheduleEditor.id}`, {
+        method: isNew ? 'POST' : 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(backupScheduleForm),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body.error || 'Failed to save backup schedule')
+      setBackupScheduleEditor(null)
+      await loadBackups()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save backup schedule')
+    } finally {
+      setBackupScheduleBusy(null)
+    }
+  }
+
+  const backupScheduleAction = async (schedule: BackupSchedule, action: 'toggle' | 'run' | 'delete') => {
+    if (backupScheduleBusy) return
+    if (action === 'delete' && !window.confirm(`Delete the ${schedule.database_name} backup schedule? Existing backup files will be kept.`)) return
+    setBackupScheduleBusy(`${schedule.id}-${action}`)
+    setError(null)
+    try {
+      const url = action === 'run'
+        ? `/api/db/backups/schedules/${schedule.id}/run`
+        : `/api/db/backups/schedules/${schedule.id}`
+      const options = action === 'run'
+        ? { method: 'POST' }
+        : action === 'delete'
+          ? { method: 'DELETE' }
+          : { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: !schedule.enabled }) }
+      const res = await fetch(url, options)
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body.error || `Failed to ${action} backup schedule`)
+      if (action === 'run') setBackupNotice(`Backup started for ${schedule.database_name}`)
+      await loadBackups()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Backup schedule action failed')
+    } finally {
+      setBackupScheduleBusy(null)
+    }
+  }
 
   const handleCreateBackup = async () => {
     const database = backupDbChoice || selectedDb
@@ -451,13 +586,16 @@ export default function DatabasePage() {
       subtitle="Browse and query every Postgres database on this server."
       user={{ name: user?.name, role: user?.role }}
       actions={
-        <button
-          onClick={() => void loadDatabases()}
-          className="flex items-center gap-2 rounded-lg bg-primary/10 px-4 py-2 text-xs font-semibold text-primary transition-colors hover:bg-primary/20"
-        >
-          <RefreshCw className="h-3 w-3" />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <Button asChild variant="outline" size="sm"><Link href="/postgres" target="_blank">Open SQL client</Link></Button>
+          <button
+            onClick={() => void loadDatabases()}
+            className="flex items-center gap-2 rounded-md bg-primary/10 px-4 py-2 text-xs font-semibold text-primary transition-colors hover:bg-primary/20"
+          >
+            <RefreshCw className="h-3 w-3" />
+            Refresh
+          </button>
+        </div>
       }
     >
       {error && (
@@ -552,7 +690,9 @@ export default function DatabasePage() {
                 </div>
               )}
 
-              {databases.map((db) => (
+              {databases.map((db) => {
+                const projectDatabase = projectDatabases.find((item) => item.database_name === db.name)
+                return (
                 <div key={db.name} className="group relative">
                   <button
                     onClick={() => void selectDatabase(db.name)}
@@ -562,9 +702,12 @@ export default function DatabasePage() {
                         : 'border border-transparent text-muted-foreground hover:bg-white/[0.04] hover:text-foreground'
                     }`}
                   >
+                    <span className="min-w-0">
                     <span className="flex items-center gap-2 truncate font-medium">
                       <Database className="h-3.5 w-3.5 shrink-0" />
                       <span className="truncate">{db.name}</span>
+                    </span>
+                    {projectDatabase && <span className="mt-0.5 block truncate pl-5 text-[10px] text-muted-foreground">{projectDatabase.project_name} · {projectDatabase.environment}</span>}
                     </span>
                     <span className="ml-2 flex shrink-0 items-center gap-2 text-[10px] text-muted-foreground">
                       {db.connections > 0 && (
@@ -573,7 +716,7 @@ export default function DatabasePage() {
                       {db.size_pretty}
                     </span>
                   </button>
-                  {!protectedDbs.includes(db.name) && (
+                  {!protectedDbs.includes(db.name) && !projectDatabase && (
                     <button
                       onClick={(e) => { e.stopPropagation(); setDropTarget(db.name); setDropConfirm('') }}
                       title={`Drop ${db.name}`}
@@ -583,7 +726,7 @@ export default function DatabasePage() {
                     </button>
                   )}
                 </div>
-              ))}
+              )})}
               {databases.length === 0 && (
                 <p className="px-3 py-4 text-center text-xs italic text-muted-foreground">Loading databases…</p>
               )}
@@ -805,10 +948,13 @@ export default function DatabasePage() {
                 Backups
               </CardTitle>
               <CardDescription>
-                pg_dump archives. Enable nightly automatic backups in Settings. Restores always go into a new database.
+                Automated pg_dump schedules and restorable archives. Restores always create a new database.
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
+              <Button variant="secondary" size="sm" className="h-8" onClick={() => openBackupSchedule('new')}>
+                <CalendarClock className="mr-2 h-3.5 w-3.5" />Schedule
+              </Button>
               <select
                 className="h-8 rounded-lg border border-white/10 bg-black/30 px-2 text-xs text-foreground focus:border-primary/40 focus:outline-none"
                 value={backupDbChoice}
@@ -832,9 +978,50 @@ export default function DatabasePage() {
               {backupNotice}
             </div>
           )}
+          <div className="mb-6 border-b border-border pb-6">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">Automatic schedules</p>
+                <p className="text-xs text-muted-foreground">One daily, weekly, monthly, or yearly schedule per database.</p>
+              </div>
+              <span className="text-xs text-muted-foreground">{backupSchedules.filter((schedule) => schedule.enabled).length} enabled</span>
+            </div>
+            {backupSchedules.length === 0 ? (
+              <div className="rounded-md border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">No automatic backup schedules.</div>
+            ) : (
+              <div className="divide-y divide-border rounded-md border border-border">
+                {backupSchedules.map((schedule) => (
+                  <div key={schedule.id} className="grid gap-3 px-4 py-3 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_auto] md:items-center">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="truncate font-mono text-sm font-medium">{schedule.database_name}</p>
+                        <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${schedule.last_status === 'success' ? 'bg-emerald-500/10 text-emerald-400' : schedule.last_status === 'failed' ? 'bg-red-500/10 text-red-400' : schedule.last_status === 'running' ? 'bg-sky-500/10 text-sky-400' : 'bg-secondary text-muted-foreground'}`}>{schedule.last_status}</span>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">{backupScheduleLabel(schedule)} · {schedule.timezone}</p>
+                    </div>
+                    <div className="text-xs">
+                      <p className="text-[10px] uppercase text-muted-foreground">Next backup</p>
+                      <p className="mt-1">{schedule.enabled && schedule.next_run_at ? new Date(schedule.next_run_at).toLocaleString() : 'Paused'}</p>
+                    </div>
+                    <div className="text-xs">
+                      <p className="text-[10px] uppercase text-muted-foreground">Retention</p>
+                      <p className="mt-1">Latest {schedule.retention_count} backups</p>
+                    </div>
+                    <div className="flex items-center justify-end gap-1.5">
+                      <Switch checked={schedule.enabled} onCheckedChange={() => void backupScheduleAction(schedule, 'toggle')} disabled={!!backupScheduleBusy || schedule.last_status === 'running'} aria-label={`Automatic backups for ${schedule.database_name}`} />
+                      <button type="button" title="Run backup now" aria-label="Run backup now" onClick={() => void backupScheduleAction(schedule, 'run')} disabled={!!backupScheduleBusy || schedule.last_status === 'running'} className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground disabled:opacity-40"><Play className="h-3.5 w-3.5" /></button>
+                      <button type="button" title="Edit schedule" aria-label="Edit schedule" onClick={() => openBackupSchedule(schedule)} disabled={schedule.last_status === 'running'} className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground disabled:opacity-40"><Pencil className="h-3.5 w-3.5" /></button>
+                      <button type="button" title="Delete schedule" aria-label="Delete schedule" onClick={() => void backupScheduleAction(schedule, 'delete')} disabled={!!backupScheduleBusy || schedule.last_status === 'running'} className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-red-400 disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /></button>
+                    </div>
+                    {schedule.last_error && <p className="text-xs text-red-400 md:col-span-4">{schedule.last_error}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
           {backups.length === 0 ? (
             <p className="py-8 text-center text-sm italic text-muted-foreground">
-              No backups yet. Create one above, or enable nightly backups in Settings.
+              No backup archives yet. Create one above or wait for an automatic schedule.
             </p>
           ) : (
             <div className="overflow-x-auto rounded-lg border border-white/[0.08]">
@@ -913,6 +1100,68 @@ export default function DatabasePage() {
           )}
         </CardContent>
       </Card>
+
+      <Sheet open={backupScheduleEditor !== null} onOpenChange={(open) => !open && setBackupScheduleEditor(null)}>
+        <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
+          <SheetHeader>
+            <SheetTitle>{backupScheduleEditor === 'new' ? 'Schedule database backup' : 'Edit backup schedule'}</SheetTitle>
+            <SheetDescription>Configure an automatic pg_dump schedule for one database.</SheetDescription>
+          </SheetHeader>
+          <div className="mt-6 space-y-5">
+            <label className="grid gap-2 text-sm font-medium">
+              Database
+              <select value={backupScheduleForm.database} onChange={(event) => setBackupScheduleForm({ ...backupScheduleForm, database: event.target.value })} className="h-10 rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring">
+                <option value="">Select database</option>
+                {databases.map((database) => <option key={database.name} value={database.name}>{database.name}</option>)}
+              </select>
+            </label>
+
+            <div className="grid gap-2">
+              <label className="text-sm font-medium">Frequency</label>
+              <div className="grid grid-cols-4 rounded-md border border-border bg-muted p-1">
+                {(['daily', 'weekly', 'monthly', 'yearly'] as BackupFrequency[]).map((frequency) => (
+                  <button
+                    key={frequency}
+                    type="button"
+                    aria-pressed={backupScheduleForm.frequency === frequency}
+                    onClick={() => setBackupScheduleForm({ ...backupScheduleForm, frequency })}
+                    className={`h-8 rounded px-2 text-xs font-medium capitalize transition-colors ${backupScheduleForm.frequency === frequency ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                  >
+                    {frequency}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="grid gap-2 text-sm font-medium">Run time<input type="time" value={backupScheduleForm.timeOfDay} onChange={(event) => setBackupScheduleForm({ ...backupScheduleForm, timeOfDay: event.target.value })} className="h-10 rounded-md border border-input bg-transparent px-3 text-sm outline-none focus:ring-1 focus:ring-ring" /></label>
+              <label className="grid gap-2 text-sm font-medium">Timezone<select value={backupScheduleForm.timezone} onChange={(event) => setBackupScheduleForm({ ...backupScheduleForm, timezone: event.target.value })} className="h-10 rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring">{backupTimezones.map((timezone) => <option key={timezone}>{timezone}</option>)}</select></label>
+            </div>
+
+            {backupScheduleForm.frequency === 'weekly' && (
+              <label className="grid gap-2 text-sm font-medium">Weekday<select value={backupScheduleForm.dayOfWeek} onChange={(event) => setBackupScheduleForm({ ...backupScheduleForm, dayOfWeek: Number(event.target.value) })} className="h-10 rounded-md border border-input bg-background px-3 text-sm">{weekdays.map((day, index) => <option key={day} value={index}>{day}</option>)}</select></label>
+            )}
+            {(backupScheduleForm.frequency === 'monthly' || backupScheduleForm.frequency === 'yearly') && (
+              <label className="grid gap-2 text-sm font-medium">Day of month<select value={backupScheduleForm.dayOfMonth} onChange={(event) => setBackupScheduleForm({ ...backupScheduleForm, dayOfMonth: Number(event.target.value) })} className="h-10 rounded-md border border-input bg-background px-3 text-sm">{Array.from({ length: 28 }, (_, index) => index + 1).map((day) => <option key={day}>{day}</option>)}</select></label>
+            )}
+            {backupScheduleForm.frequency === 'yearly' && (
+              <label className="grid gap-2 text-sm font-medium">Month<select value={backupScheduleForm.monthOfYear} onChange={(event) => setBackupScheduleForm({ ...backupScheduleForm, monthOfYear: Number(event.target.value) })} className="h-10 rounded-md border border-input bg-background px-3 text-sm">{months.map((month, index) => <option key={month} value={index + 1}>{month}</option>)}</select></label>
+            )}
+
+            <label className="grid gap-2 text-sm font-medium">Retention count<input type="number" min={1} max={365} value={backupScheduleForm.retentionCount} onChange={(event) => setBackupScheduleForm({ ...backupScheduleForm, retentionCount: Number(event.target.value) })} className="h-10 rounded-md border border-input bg-transparent px-3 text-sm outline-none focus:ring-1 focus:ring-ring" /><span className="text-xs font-normal text-muted-foreground">Older archives for this database are removed after the latest count is exceeded.</span></label>
+
+            <div className="flex items-center justify-between rounded-md border border-border p-3">
+              <div><p className="text-sm font-medium">Automatic backups</p><p className="text-xs text-muted-foreground">Calculate the next run and execute this schedule.</p></div>
+              <Switch checked={backupScheduleForm.enabled} onCheckedChange={(enabled) => setBackupScheduleForm({ ...backupScheduleForm, enabled })} aria-label="Automatic backups" />
+            </div>
+
+            <Button className="w-full" onClick={() => void saveBackupSchedule()} disabled={backupScheduleBusy === 'save' || !backupScheduleForm.database}>
+              {backupScheduleBusy === 'save' ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Save backup schedule
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
     </AppShell>
   )
 }
