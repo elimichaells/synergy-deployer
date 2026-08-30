@@ -4,12 +4,12 @@ import { getSessionFromCookie } from '@/lib/auth'
 import { requireRole } from '@/lib/rbac'
 import { jsonError } from '@/lib/api'
 
-export async function GET(_request: Request, context: { params: { id: string } }) {
+export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator', 'viewer'])
 
-    const deploymentId = context.params.id
+    const deploymentId = (await context.params).id
 
     // Verify deployment exists
     const { rows } = await query<{ id: string; status: string }>(

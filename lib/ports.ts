@@ -3,7 +3,7 @@ import { query } from '@/lib/db'
 
 const DEFAULT_START = 3000
 const DEFAULT_END = 9999
-const RESERVED_PORTS = new Set([4000, 5432, 80, 443])
+const RESERVED_PORTS = new Set([Number(process.env.MANAGER_PORT || 4000), 5432, 80, 443])
 
 function canListen(port: number) {
   return new Promise<boolean>((resolve) => {

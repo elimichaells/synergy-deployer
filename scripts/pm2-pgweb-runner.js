@@ -6,6 +6,8 @@ const managerRoot = process.env.MANAGER_ROOT || path.resolve(__dirname, '..')
 require('dotenv').config({ path: path.join(managerRoot, '.env.local'), quiet: true })
 const executable = process.env.PGWEB_EXE || 'C:\\web\\tools\\pgweb\\pgweb.exe'
 const secret = process.env.JWT_SECRET
+const pgwebPort = process.env.PGWEB_PORT || '8432'
+const managerPort = process.env.MANAGER_PORT || '4000'
 
 if (!secret) {
   console.error('JWT_SECRET is required to start Pgweb')
@@ -15,14 +17,14 @@ if (!secret) {
 const connectToken = createHmac('sha256', secret).update('manager:pgweb-connect').digest('base64url')
 const child = spawn(executable, [
   '/bind:127.0.0.1',
-  '/listen:8432',
+  `/listen:${pgwebPort}`,
   '/sessions',
   '/skip-open',
   '/prefix:postgres',
   '/no-ssh',
   '/idle-timeout:30',
   '/query-timeout:120',
-  '/connect-backend:http://127.0.0.1:4000/api/auth/pgweb-connect',
+  `/connect-backend:http://127.0.0.1:${managerPort}/api/auth/pgweb-connect`,
   `/connect-token:${connectToken}`,
 ], {
   cwd: managerRoot,

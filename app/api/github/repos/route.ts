@@ -22,7 +22,7 @@ interface GithubRepo {
 
 export async function GET(request: Request) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator'])
 
     const url = new URL(request.url)

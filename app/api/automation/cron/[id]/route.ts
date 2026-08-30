@@ -8,14 +8,14 @@ import { ensureAutomationSchema } from '@/lib/automation-schema'
 import { CronJob, getNextRun, isCronLanguage } from '@/lib/cron-jobs'
 import { validateWorkingDirectory } from '@/lib/workers'
 
-export async function PATCH(request: Request, context: { params: { id: string } }) {
+export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator'])
     await ensureAutomationSchema()
     const body = await request.json().catch(() => null)
     if (!body) throw new ApiError('Invalid payload', 400)
-    const { rows } = await query<CronJob>('select * from cron_jobs where id = $1', [context.params.id])
+    const { rows } = await query<CronJob>('select * from cron_jobs where id = $1', [(await context.params).id])
     const current = rows[0]
     if (!current) throw new ApiError('Cron job not found', 404)
 
@@ -55,7 +55,7 @@ export async function PATCH(request: Request, context: { params: { id: string } 
          schedule = $5, timezone = $6, command = $7, working_directory = $8,
          timeout_seconds = $9, enabled = $10, next_run_at = $11, updated_at = now()
        where id = $12 returning *`,
-      [projectId, language, name, description, schedule, timezone, command, workingDirectory, timeoutSeconds, enabled, nextRun, context.params.id]
+      [projectId, language, name, description, schedule, timezone, command, workingDirectory, timeoutSeconds, enabled, nextRun, (await context.params).id]
     )
     await audit(user?.id, 'cron.update', name, { projectId, language, schedule, timezone, enabled })
     return NextResponse.json(updated[0])
@@ -65,18 +65,18 @@ export async function PATCH(request: Request, context: { params: { id: string } 
   }
 }
 
-export async function DELETE(_: Request, context: { params: { id: string } }) {
+export async function DELETE(_: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin'])
     await ensureAutomationSchema()
     const { rows: current } = await query<Pick<CronJob, 'name' | 'last_status'>>(
       'select name, last_status from cron_jobs where id = $1',
-      [context.params.id]
+      [(await context.params).id]
     )
     if (!current[0]) throw new ApiError('Cron job not found', 404)
     if (current[0].last_status === 'running') throw new ApiError('Stop or wait for the running job before deleting it', 409)
-    const { rows } = await query<{ name: string }>('delete from cron_jobs where id = $1 returning name', [context.params.id])
+    const { rows } = await query<{ name: string }>('delete from cron_jobs where id = $1 returning name', [(await context.params).id])
     await audit(user?.id, 'cron.delete', rows[0].name)
     return NextResponse.json({ ok: true })
   } catch (error) {

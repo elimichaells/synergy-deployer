@@ -4,9 +4,9 @@ import { getSessionFromCookie } from '@/lib/auth'
 import { requireRole } from '@/lib/rbac'
 import { jsonError } from '@/lib/api'
 
-export async function GET(_: Request, context: { params: { id: string } }) {
+export async function GET(_: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator', 'viewer'])
 
     const { rows } = await query(
@@ -17,7 +17,7 @@ export async function GET(_: Request, context: { params: { id: string } }) {
        left join users u on u.id = d.user_id
        where d.id = $1
        limit 1`,
-      [context.params.id]
+      [(await context.params).id]
     )
 
     if (!rows[0]) {

@@ -1,56 +1,59 @@
-# Quick Start
+# Windows Server Quick Start
 
-## One-command bootstrap (new server)
+## Build a package
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap-manager.ps1 `
-  -ManagerDomain deploy.example.com `
-  -AdminEmail admin@example.com `
-  -AdminPassword 'StrongPassword!123' `
-  -DbPassword 'your-postgres-password'
-```
+For the graphical, self-contained setup executable and its matching online
+release assets:
 
-Prerequisites:
-- Node.js + npm
-- PM2 installed globally (`npm i -g pm2`)
-- PostgreSQL running
-- `C:\web\caddy.exe` exists
+    npm run package:windows:exe
 
-## Manual setup
+For the PowerShell/ZIP package only:
 
-1. Install dependencies
+    powershell -ExecutionPolicy Bypass -File .\scripts\package-manager.ps1
 
-```powershell
-cd C:\web\manager-v2
-npm install
-```
+The executable build creates `manager-setup-*.exe`, the versioned Manager ZIP,
+and SHA-256 manifests under the packages directory. Sign the EXE with the
+organization's Authenticode certificate before external distribution.
 
-2. Configure `.env.local`
+## Install on a new server
 
-```env
-JWT_SECRET=change-this-secret
-DATABASE_URL=postgres://postgres:password@localhost:5432/server_manager
-GITHUB_TOKEN=ghp_xxxxx
-PRODUCTION_PATH=C:\\web\\production
-```
+Recommended: run `ManagerSetup.exe`, choose Online to install `latest` or an
+explicit GitHub release tag, complete the server details, and run preflight.
+Choose Embedded offline package when the server cannot access GitHub. The
+target server does not need .NET or any other preinstalled package.
 
-3. Create schema
+Unattended alternative:
 
-```powershell
-psql "%DATABASE_URL%" -f db/schema.sql
-```
+1. Extract the ZIP.
+2. Double-click `setup.cmd` to launch the interactive wizard. It requests
+   elevation automatically.
+3. For unattended installation, edit `manager-install.json` and preview every
+   planned host change:
 
-4. Create the first admin user
+    .\setup.cmd -Unattended -Plan
 
-```sql
-insert into users (email, name, password_hash, role)
-values ('admin@local', 'Admin', '$2b$12$REPLACE_WITH_BCRYPT', 'admin');
-```
+4. Run the unattended installation:
 
-5. Run the app
+    .\setup.cmd -Unattended
 
-```powershell
-npm run dev
-```
+Omit -Unattended for the interactive wizard. Passwords may be supplied through
+MANAGER_INSTALL_ADMINPASSWORD, MANAGER_INSTALL_DBADMINPASSWORD, and
+MANAGER_INSTALL_DBAPPPASSWORD environment variables instead of the JSON file.
+Use MANAGER_INSTALL_APPDBADMINPASSWORD when reinstalling or registering an
+existing managed application PostgreSQL cluster.
 
-Open `http://localhost:4000`.
+No preinstalled packages or services are required. The installer adds Node.js
+LTS, the latest npm supported by that Node release, Git, PM2, Caddy,
+PostgreSQL, and selected optional runtimes and database engines. It checks the
+host, initializes the
+Manager control database, builds the application, validates Caddy, starts PM2
+services, configures boot recovery, opens only ports 80 and 443, and writes a
+secret-free report with installed component versions to
+C:\ProgramData\Manager\install-report.json. A 64-bit Windows Server and an
+internet connection are the only host requirements.
+
+The default database layout keeps Manager control data on `127.0.0.1:5432` and
+project databases on a separate `ManagerPostgreSQLApplications` Windows service
+at `127.0.0.1:5433`. Manager registers the second cluster as the recommended
+provider. Projects receive isolated databases and users; automatic project
+backups are configured from **Data services**.

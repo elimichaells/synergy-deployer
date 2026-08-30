@@ -5,12 +5,12 @@ import { requireRole } from '@/lib/rbac'
 import { jsonError } from '@/lib/api'
 import { startDeploy, type DeployProject } from '@/lib/deploy'
 
-export async function POST(_: Request, context: { params: { id: string } }) {
+export async function POST(_: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator'])
 
-    const stagingId = context.params.id
+    const stagingId = (await context.params).id
 
     // 1. Get the staging project and verify it's a staging environment
     const { rows: stagingRows } = await query<DeployProject & { environment: string; production_id: string }>(
@@ -50,7 +50,7 @@ export async function POST(_: Request, context: { params: { id: string } }) {
 
     // 4. Get the production project
     const { rows: prodRows } = await query<DeployProject>(
-      `SELECT id, name, repo_url, default_branch, project_type, root_path, install_cmd, build_cmd, deploy_script, start_cmd, pre_deploy_cmd, post_deploy_cmd, pm2_name, port, github_connection_id
+      `SELECT id, name, repo_url, default_branch, project_type, root_path, install_cmd, build_cmd, deploy_script, start_cmd, pre_deploy_cmd, post_deploy_cmd, runtime_versions, pm2_name, port, github_connection_id
        FROM projects WHERE id = $1`,
       [staging.production_id]
     )

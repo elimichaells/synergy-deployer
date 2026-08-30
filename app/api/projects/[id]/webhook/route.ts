@@ -5,14 +5,14 @@ import { getSessionFromCookie } from '@/lib/auth'
 import { requireRole } from '@/lib/rbac'
 import { jsonError } from '@/lib/api'
 
-export async function GET(_: Request, context: { params: { id: string } }) {
+export async function GET(_: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin'])
 
     const { rows } = await query<{ webhook_secret: string | null }>(
       'SELECT webhook_secret FROM projects WHERE id = $1',
-      [context.params.id]
+      [(await context.params).id]
     )
 
     if (rows.length === 0) {
@@ -30,16 +30,16 @@ export async function GET(_: Request, context: { params: { id: string } }) {
   }
 }
 
-export async function POST(_: Request, context: { params: { id: string } }) {
+export async function POST(_: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin'])
 
     const secret = randomBytes(32).toString('hex')
 
     const { rowCount } = await query(
       'UPDATE projects SET webhook_secret = $1, updated_at = now() WHERE id = $2',
-      [secret, context.params.id]
+      [secret, (await context.params).id]
     )
 
     if (rowCount === 0) {
@@ -50,7 +50,7 @@ export async function POST(_: Request, context: { params: { id: string } }) {
     await query(
       `INSERT INTO audit_logs (user_id, action, resource, details)
        VALUES ($1, 'webhook_secret_generated', $2, $3)`,
-      [user?.id, `project:${context.params.id}`, JSON.stringify({ projectId: context.params.id })]
+      [user?.id, `project:${(await context.params).id}`, JSON.stringify({ projectId: (await context.params).id })]
     )
 
     return NextResponse.json({
@@ -62,14 +62,14 @@ export async function POST(_: Request, context: { params: { id: string } }) {
   }
 }
 
-export async function DELETE(_: Request, context: { params: { id: string } }) {
+export async function DELETE(_: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin'])
 
     await query(
       'UPDATE projects SET webhook_secret = NULL, updated_at = now() WHERE id = $1',
-      [context.params.id]
+      [(await context.params).id]
     )
 
     return NextResponse.json({ status: 'removed' })

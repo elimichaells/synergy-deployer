@@ -43,19 +43,19 @@ async function getProjectRoot(id: string) {
 }
 
 /** GET: list the package.json scripts of the site so the UI can offer quick actions */
-export async function GET(_request: Request, context: { params: { id: string } }) {
+export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator', 'viewer'])
 
-    const project = await getProjectRoot(context.params.id)
+    const project = await getProjectRoot((await context.params).id)
     if (!project) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 })
     }
 
     const pkgPath = path.join(project.root_path, 'package.json')
     if (!existsSync(pkgPath)) {
-      return NextResponse.json({ scripts: {}, hasPackageJson: false, running: runningCommands.has(context.params.id) })
+      return NextResponse.json({ scripts: {}, hasPackageJson: false, running: runningCommands.has((await context.params).id) })
     }
 
     let scripts: Record<string, string> = {}
@@ -69,7 +69,7 @@ export async function GET(_request: Request, context: { params: { id: string } }
     return NextResponse.json({
       scripts,
       hasPackageJson: true,
-      running: runningCommands.has(context.params.id),
+      running: runningCommands.has((await context.params).id),
     })
   } catch (error) {
     return jsonError(error)
@@ -77,9 +77,9 @@ export async function GET(_request: Request, context: { params: { id: string } }
 }
 
 /** POST: run an npm command in the site's root path, streaming output as plain text chunks */
-export async function POST(request: Request, context: { params: { id: string } }) {
+export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator'])
 
     const body = await request.json().catch(() => null)
@@ -90,7 +90,7 @@ export async function POST(request: Request, context: { params: { id: string } }
       return NextResponse.json({ error: validationError }, { status: 400 })
     }
 
-    const projectId = context.params.id
+    const projectId = (await context.params).id
     const project = await getProjectRoot(projectId)
     if (!project) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 })

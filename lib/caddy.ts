@@ -3,8 +3,9 @@ import { tmpdir } from 'os'
 import path from 'path'
 import { runCommand } from './exec'
 
-const CADDYFILE_PATH = 'c:\\web\\Caddyfile'
-const CADDY_EXE = 'c:\\web\\caddy.exe'
+const CADDY_ROOT = process.env.CADDY_PATH || 'c:\\web'
+const CADDYFILE_PATH = process.env.CADDYFILE_PATH || path.join(CADDY_ROOT, 'Caddyfile')
+const CADDY_EXE = process.env.CADDY_EXE || path.join(CADDY_ROOT, 'caddy.exe')
 
 interface CaddyProxyRoute {
     matcher: string
@@ -13,7 +14,7 @@ interface CaddyProxyRoute {
     forwardAuth?: { upstream: string; uri: string }
 }
 
-const APP_PROXY_ROUTES: Record<string, CaddyProxyRoute[]> = {
+const STATIC_APP_PROXY_ROUTES: Record<string, CaddyProxyRoute[]> = {
     'synergyos.smartcloudgh.com': [
         {
             matcher: 'chat',
@@ -21,18 +22,29 @@ const APP_PROXY_ROUTES: Record<string, CaddyProxyRoute[]> = {
             port: 8000,
         },
     ],
-    'deploy.smartcloudgh.com': [
-        {
+}
+
+function appProxyRoutes(domain: string): CaddyProxyRoute[] {
+    const routes = [...(STATIC_APP_PROXY_ROUTES[domain] || [])]
+    const managerDomain = process.env.MANAGER_DOMAIN || 'deploy.smartcloudgh.com'
+    const managerPort = Number(process.env.MANAGER_PORT || 4000)
+    if (domain === managerDomain) {
+        routes.push({
             matcher: 'databaseClient',
             paths: ['/postgres', '/postgres/*'],
-            port: 8432,
-            forwardAuth: { upstream: '127.0.0.1:4000', uri: '/api/auth/proxy' },
-        },
-    ],
+            port: Number(process.env.PGWEB_PORT || 8432),
+            forwardAuth: { upstream: '127.0.0.1:' + managerPort, uri: '/api/auth/proxy' },
+        })
+    }
+    return routes
 }
 
 function sanitizeDomain(domain: string) {
-    return domain.replace(/^https?:\/\//, '').replace(/\/$/, '')
+    const value = domain.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0].replace(/\.$/, '')
+    if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(value)) {
+        throw new Error('Invalid public domain name')
+    }
+    return value
 }
 
 function renderReverseProxy(port: number, indent = '\t') {
@@ -45,7 +57,7 @@ ${indent}}`
 
 function renderCaddyBlock(domain: string, port: number) {
     const logFile = `C:\\Caddy\\logs\\${domain.replace(/\./g, '-')}-error.log`
-    const routes = APP_PROXY_ROUTES[domain] || []
+    const routes = appProxyRoutes(domain)
     const proxyBlock = routes.length
         ? `${routes.map((route) => `\t@${route.matcher} path ${route.paths.join(' ')}
 
@@ -123,7 +135,7 @@ async function validateCaddyContent(content: string) {
 
     try {
         await writeFile(tempCaddyfile, content, 'utf8')
-        const result = await runCommand(`"${CADDY_EXE}" validate --config "${tempCaddyfile}" --adapter caddyfile`, 'c:\\web\\manager')
+        const result = await runCommand(`"${CADDY_EXE}" validate --config "${tempCaddyfile}" --adapter caddyfile`, process.cwd())
         if (result.code !== 0) {
             throw new Error(result.output)
         }
@@ -133,84 +145,76 @@ async function validateCaddyContent(content: string) {
     }
 }
 
+async function applyCaddyUpdate(domain: string, port: number) {
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid application port')
+    let content = await readFile(CADDYFILE_PATH, 'utf8')
+    const sanitizedDomain = sanitizeDomain(domain)
+    content = replaceCaddyBlock(content, sanitizedDomain, renderCaddyBlock(sanitizedDomain, port))
+
+    await validateCaddyContent(content)
+    await writeFile(CADDYFILE_PATH, content, 'utf8')
+
+    const validation = await runCommand(`"${CADDY_EXE}" validate --config "${CADDYFILE_PATH}" --adapter caddyfile`, process.cwd())
+    if (validation.code !== 0) throw new Error(validation.output)
+    const reload = await runCommand(`"${CADDY_EXE}" reload --config "${CADDYFILE_PATH}" --adapter caddyfile`, process.cwd())
+    if (reload.code !== 0) throw new Error(reload.output)
+    return { domain: sanitizedDomain, validation: validation.output, reload: reload.output }
+}
+
+export async function updateCaddyStrict(domain: string, port: number) {
+    return applyCaddyUpdate(domain, port)
+}
+
 export async function updateCaddy(domain: string, port: number) {
     try {
-        // 1. Read Caddyfile
-        let content = await readFile(CADDYFILE_PATH, 'utf8')
-
-        // 2. Prepare the block
-        const sanitizedDomain = sanitizeDomain(domain)
-        // Skip localhost
-        if (sanitizedDomain.includes('localhost') || sanitizedDomain.includes('127.0.0.1')) {
-            return
-        }
-
-        const newBlock = renderCaddyBlock(sanitizedDomain, port)
-
-        // 3. Replace only this app's block, leaving all other Caddy sites intact.
-        content = replaceCaddyBlock(content, sanitizedDomain, newBlock)
-
-        await validateCaddyContent(content)
-
-        // 4. Write back
-        await writeFile(CADDYFILE_PATH, content, 'utf8')
-
-        // 5. Validate active file, then reload Caddy
-        const validation = await runCommand(`"${CADDY_EXE}" validate --config "${CADDYFILE_PATH}" --adapter caddyfile`, 'c:\\web\\manager')
-        if (validation.code !== 0) {
-            throw new Error(validation.output)
-        }
-
-        const reload = await runCommand(`"${CADDY_EXE}" reload --config "${CADDYFILE_PATH}" --adapter caddyfile`, 'c:\\web\\manager')
-        if (reload.code !== 0) {
-            throw new Error(reload.output)
-        }
-
+        return await applyCaddyUpdate(domain, port)
     } catch (error) {
         console.error('Failed to update Caddy:', error)
-        // Don't throw, just log. We don't want to break the API response if Caddy fails.
     }
+}
+
+async function applyCaddyRemove(domain: string) {
+    let content = await readFile(CADDYFILE_PATH, 'utf8')
+    const sanitizedDomain = sanitizeDomain(domain)
+    const startMarker = `${sanitizedDomain} {`
+    if (!content.includes(startMarker)) return { domain: sanitizedDomain, removed: false }
+
+    const startIndex = content.indexOf(startMarker)
+    let openBraces = 0
+    let endIndex = -1
+    for (let i = startIndex; i < content.length; i++) {
+        if (content[i] === '{') openBraces++
+        if (content[i] === '}') {
+            openBraces--
+            if (openBraces === 0) { endIndex = i; break }
+        }
+    }
+    if (endIndex === -1) throw new Error(`Unable to locate the end of the Caddy block for ${sanitizedDomain}`)
+
+    let removeStart = startIndex
+    const lines = content.substring(0, startIndex).split('\n')
+    const lastLine = lines[lines.length - 2]
+    if (lastLine && lastLine.trim().startsWith(`# ${sanitizedDomain}`)) {
+        removeStart = content.lastIndexOf(`# ${sanitizedDomain}`, startIndex)
+    }
+    content = (content.substring(0, removeStart) + content.substring(endIndex + 1)).replace(/\n{3,}/g, '\n\n')
+
+    await validateCaddyContent(content)
+    await writeFile(CADDYFILE_PATH, content, 'utf8')
+    const validation = await runCommand(`"${CADDY_EXE}" validate --config "${CADDYFILE_PATH}" --adapter caddyfile`, process.cwd())
+    if (validation.code !== 0) throw new Error(validation.output)
+    const reload = await runCommand(`"${CADDY_EXE}" reload --config "${CADDYFILE_PATH}" --adapter caddyfile`, process.cwd())
+    if (reload.code !== 0) throw new Error(reload.output)
+    return { domain: sanitizedDomain, removed: true, validation: validation.output }
+}
+
+export async function removeFromCaddyStrict(domain: string) {
+    return applyCaddyRemove(domain)
 }
 
 export async function removeFromCaddy(domain: string) {
     try {
-        let content = await readFile(CADDYFILE_PATH, 'utf8')
-        const sanitizedDomain = sanitizeDomain(domain)
-
-        const startMarker = `${sanitizedDomain} {`
-        if (!content.includes(startMarker)) return
-
-        const startIndex = content.indexOf(startMarker)
-        let openBraces = 0
-        let endIndex = -1
-
-        for (let i = startIndex; i < content.length; i++) {
-            if (content[i] === '{') openBraces++
-            if (content[i] === '}') {
-                openBraces--
-                if (openBraces === 0) {
-                    endIndex = i
-                    break
-                }
-            }
-        }
-
-        if (endIndex !== -1) {
-            let removeStart = startIndex
-            const lines = content.substring(0, startIndex).split('\n')
-            const lastLine = lines[lines.length - 2]
-            if (lastLine && lastLine.trim().startsWith(`# ${sanitizedDomain}`)) {
-                removeStart = content.lastIndexOf(`# ${sanitizedDomain}`, startIndex)
-            }
-
-            const before = content.substring(0, removeStart)
-            const after = content.substring(endIndex + 1)
-            // Clean up extra newlines
-            content = (before + after).replace(/\n{3,}/g, '\n\n')
-
-            await writeFile(CADDYFILE_PATH, content, 'utf8')
-            await runCommand(`${CADDY_EXE} reload --config ${CADDYFILE_PATH}`, 'c:\\web\\manager')
-        }
+        return await applyCaddyRemove(domain)
     } catch (error) {
         console.error('Failed to remove from Caddy:', error)
     }

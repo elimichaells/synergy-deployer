@@ -6,7 +6,7 @@ import { jsonError } from '@/lib/api'
 
 export async function GET() {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin'])
 
     const { rows } = await query(
@@ -23,7 +23,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin'])
 
     const body = await request.json().catch(() => null)

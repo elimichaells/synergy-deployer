@@ -16,7 +16,7 @@ function requiredText(value: unknown, label: string, max: number) {
 
 export async function GET() {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator', 'viewer'])
     await ensureAutomationSchema()
     const { rows } = await query<CronJob>(
@@ -33,7 +33,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator'])
     await ensureAutomationSchema()
     const body = await request.json().catch(() => null)

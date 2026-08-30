@@ -36,7 +36,7 @@ async function uniqueValue(base: string, column: 'slug' | 'pm2_name') {
 
 export async function GET() {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator', 'viewer'])
 
     const { rows } = await query(
@@ -56,7 +56,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator'])
     const stagingBase = await getSetting('STAGING_PATH')
     const productionBase = await getSetting('PRODUCTION_PATH')

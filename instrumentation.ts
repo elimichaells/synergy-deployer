@@ -15,9 +15,13 @@ export async function register() {
     try {
       const { backupSchedulerTick } = await import('@/lib/backups')
       const { recoverInterruptedBackupSchedules } = await import('@/lib/backup-schedules')
+      const { dataServiceBackupSchedulerTick, recoverInterruptedDataServiceBackups } = await import('@/lib/data-service-backups')
       await recoverInterruptedBackupSchedules()
+      await recoverInterruptedDataServiceBackups()
       setInterval(() => void backupSchedulerTick(), 60_000)
+      setInterval(() => void dataServiceBackupSchedulerTick(), 60_000)
       void backupSchedulerTick()
+      void dataServiceBackupSchedulerTick()
     } catch (err) {
       console.error('[System] Failed to start backup scheduler:', err)
     }
@@ -46,8 +50,36 @@ export async function register() {
     }
 
     try {
+      const { ensureDataServicesSchema } = await import('@/lib/data-services')
+      await ensureDataServicesSchema()
+    } catch (err) {
+      console.error('[System] Failed to initialize data services:', err)
+    }
+
+    try {
+      const { recoverInterruptedDataMigrations } = await import('@/lib/data-migrations')
+      await recoverInterruptedDataMigrations()
+    } catch (err) {
+      console.error('[System] Failed to initialize database migrations:', err)
+    }
+
+    try {
+      const { recoverInterruptedRuntimeJobs } = await import('@/lib/runtimes')
+      await recoverInterruptedRuntimeJobs()
+    } catch (err) {
+      console.error('[System] Failed to initialize runtime jobs:', err)
+    }
+
+    try {
+      const { ensureCloudflareSchema } = await import('@/lib/cloudflare')
+      await ensureCloudflareSchema()
+    } catch (err) {
+      console.error('[System] Failed to initialize Cloudflare and domain schema:', err)
+    }
+
+    try {
       const { updateCaddy } = await import('@/lib/caddy')
-      await updateCaddy('deploy.smartcloudgh.com', 4000)
+      await updateCaddy(process.env.MANAGER_DOMAIN || 'deploy.smartcloudgh.com', Number(process.env.MANAGER_PORT || 4000))
     } catch (err) {
       console.error('[System] Failed to refresh Manager proxy routes:', err)
     }

@@ -88,7 +88,7 @@ async function discoverProjects(basePath: string) {
 
 export async function GET() {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator'])
 
     const productionPath = await getSetting('PRODUCTION_PATH')
@@ -114,7 +114,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator'])
 
     const basePath = await getSetting('PRODUCTION_PATH')

@@ -9,7 +9,7 @@ import { jsonError } from '@/lib/api'
  */
 export async function POST() {
     try {
-        const user = getSessionFromCookie()
+        const user = await getSessionFromCookie()
         requireRole(user, ['admin'])
 
         const clientId = process.env.GITHUB_CLIENT_ID

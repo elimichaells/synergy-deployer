@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic'
 
 export async function POST() {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin'])
 
     const ok = await sendNotification(

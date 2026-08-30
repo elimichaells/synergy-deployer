@@ -7,7 +7,7 @@ import { createGitHubConnection, listGitHubConnections } from '@/lib/github-conn
 
 export async function GET() {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator', 'viewer'])
     return NextResponse.json({ connections: await listGitHubConnections() })
   } catch (error) {
@@ -17,7 +17,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin'])
     const body = await request.json().catch(() => null)
     const connection = await createGitHubConnection(String(body?.name || ''), String(body?.token || ''), user?.id)

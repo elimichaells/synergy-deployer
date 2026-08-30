@@ -9,7 +9,7 @@ import { listWorkers, validatePm2Name, validateWorkingDirectory, WorkerRecord } 
 
 export async function GET() {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator', 'viewer'])
     return NextResponse.json(await listWorkers())
   } catch (error) {
@@ -19,7 +19,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator'])
     await ensureAutomationSchema()
     const body = await request.json().catch(() => null)

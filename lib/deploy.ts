@@ -8,6 +8,8 @@ import { parse as parseDotenv } from 'dotenv'
 import { getProjectTypeDefaults, normalizeProjectType, type ProjectType } from '@/lib/project-types'
 import { notifyDeploy } from '@/lib/notify'
 import { getProjectDatabaseEnv } from '@/lib/project-databases'
+import { getProjectDataServiceEnv } from '@/lib/data-services'
+import { projectRuntimeEnvironment } from '@/lib/runtimes'
 
 /**
  * Read the target project's own .env / .env.local directly and pass the
@@ -50,6 +52,7 @@ export interface DeployProject {
   pm2_name: string
   port: number | null
   github_connection_id?: string | null
+  runtime_versions?: Record<string, string> | null
 }
 
 export interface DeployOptions {
@@ -128,7 +131,7 @@ function getPm2StartCommand(project: DeployProject, rootPath: string) {
   const projectType = normalizeProjectType(project.project_type)
   const portArg = project.port ? ` -p ${project.port}` : ''
 
-  if (projectType === 'next' && !project.start_cmd) {
+  if (projectType === 'next' && !project.start_cmd && !project.runtime_versions?.node) {
     const nextBin = path.join(rootPath, 'node_modules', 'next', 'dist', 'bin', 'next')
     return `pm2 start "${nextBin}" --interpreter node --name "${project.pm2_name}" -- start${portArg}`
   }
@@ -149,6 +152,7 @@ function getRuntimeEnv(project: DeployProject, rootPath: string, databaseEnv: Re
   const startCmd = getStartCommand(project)
   return {
     ...databaseEnv,
+    ...projectRuntimeEnvironment(project.runtime_versions),
     HOSTNAME: normalizeProjectType(project.project_type) === 'angular' ? '127.0.0.1' : '0.0.0.0',
     MANAGER_APP_CWD: rootPath,
     MANAGER_PORT: project.port ? project.port.toString() : '',
@@ -347,15 +351,15 @@ export async function runDeploy(project: DeployProject, options: DeployOptions):
     await flush()
 
     const deploymentScript = project.deploy_script?.trim()
-    const managedDatabaseEnv = await getProjectDatabaseEnv(project.id)
-    const projectEnv = { ...loadProjectEnvFile(rootPath), ...managedDatabaseEnv, BRANCH: branch }
+    const managedDatabaseEnv = { ...await getProjectDatabaseEnv(project.id), ...await getProjectDataServiceEnv(project.id) }
+    const projectEnv = { ...loadProjectEnvFile(rootPath), ...managedDatabaseEnv, ...projectRuntimeEnvironment(project.runtime_versions), BRANCH: branch }
 
     // Legacy command fields remain the fallback until a deployment script is saved.
     if (!deploymentScript) {
       const installCmd = getInstallCommand(project)
       if (installCmd) {
         append(`[install] ${installCmd}\n`)
-        const install = await runCommand(installCmd, rootPath)
+        const install = await runCommand(installCmd, rootPath, undefined, undefined, { ...projectEnv, NODE_ENV: 'development' })
         append(install.output)
         if (install.code !== 0) throw new Error('Install failed')
       }
@@ -393,7 +397,7 @@ export async function runDeploy(project: DeployProject, options: DeployOptions):
       const buildCmd = getBuildCommand(project)
       if (buildCmd) {
         append(`[build] ${buildCmd}\n`)
-        const build = await runCommand(buildCmd, rootPath)
+        const build = await runCommand(buildCmd, rootPath, undefined, undefined, projectEnv)
         append(build.output)
         if (build.code !== 0) {
           append('[rollback] Build failed, restoring .next.backup\n')
@@ -420,6 +424,12 @@ export async function runDeploy(project: DeployProject, options: DeployOptions):
         undefined,
         syncEnv
       )
+      append(start.output)
+      if (start.code !== 0) throw new Error('PM2 start failed')
+    } else if (project.runtime_versions?.node) {
+      append(`[pm2] Recreating ${project.pm2_name} with Node.js ${project.runtime_versions.node}\n`)
+      await runCommand(`pm2 delete "${project.pm2_name}"`, rootPath)
+      const start = await runCommand(getPm2StartCommand(project, rootPath), rootPath, undefined, undefined, syncEnv)
       append(start.output)
       if (start.code !== 0) throw new Error('PM2 start failed')
     } else {
@@ -694,8 +704,8 @@ async function runDeployAsync(
       await run(`pm2 stop "${project.pm2_name}"`)
     }
 
-    const managedDatabaseEnv = await getProjectDatabaseEnv(project.id)
-    const projectEnv = { ...loadProjectEnvFile(rootPath), ...managedDatabaseEnv }
+    const managedDatabaseEnv = { ...await getProjectDatabaseEnv(project.id), ...await getProjectDataServiceEnv(project.id) }
+    const projectEnv = { ...loadProjectEnvFile(rootPath), ...managedDatabaseEnv, ...projectRuntimeEnvironment(project.runtime_versions) }
     const deploymentScript = project.deploy_script?.trim()
 
     // Legacy command fields remain active until a unified deployment script is saved.
@@ -704,7 +714,7 @@ async function runDeployAsync(
       if (installCmd) {
         await append(`[install] ${installCmd}\n`)
         // Force development environment so build-time dependencies are available.
-        const install = await run(installCmd, rootPath, undefined, { NODE_ENV: 'development' })
+        const install = await run(installCmd, rootPath, undefined, { ...projectEnv, NODE_ENV: 'development' })
         if (install.code !== 0) throw new Error('Install failed')
       }
 
@@ -778,6 +788,11 @@ async function runDeployAsync(
       )
       if (start.code !== 0) throw new Error('PM2 start failed')
 
+    } else if (project.runtime_versions?.node) {
+      await append(`[pm2] Recreating ${project.pm2_name} with Node.js ${project.runtime_versions.node}\n`)
+      await run(`pm2 delete "${project.pm2_name}"`, rootPath)
+      const start = await run(getPm2StartCommand(project, rootPath), rootPath, undefined, env)
+      if (start.code !== 0) throw new Error('PM2 start failed')
     } else {
       await append(`[pm2] Restarting ${project.pm2_name}\n`)
       // Use --update-env to ensure the new PORT env var is picked up
@@ -821,7 +836,7 @@ async function runDeployAsync(
     // Failure is logged but does not fail the deployment — the app is already live.
     if (!deploymentScript && project.post_deploy_cmd) {
       await append(`[post-deploy] ${project.post_deploy_cmd}\n`)
-      const postDeploy = await run(project.post_deploy_cmd, rootPath)
+      const postDeploy = await run(project.post_deploy_cmd, rootPath, undefined, projectEnv)
       if (postDeploy.code !== 0) {
         await append('[post-deploy] Script failed (deployment is live, continuing)\n')
       }

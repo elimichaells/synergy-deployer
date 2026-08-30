@@ -1,0 +1,35 @@
+name: Manager Windows Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@v4
+
+      - name: Install .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Build application package and setup executable
+        shell: pwsh
+        run: |
+          $version = (Get-Content ./package.json -Raw | ConvertFrom-Json).version
+          ./scripts/package-manager-exe.ps1 -OutputDirectory ./release -Version $version
+
+      - name: Publish immutable GitHub release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = Get-ChildItem -LiteralPath ./release -File | ForEach-Object FullName
+          gh release create "${{ github.ref_name }}" $assets --verify-tag --generate-notes --title "Manager ${{ github.ref_name }}"

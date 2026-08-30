@@ -56,7 +56,7 @@ export async function POST(request: Request) {
 
     // Find ALL active projects matching this repo URL (staging + production)
     const { rows: allProjects } = await query<DeployProject & { webhook_secret: string | null; auto_deploy: boolean }>(
-      `SELECT id, name, repo_url, default_branch, project_type, root_path, install_cmd, build_cmd, deploy_script, start_cmd, pre_deploy_cmd, post_deploy_cmd, pm2_name, port, github_connection_id, webhook_secret, auto_deploy
+      `SELECT id, name, repo_url, default_branch, project_type, root_path, install_cmd, build_cmd, deploy_script, start_cmd, pre_deploy_cmd, post_deploy_cmd, runtime_versions, pm2_name, port, github_connection_id, webhook_secret, auto_deploy
        FROM projects
        WHERE is_active = true AND (
          lower(repo_url) = lower($1) OR lower(repo_url) = lower($2) OR lower(repo_url) = lower($3) OR

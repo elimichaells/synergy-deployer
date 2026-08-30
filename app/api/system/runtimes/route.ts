@@ -3,15 +3,16 @@ import { getSessionFromCookie } from '@/lib/auth'
 import { requireRole } from '@/lib/rbac'
 import { jsonError } from '@/lib/api'
 import { audit } from '@/lib/audit'
-import { installRuntime, listRuntimes } from '@/lib/runtimes'
+import { listRuntimeJobs, listRuntimes, startRuntimeJob, type RuntimeJobAction } from '@/lib/runtimes'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator', 'viewer'])
-    return NextResponse.json({ runtimes: await listRuntimes() })
+    const [runtimes, jobs] = await Promise.all([listRuntimes(), listRuntimeJobs()])
+    return NextResponse.json({ runtimes, jobs })
   } catch (error) {
     return jsonError(error)
   }
@@ -19,13 +20,15 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin'])
     const body = await request.json().catch(() => ({}))
     const runtime = typeof body.runtime === 'string' ? body.runtime : ''
-    const result = await installRuntime(runtime)
-    await audit(user?.id, 'runtime.install', runtime, { runtime: result.runtime })
-    return NextResponse.json({ ok: true, ...result, runtimes: await listRuntimes() })
+    const action = typeof body.action === 'string' ? body.action as RuntimeJobAction : 'install'
+    const version = typeof body.version === 'string' ? body.version : null
+    const job = await startRuntimeJob(runtime, action, version, user?.id)
+    await audit(user?.id, `runtime.${action}`, runtime, { version, jobId: job.id })
+    return NextResponse.json({ job }, { status: 202 })
   } catch (error) {
     return jsonError(error)
   }

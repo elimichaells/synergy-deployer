@@ -24,7 +24,7 @@ interface PM2Process {
 
 export async function GET() {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator', 'viewer'])
 
     const { stdout } = await execAsync('pm2 jlist', {

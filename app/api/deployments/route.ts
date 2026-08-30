@@ -6,7 +6,7 @@ import { jsonError } from '@/lib/api'
 
 export async function GET(request: Request) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator', 'viewer'])
 
     const url = new URL(request.url)

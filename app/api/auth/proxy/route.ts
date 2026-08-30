@@ -4,7 +4,7 @@ import { requireRole } from '@/lib/rbac'
 
 export async function GET() {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin'])
     return new NextResponse(null, { status: 204, headers: { 'X-Manager-User': user?.email || '' } })
   } catch {

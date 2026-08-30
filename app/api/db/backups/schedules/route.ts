@@ -16,7 +16,7 @@ function numberInRange(value: unknown, fallback: number, min: number, max: numbe
 
 export async function GET() {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin'])
     await ensureBackupScheduleSchema()
     const { rows } = await query<BackupSchedule>('select * from backup_schedules order by database_name asc')
@@ -28,7 +28,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin'])
     await ensureBackupScheduleSchema()
     const body = await request.json().catch(() => null)

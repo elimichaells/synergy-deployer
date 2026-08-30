@@ -7,14 +7,14 @@ import { query } from '@/lib/db'
 import { ensureAutomationSchema } from '@/lib/automation-schema'
 import { deleteWorkerProcess, validatePm2Name, validateWorkingDirectory, WorkerRecord } from '@/lib/workers'
 
-export async function PATCH(request: Request, context: { params: { id: string } }) {
+export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator'])
     await ensureAutomationSchema()
     const body = await request.json().catch(() => null)
     if (!body) throw new ApiError('Invalid payload', 400)
-    const { rows } = await query<WorkerRecord>('select * from workers where id = $1', [context.params.id])
+    const { rows } = await query<WorkerRecord>('select * from workers where id = $1', [(await context.params).id])
     const current = rows[0]
     if (!current) throw new ApiError('Worker not found', 404)
 
@@ -30,7 +30,7 @@ export async function PATCH(request: Request, context: { params: { id: string } 
     const { rows: updated } = await query<WorkerRecord>(
       `update workers set name = $1, description = $2, command = $3, working_directory = $4,
          pm2_name = $5, enabled = $6, updated_at = now() where id = $7 returning *`,
-      [name, description, command, workingDirectory, pm2Name, enabled, context.params.id]
+      [name, description, command, workingDirectory, pm2Name, enabled, (await context.params).id]
     )
     if (pm2Name !== current.pm2_name) await deleteWorkerProcess(current.pm2_name)
     await audit(user?.id, 'worker.update', name, { pm2Name, enabled })
@@ -41,15 +41,15 @@ export async function PATCH(request: Request, context: { params: { id: string } 
   }
 }
 
-export async function DELETE(_: Request, context: { params: { id: string } }) {
+export async function DELETE(_: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin'])
     await ensureAutomationSchema()
-    const { rows } = await query<WorkerRecord>('select * from workers where id = $1', [context.params.id])
+    const { rows } = await query<WorkerRecord>('select * from workers where id = $1', [(await context.params).id])
     if (!rows[0]) throw new ApiError('Worker not found', 404)
     await deleteWorkerProcess(rows[0].pm2_name)
-    await query('delete from workers where id = $1', [context.params.id])
+    await query('delete from workers where id = $1', [(await context.params).id])
     await audit(user?.id, 'worker.delete', rows[0].name, { pm2Name: rows[0].pm2_name })
     return NextResponse.json({ ok: true })
   } catch (error) {

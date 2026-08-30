@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic'
 /** Restore a backup file into a NEW database */
 export async function POST(request: Request) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin'])
 
     const body = await request.json().catch(() => null)

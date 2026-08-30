@@ -11,7 +11,7 @@ import { createGitHubConnection } from '@/lib/github-connections'
  */
 export async function POST(request: NextRequest) {
     try {
-        const user = getSessionFromCookie()
+        const user = await getSessionFromCookie()
         requireRole(user, ['admin'])
 
         const clientId = process.env.GITHUB_CLIENT_ID

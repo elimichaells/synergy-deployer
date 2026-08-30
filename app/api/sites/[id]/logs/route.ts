@@ -16,14 +16,14 @@ async function tailLines(filePath: string, lines: number) {
   return parts.slice(-lines).join('\n')
 }
 
-export async function GET(request: Request, context: { params: { id: string } }) {
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator', 'viewer'])
 
     const { rows: projectRows } = await query<{ pm2_name: string }>(
       'select pm2_name from projects where id = $1',
-      [context.params.id]
+      [(await context.params).id]
     )
 
     const project = projectRows[0]
@@ -60,14 +60,14 @@ export async function GET(request: Request, context: { params: { id: string } })
   }
 }
 
-export async function DELETE(request: Request, context: { params: { id: string } }) {
+export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator'])
 
     const { rows: projectRows } = await query<{ pm2_name: string }>(
       'select pm2_name from projects where id = $1',
-      [context.params.id]
+      [(await context.params).id]
     )
 
     const project = projectRows[0]

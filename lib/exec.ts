@@ -31,9 +31,11 @@ export function runCommand(
       'C:\\Program Files\\Go\\bin',
       'C:\\Program Files\\PostgreSQL\\18\\bin',
       'C:\\ProgramData\\chocolatey\\bin',
+      'C:\\tools\\mysql\\current\\bin',
       process.env.APPDATA ? `${process.env.APPDATA}\\npm` : '',
     ].filter(Boolean)
-    const managedPath = [...pathEntries, process.env.Path || process.env.PATH || ''].join(';')
+    const requestedPath = env?.Path || env?.PATH || ''
+    const managedPath = [requestedPath, ...pathEntries, process.env.Path || process.env.PATH || ''].filter(Boolean).join(';')
     const child = spawn(command, {
       cwd,
       shell: true,

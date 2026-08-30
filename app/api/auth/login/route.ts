@@ -39,7 +39,7 @@ export async function POST(request: Request) {
     role: user.role,
   })
 
-  setSessionCookie(token)
+  await setSessionCookie(token)
 
   return NextResponse.json({
     id: user.id,

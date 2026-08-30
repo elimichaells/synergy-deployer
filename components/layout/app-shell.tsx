@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { ReactNode, useState } from 'react'
-import { Boxes, Database, Gauge, LogOut, Menu, Rocket, Server, Settings, User, Workflow, X } from 'lucide-react'
+import { Boxes, Database, Gauge, Globe2, HardDrive, LogOut, Menu, Rocket, Server, Settings, User, Workflow, X } from 'lucide-react'
 
 const navGroups = [
   { label: 'Operate', items: [
@@ -14,7 +14,9 @@ const navGroups = [
   ] },
   { label: 'Infrastructure', items: [
     { href: '/services', label: 'Runtime & proxy', icon: Server },
-    { href: '/database', label: 'Databases', icon: Database },
+    { href: '/data-services', label: 'Data services', icon: HardDrive },
+    { href: '/database', label: 'PostgreSQL', icon: Database },
+    { href: '/domains', label: 'Domains & SSL', icon: Globe2 },
   ] },
   { label: 'Administration', items: [
     { href: '/settings', label: 'Settings', icon: Settings },

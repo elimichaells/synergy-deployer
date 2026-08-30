@@ -37,8 +37,9 @@ export function verifySession(token: string) {
   return jwt.verify(token, getJwtSecret()) as SessionUser
 }
 
-export function setSessionCookie(token: string) {
-  cookies().set({
+export async function setSessionCookie(token: string) {
+  const store = await cookies()
+  store.set({
     name: COOKIE_NAME,
     value: token,
     httpOnly: true,
@@ -49,8 +50,9 @@ export function setSessionCookie(token: string) {
   })
 }
 
-export function clearSessionCookie() {
-  cookies().set({
+export async function clearSessionCookie() {
+  const store = await cookies()
+  store.set({
     name: COOKIE_NAME,
     value: '',
     httpOnly: true,
@@ -61,8 +63,9 @@ export function clearSessionCookie() {
   })
 }
 
-export function getSessionFromCookie() {
-  const token = cookies().get(COOKIE_NAME)?.value
+export async function getSessionFromCookie() {
+  const store = await cookies()
+  const token = store.get(COOKIE_NAME)?.value
   if (!token) return null
   try {
     return verifySession(token)

@@ -42,6 +42,7 @@ interface Project {
   start_cmd?: string | null
   pre_deploy_cmd?: string | null
   post_deploy_cmd?: string | null
+  runtime_versions: { node?: string; php?: string; go?: string }
   auto_deploy: boolean
   github_connection_id: string | null
   github_connection_name: string | null
@@ -81,6 +82,17 @@ interface ManagedProjectDatabase {
   created_at: string
   updated_at: string
 }
+
+interface ProjectDataService {
+  id: string
+  name: string
+  provider: string
+  connection_name: string
+  database_name: string
+  env_prefix: string
+}
+
+interface ToolchainRuntime { id: 'node' | 'php' | 'go'; name: string; installedVersions: string[] }
 
 const projectTypeDefaults = {
   next: { label: 'Next.js', installCmd: 'npm install', buildCmd: 'npm run build', startCmd: 'npm start' },
@@ -142,6 +154,7 @@ export default function SitePage() {
     postDeployCmd: '',
     autoDeploy: true,
     githubConnectionId: '',
+    runtimeVersions: {} as { node?: string; php?: string; go?: string },
   })
   const [githubConnections, setGithubConnections] = useState<GitHubConnectionOption[]>([])
   const [webhookSecret, setWebhookSecret] = useState<string | null>(null)
@@ -163,17 +176,21 @@ export default function SitePage() {
   const [cancellingDeploy, setCancellingDeploy] = useState<string | null>(null)
   const [rollingBack, setRollingBack] = useState<string | null>(null)
   const [managedDatabase, setManagedDatabase] = useState<ManagedProjectDatabase | null>(null)
+  const [dataServices, setDataServices] = useState<ProjectDataService[]>([])
   const [databaseBusy, setDatabaseBusy] = useState(false)
   const [databaseNotice, setDatabaseNotice] = useState<string | null>(null)
+  const [toolchainRuntimes, setToolchainRuntimes] = useState<ToolchainRuntime[]>([])
 
   const refresh = useCallback(async () => {
     setError(null)
     try {
-      const [projectRes, deploymentsRes, connectionsRes, databaseRes] = await Promise.all([
+      const [projectRes, deploymentsRes, connectionsRes, databaseRes, dataServicesRes, runtimesRes] = await Promise.all([
         fetch(`/api/sites/${siteId}`),
         fetch('/api/deployments'),
         fetch('/api/github/connections'),
         fetch(`/api/sites/${siteId}/database`),
+        fetch(`/api/sites/${siteId}/data-services`),
+        fetch('/api/system/runtimes'),
       ])
       if (!projectRes.ok) throw new Error('Failed to load site')
       if (!deploymentsRes.ok) throw new Error('Failed to load deployments')
@@ -182,6 +199,8 @@ export default function SitePage() {
       const deploymentsData = await deploymentsRes.json()
       if (connectionsRes.ok) setGithubConnections((await connectionsRes.json()).connections || [])
       if (databaseRes.ok) setManagedDatabase((await databaseRes.json()).database || null)
+      if (dataServicesRes.ok) setDataServices((await dataServicesRes.json()).services || [])
+      if (runtimesRes.ok) setToolchainRuntimes(((await runtimesRes.json()).runtimes || []).filter((runtime: ToolchainRuntime) => ['node', 'php', 'go'].includes(runtime.id)))
       if (projectData.environment === 'staging' && projectData.production_id) {
         // Fetch latest successful production deployment to compare
         try {
@@ -216,6 +235,7 @@ export default function SitePage() {
         postDeployCmd: projectData.post_deploy_cmd || '',
         autoDeploy: projectData.auto_deploy !== false,
         githubConnectionId: projectData.github_connection_id || '',
+        runtimeVersions: projectData.runtime_versions || {},
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load')
@@ -404,6 +424,7 @@ export default function SitePage() {
         postDeployCmd: projectForm.postDeployCmd.trim() || null,
         autoDeploy: projectForm.autoDeploy,
         githubConnectionId: projectForm.githubConnectionId || null,
+        runtimeVersions: projectForm.runtimeVersions,
       }
       const res = await fetch(`/api/sites/${siteId}`, {
         method: 'PATCH',
@@ -824,6 +845,11 @@ export default function SitePage() {
   }
 
   const hasRunningDeploy = deployments.some((d) => d.status === 'running')
+  const visibleToolchains = toolchainRuntimes.filter((runtime) =>
+    runtime.id === 'node' ? ['next', 'node', 'angular', 'laravel'].includes(projectForm.projectType)
+      : runtime.id === 'php' ? projectForm.projectType === 'laravel'
+      : projectForm.projectType === 'go'
+  )
 
   return (
     <AppShell
@@ -1534,6 +1560,17 @@ export default function SitePage() {
 
                   <div className="h-px bg-white/[0.08]" />
 
+                  {visibleToolchains.length > 0 && <>
+                    <div className="grid gap-3">
+                      <div><p className="text-sm font-medium">Project toolchain</p><p className="text-xs text-muted-foreground">Pin side-by-side runtime versions for this project without changing the host default.</p></div>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        {visibleToolchains.map((runtime) => <label key={runtime.id} className="grid gap-2 text-sm"><span>{runtime.name}</span><select className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm" value={projectForm.runtimeVersions[runtime.id] || ''} onChange={(e) => setProjectForm({ ...projectForm, runtimeVersions: { ...projectForm.runtimeVersions, [runtime.id]: e.target.value || undefined } })}><option value="">Host default</option>{runtime.installedVersions.map((version) => <option key={version} value={version}>{version}</option>)}</select></label>)}
+                      </div>
+                      <p className="text-xs text-muted-foreground">Install additional versions from Settings → Host dependencies, then select them here.</p>
+                    </div>
+                    <div className="h-px bg-white/[0.08]" />
+                  </>}
+
                   {/* Deployment automation */}
                   <div className="grid gap-4">
                     <div className="flex items-center justify-between rounded-md border border-border bg-muted/30 p-4">
@@ -1592,15 +1629,17 @@ echo "✅ Deployment completed successfully!"`}
             </Card>
 
             <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2"><Database className="h-4 w-4" /> Application Database</CardTitle>
-                <CardDescription>
-                  Dedicated PostgreSQL ownership for this {project?.environment} environment. Credentials are encrypted and injected into deployment and PM2 runtime variables.
-                </CardDescription>
+              <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+                <div><CardTitle className="flex items-center gap-2"><Database className="h-4 w-4" /> Project Data Services</CardTitle><CardDescription>Attach multiple PostgreSQL, MySQL, MariaDB, SQL Server, MongoDB, or Redis resources. Credentials are encrypted and injected during deployment.</CardDescription></div>
+                <Button asChild size="sm"><Link href={`/data-services?project=${project?.id || ''}`}><Plus className="mr-2 h-4 w-4" />Add service</Link></Button>
               </CardHeader>
               <CardContent className="space-y-4">
                 {project?.project_type === 'angular' ? (
                   <p className="text-sm text-muted-foreground">Angular is browser-side. Connect it to a backend API instead of placing database credentials in the application.</p>
+                ) : dataServices.length ? (
+                  <div className="divide-y divide-border border-y border-border">
+                    {dataServices.map((service) => <div key={service.id} className="grid gap-3 py-3 sm:grid-cols-[1fr_1fr_auto] sm:items-center"><div><p className="text-sm font-medium">{service.name}</p><p className="text-xs text-muted-foreground">{service.connection_name} · {service.provider}</p></div><div><p className="font-mono text-xs">{service.database_name}</p><p className="font-mono text-[11px] text-muted-foreground">{service.env_prefix}_*</p></div><Button asChild variant="ghost" size="sm"><Link href={`/data-services?project=${project?.id || ''}`}>Manage</Link></Button></div>)}
+                  </div>
                 ) : managedDatabase ? (
                   <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
                     <div className="grid gap-3 sm:grid-cols-2">
@@ -1627,10 +1666,8 @@ echo "✅ Deployment completed successfully!"`}
                   </div>
                 ) : (
                   <div className="flex flex-wrap items-center justify-between gap-4">
-                    <p className="max-w-2xl text-sm text-muted-foreground">Create a separate database and login role for this environment. Production and staging databases are provisioned independently.</p>
-                    <Button onClick={() => void manageProjectDatabase('create')} disabled={databaseBusy}>
-                      {databaseBusy ? 'Creating...' : 'Create isolated database'}
-                    </Button>
+                    <p className="max-w-2xl text-sm text-muted-foreground">No data service is attached. Register an infrastructure connection, then provision one or more isolated resources for this environment.</p>
+                    <div className="flex gap-2"><Button asChild><Link href={`/data-services?project=${project?.id || ''}`}>Choose provider</Link></Button><Button variant="outline" onClick={() => void manageProjectDatabase('create')} disabled={databaseBusy}>{databaseBusy ? 'Creating...' : 'Quick PostgreSQL'}</Button></div>
                   </div>
                 )}
                 {databaseNotice && <p className="text-xs text-muted-foreground">{databaseNotice}</p>}

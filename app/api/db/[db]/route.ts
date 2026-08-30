@@ -7,12 +7,12 @@ import { audit } from '@/lib/audit'
 
 export const dynamic = 'force-dynamic'
 
-export async function DELETE(request: Request, context: { params: { db: string } }) {
+export async function DELETE(request: Request, context: { params: Promise<{ db: string }> }) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin'])
 
-    const name = decodeURIComponent(context.params.db)
+    const name = decodeURIComponent((await context.params).db)
 
     // Require the caller to re-type the database name — no accidental drops
     const body = await request.json().catch(() => null)

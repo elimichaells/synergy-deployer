@@ -6,12 +6,12 @@ import { listTables } from '@/lib/db-admin'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(_request: Request, context: { params: { db: string } }) {
+export async function GET(_request: Request, context: { params: Promise<{ db: string }> }) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin'])
 
-    const tables = await listTables(decodeURIComponent(context.params.db))
+    const tables = await listTables(decodeURIComponent((await context.params).db))
     return NextResponse.json({ tables })
   } catch (error) {
     return jsonError(error)

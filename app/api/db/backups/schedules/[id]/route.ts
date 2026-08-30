@@ -14,14 +14,14 @@ function readInteger(value: unknown, fallback: number, min: number, max: number,
   return number
 }
 
-export async function PATCH(request: Request, context: { params: { id: string } }) {
+export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin'])
     await ensureBackupScheduleSchema()
     const body = await request.json().catch(() => null)
     if (!body) throw new ApiError('Invalid payload', 400)
-    const { rows } = await query<BackupSchedule>('select * from backup_schedules where id = $1', [context.params.id])
+    const { rows } = await query<BackupSchedule>('select * from backup_schedules where id = $1', [(await context.params).id])
     const current = rows[0]
     if (!current) throw new ApiError('Backup schedule not found', 404)
     if (current.last_status === 'running') throw new ApiError('Wait for the running backup before editing its schedule', 409)
@@ -51,7 +51,7 @@ export async function PATCH(request: Request, context: { params: { id: string } 
          timezone=$4, day_of_week=$5, day_of_month=$6, month_of_year=$7,
          retention_count=$8, enabled=$9, next_run_at=$10, updated_at=now()
        where id=$11 returning *`,
-      [database, frequency, timeOfDay, timezone, dayOfWeek, dayOfMonth, monthOfYear, retentionCount, enabled, nextRun, context.params.id]
+      [database, frequency, timeOfDay, timezone, dayOfWeek, dayOfMonth, monthOfYear, retentionCount, enabled, nextRun, (await context.params).id]
     )
     await audit(user?.id, 'database.backup.schedule.update', database, { frequency, timezone, enabled })
     return NextResponse.json(updated[0])
@@ -61,15 +61,15 @@ export async function PATCH(request: Request, context: { params: { id: string } 
   }
 }
 
-export async function DELETE(_: Request, context: { params: { id: string } }) {
+export async function DELETE(_: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin'])
     await ensureBackupScheduleSchema()
-    const { rows } = await query<Pick<BackupSchedule, 'database_name' | 'last_status'>>('select database_name,last_status from backup_schedules where id=$1', [context.params.id])
+    const { rows } = await query<Pick<BackupSchedule, 'database_name' | 'last_status'>>('select database_name,last_status from backup_schedules where id=$1', [(await context.params).id])
     if (!rows[0]) throw new ApiError('Backup schedule not found', 404)
     if (rows[0].last_status === 'running') throw new ApiError('Wait for the running backup before deleting its schedule', 409)
-    await query('delete from backup_schedules where id=$1', [context.params.id])
+    await query('delete from backup_schedules where id=$1', [(await context.params).id])
     await audit(user?.id, 'database.backup.schedule.delete', rows[0].database_name)
     return NextResponse.json({ ok: true })
   } catch (error) {

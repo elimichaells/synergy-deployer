@@ -20,7 +20,7 @@ const VALID_KEYS: SettingKey[] = [
 
 export async function GET() {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator', 'viewer'])
 
     const settings = await getSettings()
@@ -41,7 +41,7 @@ export async function GET() {
 
 export async function PUT(request: Request) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin'])
 
     const body = await request.json().catch(() => null)

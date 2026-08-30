@@ -8,14 +8,14 @@ import path from 'path'
 
 const ALLOWED_ENV_FILES = ['.env', '.env.local']
 
-export async function GET(request: Request, context: { params: { id: string } }) {
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator', 'viewer'])
 
     const { rows } = await query<{ root_path: string }>(
       'select root_path from projects where id = $1',
-      [context.params.id]
+      [(await context.params).id]
     )
 
     const project = rows[0]
@@ -38,9 +38,9 @@ export async function GET(request: Request, context: { params: { id: string } })
   }
 }
 
-export async function POST(request: Request, context: { params: { id: string } }) {
+export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator'])
 
     const body = await request.json().catch(() => null)
@@ -50,7 +50,7 @@ export async function POST(request: Request, context: { params: { id: string } }
 
     const { rows } = await query<{ root_path: string }>(
       'select root_path from projects where id = $1',
-      [context.params.id]
+      [(await context.params).id]
     )
 
     const project = rows[0]

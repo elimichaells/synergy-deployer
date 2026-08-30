@@ -5,12 +5,12 @@ import { requireRole } from '@/lib/rbac'
 import { jsonError } from '@/lib/api'
 import { requestDeployCancel } from '@/lib/deploy'
 
-export async function POST(_request: Request, context: { params: { id: string } }) {
+export async function POST(_request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator'])
 
-    const deploymentId = context.params.id
+    const deploymentId = (await context.params).id
     const { rows } = await query<{ id: string; status: string }>(
       'SELECT id, status FROM deployments WHERE id = $1',
       [deploymentId]

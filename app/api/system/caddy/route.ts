@@ -61,7 +61,7 @@ async function detectPm2() {
 
 export async function GET(request: Request) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator', 'viewer'])
 
     const includeConfig = new URL(request.url).searchParams.get('includeConfig') === '1'
@@ -129,7 +129,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const user = getSessionFromCookie()
+    const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator'])
 
     const body = await request.json().catch(() => null)

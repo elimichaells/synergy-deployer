@@ -1,0 +1,11 @@
+﻿{
+    "file":  "manager-setup-2.0.0-20260830-061008.exe",
+    "sha256":  "FAA329001C3B15E6B3A86BAAB36FFA65173B5E4744BC234CFD7B5DF23810EA9E",
+    "version":  "2.0.0",
+    "architecture":  "win-x64",
+    "package":  "manager-windows-2.0.0-20260830-060945.zip",
+    "packageSha256":  "5DEE12F7B9F0FBA1E027FCDBA0131D29465143FC5713EF40D8202D2E8C7165AD",
+    "signatureStatus":  "NotSigned",
+    "createdAt":  "2026-08-30T13:10:14.8564559Z",
+    "smokeTest":  "PASS: embedded Manager 2.0.0 package verified (5DEE12F7B9F0FBA1E027FCDBA0131D29465143FC5713EF40D8202D2E8C7165AD)."
+}
