@@ -6,6 +6,7 @@ $env:PSModulePath = (Join-Path $PSHOME 'Modules') + ';' + $env:PSModulePath
 $ProgressPreference = 'SilentlyContinue'
 $packageRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'installer-database-policy.ps1')
+. (Join-Path $PSScriptRoot 'database-service.ps1')
 $results = [System.Collections.Generic.List[object]]::new()
 
 function Write-Step([string]$Message) {
@@ -293,10 +294,16 @@ if ($installApplicationPostgres) { Initialize-ApplicationPostgres }
 if ($optionalRuntimes -contains 'go') { Ensure-Package 'go.exe' 'golang' }
 if (($optionalRuntimes -contains 'php') -or $installPhpMyAdmin) { Ensure-Package 'php.exe' 'php' }
 if ($optionalRuntimes -contains 'composer') { Ensure-Package 'composer.exe' 'composer' }
-if ($optionalEngines -contains 'mysql') { Ensure-Package 'mysql.exe' 'mysql' }
+if ($optionalEngines -contains 'mysql') {
+    if (-not (Get-DatabaseService 'mysql') -and -not (Find-MySqlServerExecutable)) {
+        Invoke-Native 'choco.exe' @('install','mysql','-y','--no-progress') 'Install MySQL server files'
+        $env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')
+    }
+}
 if ($optionalEngines -contains 'mariadb') { Ensure-Package 'mariadb.exe' 'mariadb' }
 if ($optionalEngines -contains 'mysql') {
-    Invoke-Native 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $packageRoot 'scripts\configure-database-loopback.ps1'),'-Engine','mysql') 'Secure MySQL network binding'
+    Invoke-Native 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $packageRoot 'scripts\configure-database-loopback.ps1'),'-Engine','mysql','-RepairMissingService') 'Verify MySQL server and secure network binding'
+    Add-Result 'MySQL server' 'pass' 'Windows service is running and its TCP listener is verified on loopback'
 }
 if ($optionalEngines -contains 'mariadb') {
     Invoke-Native 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $packageRoot 'scripts\configure-database-loopback.ps1'),'-Engine','mariadb') 'Secure MariaDB network binding'

@@ -270,7 +270,7 @@ async function executeRuntimeJob(jobId: string) {
     if (job.runtime_id === 'mysql' && job.action !== 'install-version') {
       await appendRuntimeLog(jobId, '[security] Restricting MySQL network listeners to this host\n')
       const binding = await runCommand(
-        'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "C:\\web\\manager\\scripts\\configure-database-loopback.ps1" -Engine mysql',
+        `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "${path.join(process.cwd(), 'scripts', 'configure-database-loopback.ps1')}" -Engine mysql -RepairMissingService`,
         undefined,
         2 * 60_000,
         (chunk) => { logQueue = logQueue.then(() => appendRuntimeLog(jobId, chunk)) },
@@ -287,7 +287,7 @@ async function executeRuntimeJob(jobId: string) {
     if (job.runtime_id === 'mariadb' && job.action !== 'install-version') {
       await appendRuntimeLog(jobId, '[security] Restricting MariaDB network listeners to this host\n')
       const binding = await runCommand(
-        'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "C:\\web\\manager\\scripts\\configure-database-loopback.ps1" -Engine mariadb',
+        `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "${path.join(process.cwd(), 'scripts', 'configure-database-loopback.ps1')}" -Engine mariadb`,
         undefined,
         2 * 60_000,
         (chunk) => { logQueue = logQueue.then(() => appendRuntimeLog(jobId, chunk)) },

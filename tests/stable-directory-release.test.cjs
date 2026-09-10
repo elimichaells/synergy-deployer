@@ -63,6 +63,20 @@ test('Windows activation and rollback work while shells hold both the live root 
   const shell = path.join(process.env.SystemRoot, 'System32', 'cmd.exe');
   const rootShell = await start(shell, ['/d', '/q'], root);
   const storageShell = await start(shell, ['/d', '/q'], path.join(root, 'storage/app/private/crypto'));
+  // The spawn event only means the process exists. Wait until cmd has entered
+  // its working directory before asserting that it holds a directory handle.
+  await Promise.all([rootShell, storageShell].map(child => new Promise((resolve, reject) => {
+    let output = '';
+    const onData = chunk => {
+      output += chunk.toString();
+      if (output.includes('fixture-directory-ready')) {
+        child.stdout.off('data', onData); child.off('exit', onExit); resolve();
+      }
+    };
+    const onExit = () => reject(new Error('Shell fixture exited before acquiring its working directory'));
+    child.stdout.on('data', onData); child.once('exit', onExit);
+    child.stdin.write('echo fixture-directory-ready\r\n');
+  })));
   await assert.rejects(fs.rename(root, path.join(base, 'whole-directory-move')), error => ['EBUSY', 'EPERM', 'EACCES'].includes(error.code));
   await release.activate(() => assert.fail('Stable activation must not close terminals'));
   assert.equal(await fs.readFile(path.join(root, 'index.js'), 'utf8'), 'new code');
