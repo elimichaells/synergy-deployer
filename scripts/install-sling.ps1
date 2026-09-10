@@ -7,6 +7,19 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+
+function Get-Sha256Hex {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $stream = [IO.File]::OpenRead($Path)
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha256.ComputeHash($stream))).Replace('-','')
+    } finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
 if ($Latest) {
     $release = Invoke-RestMethod 'https://api.github.com/repos/slingdata-io/sling-cli/releases/latest' -Headers @{ 'User-Agent' = 'Manager-Runtime-Updater' }
     $Version = ([string]$release.tag_name).TrimStart('v')
@@ -27,11 +40,13 @@ try {
         throw 'Sling checksum manifest is invalid'
     }
     $expected = $Matches[1].ToUpperInvariant()
-    $actual = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash
+    $actual = Get-Sha256Hex $archivePath
     if ($actual -ne $expected) { throw 'Sling archive failed SHA-256 verification' }
 
     New-Item -ItemType Directory -Force -Path $staging,$InstallDirectory | Out-Null
-    & tar.exe -xzf $archivePath -C $staging
+    $tarPath = Join-Path $env:SystemRoot 'System32\tar.exe'
+    if (-not (Test-Path -LiteralPath $tarPath)) { throw 'Windows tar.exe is not available' }
+    & $tarPath -xzf $archivePath -C $staging
     if ($LASTEXITCODE -ne 0) { throw 'Sling archive extraction failed' }
     $executable = Get-ChildItem -LiteralPath $staging -Filter 'sling.exe' -File -Recurse | Select-Object -First 1
     if (-not $executable) { throw 'sling.exe was not found in the verified archive' }

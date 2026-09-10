@@ -5,6 +5,7 @@ import { jsonError } from '@/lib/api'
 import { runCommand } from '@/lib/exec'
 import { getSetting } from '@/lib/settings'
 import { readFile, stat } from 'fs/promises'
+import { updateCaddyStrict } from '@/lib/caddy'
 
 type CaddyMode = 'pm2' | 'service' | 'cli' | 'unknown'
 type CaddyStatus = 'running' | 'stopped' | 'unknown'
@@ -134,8 +135,14 @@ export async function POST(request: Request) {
 
     const body = await request.json().catch(() => null)
     const action = body?.action as string | undefined
-    if (!action || !['start', 'stop', 'reload', 'restart', 'validate'].includes(action)) {
+    if (!action || !['start', 'stop', 'reload', 'restart', 'validate', 'reconcile-manager'].includes(action)) {
       return NextResponse.json({ error: 'Invalid action' }, { status: 400 })
+    }
+
+    if (action === 'reconcile-manager') {
+      requireRole(user, ['admin'])
+      const result = await updateCaddyStrict(process.env.MANAGER_DOMAIN || 'deploy.smartcloudgh.com', Number(process.env.MANAGER_PORT || 4000))
+      return NextResponse.json({ mode: 'reconcile', ...result })
     }
 
     const caddyExe = await getCaddyExe()

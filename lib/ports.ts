@@ -16,18 +16,28 @@ function canListen(port: number) {
   })
 }
 
-export async function allocateProjectPorts(start = DEFAULT_START, end = DEFAULT_END) {
+export async function allocateTemporaryPort(start = 10_000, end = 20_000) {
+  const { rows } = await query<{ port: number | null }>('select port from projects where port is not null')
+  const used = new Set(rows.map(row => row.port).filter((port): port is number => typeof port === 'number'))
+  for (const reserved of RESERVED_PORTS) used.add(reserved)
+  for (let port = start; port <= end; port++) {
+    if (!used.has(port) && await canListen(port)) return port
+  }
+  throw new Error(`No temporary deployment port is available between ${start} and ${end}`)
+}
+
+export async function allocateProjectPorts(start = DEFAULT_START, end = DEFAULT_END, includeStaging = true) {
   const { rows } = await query<{ port: number | null }>('select port from projects where port is not null')
   const used = new Set(rows.map((row) => row.port).filter((port): port is number => typeof port === 'number'))
   for (const reserved of RESERVED_PORTS) used.add(reserved)
 
-  for (let port = start; port <= end - 1000; port++) {
+  for (let port = start; port <= (includeStaging ? end - 1000 : end); port++) {
     const stagingPort = port + 1000
-    if (used.has(port) || used.has(stagingPort)) continue
-    if (RESERVED_PORTS.has(stagingPort)) continue
+    if (used.has(port) || (includeStaging && used.has(stagingPort))) continue
+    if (includeStaging && RESERVED_PORTS.has(stagingPort)) continue
     const [productionAvailable, stagingAvailable] = await Promise.all([
       canListen(port),
-      canListen(stagingPort),
+      includeStaging ? canListen(stagingPort) : Promise.resolve(true),
     ])
     if (productionAvailable && stagingAvailable) {
       return { port, stagingPort }

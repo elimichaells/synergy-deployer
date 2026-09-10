@@ -3,416 +3,106 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/switch'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import Image from 'next/image'
+import { ArrowLeft, ArrowRight, GitBranch, Github, LockKeyhole, Search, Loader2, Check } from 'lucide-react'
 import { AppShell } from '@/components/layout/app-shell'
+import { Button } from '@/components/ui/button'
+import { SetupSteps } from '@/components/setup-steps'
 
-interface SessionUser {
-  id: string
-  email: string
-  name: string
-  role: 'admin' | 'operator' | 'viewer'
-}
-
-interface GithubRepo {
-  id: number
-  name: string
-  fullName: string
-  owner: string
-  avatarUrl: string
-  private: boolean
-  defaultBranch: string
-  cloneUrl: string
-  htmlUrl: string
-  updatedAt: string
-  registered: boolean
-}
-
-interface GitHubConnectionOption {
-  id: string
-  name: string
-  account_login: string
-}
-
-const projectTypeDefaults = {
-  next: { label: 'Next.js', installCmd: 'npm install', buildCmd: 'npm run build', startCmd: 'npm start' },
-  angular: { label: 'Angular', installCmd: 'npm install', buildCmd: 'npm run build', startCmd: '' },
-  go: { label: 'Go', installCmd: 'go mod download', buildCmd: 'go build -o app.exe .', startCmd: '.\\app.exe' },
-  laravel: {
-    label: 'Laravel',
-    installCmd: 'composer install --no-dev --optimize-autoloader',
-    buildCmd: 'php artisan config:cache && php artisan route:cache && php artisan view:cache',
-    startCmd: 'php artisan serve --host=127.0.0.1',
-  },
-  node: { label: 'Node.js', installCmd: 'npm install', buildCmd: 'npm run build', startCmd: 'npm start' },
-}
-
-type ProjectType = keyof typeof projectTypeDefaults
+interface Repo { id: number; name: string; fullName: string; avatarUrl: string; private: boolean; defaultBranch: string; cloneUrl: string; registered: boolean }
+interface Connection { id: string; name: string; account_login: string }
+const input = 'control-input'
 
 export default function NewSitePage() {
   const router = useRouter()
-  const [user, setUser] = useState<SessionUser | null>(null)
+  const [connections, setConnections] = useState<Connection[]>([])
+  const [connectionId, setConnectionId] = useState('')
+  const [repos, setRepos] = useState<Repo[]>([])
+  const [selected, setSelected] = useState<Repo | null>(null)
+  const [search, setSearch] = useState('')
+  const [loading, setLoading] = useState(false)
   const [creating, setCreating] = useState(false)
-  const [discovering, setDiscovering] = useState(false)
-  const [repos, setRepos] = useState<GithubRepo[]>([])
-  const [reposLoading, setReposLoading] = useState(true)
-  const [githubConnected, setGithubConnected] = useState(false)
-  const [githubConnections, setGithubConnections] = useState<GitHubConnectionOption[]>([])
-  const [githubConnectionId, setGithubConnectionId] = useState('')
-  const [selectedRepo, setSelectedRepo] = useState<GithubRepo | null>(null)
-  const [repoSearch, setRepoSearch] = useState('')
-  const [showAdvanced, setShowAdvanced] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [form, setForm] = useState({
-    name: '',
-    projectType: 'next' as ProjectType,
-    repoUrl: '',
-    defaultBranch: 'main',
-    rootPath: '',
-    deployScript: '',
-    startCmd: 'npm start',
-    pm2Name: '',
-    port: '',
-    url: '',
-    autoDeploy: true,
-  })
-
+  const [error, setError] = useState('')
+  const [role, setRole] = useState('viewer')
+  const [manual, setManual] = useState(false)
+  const [applications, setApplications] = useState<{ id: string; name: string; project_type: string; environment: string; application_group_name?: string }[]>([])
+  const [form, setForm] = useState({ name: '', repoUrl: '', branch: 'main', rootPath: '', staging: '', stagingBranch: 'staging', relatedProjectId: '', componentRole: 'application' })
   useEffect(() => {
-    const load = async () => {
-      const [meRes, connectionsRes] = await Promise.all([
-        fetch('/api/auth/me'),
-        fetch('/api/github/connections'),
-      ])
-      const meData = meRes.ok ? await meRes.json() : { user: null }
-      setUser(meData.user)
-      if (connectionsRes.ok) {
-        const connections = (await connectionsRes.json()).connections || []
-        setGithubConnections(connections)
-        setGithubConnectionId(connections[0]?.id || '')
-      }
-    }
-    void load()
+    const abort = new AbortController()
+    void Promise.all([fetch('/api/auth/me', { signal: abort.signal }), fetch('/api/github/connections', { signal: abort.signal }), fetch('/api/sites', { signal: abort.signal })]).then(async ([me, res, sites]) => {
+      if (!me.ok || !res.ok || !sites.ok) throw new Error('Could not load account connections and applications')
+      setApplications((await sites.json()).filter((app: { environment: string }) => app.environment === 'production'))
+      setRole((await me.json()).user?.role || 'viewer')
+      const values = (await res.json()).connections || []
+      setConnections(values); setConnectionId(values[0]?.id || ''); setManual(!values.length)
+    }).catch(err => { if (err.name !== 'AbortError') setError(err.message) })
+    return () => abort.abort()
   }, [])
-
   useEffect(() => {
-    if (!githubConnectionId) {
-      setRepos([])
-      setGithubConnected(false)
-      setReposLoading(false)
-      return
-    }
-    setReposLoading(true)
-    setSelectedRepo(null)
-    fetch(`/api/github/repos?connectionId=${encodeURIComponent(githubConnectionId)}`)
-      .then(async (response) => response.ok ? response.json() : { connected: false, repos: [] })
-      .then((data) => { setGithubConnected(!!data.connected); setRepos(data.repos || []) })
-      .catch(() => { setGithubConnected(false); setRepos([]) })
-      .finally(() => setReposLoading(false))
-  }, [githubConnectionId])
-
-  const canWrite = user?.role === 'admin' || user?.role === 'operator'
-  const visibleRepos = useMemo(() => {
-    const q = repoSearch.trim().toLowerCase()
-    if (!q) return repos
-    return repos.filter((repo) =>
-      repo.fullName.toLowerCase().includes(q) || repo.name.toLowerCase().includes(q)
-    )
-  }, [repoSearch, repos])
-
-  const handleSelectRepo = (repo: GithubRepo) => {
-    const defaults = projectTypeDefaults[form.projectType]
-    setSelectedRepo(repo)
-    setForm({
-      ...form,
-      name: repo.name,
-      repoUrl: repo.cloneUrl,
-      defaultBranch: repo.defaultBranch || 'main',
-      startCmd: defaults.startCmd,
-      pm2Name: '',
-      rootPath: '',
-      port: '',
-    })
-  }
-
-  const handleDiscover = async () => {
-    if (!canWrite) return
-    setDiscovering(true)
-    setError(null)
+    if (!connectionId) { setRepos([]); return }
+    const abort = new AbortController()
+    setLoading(true); setError(''); setSelected(null); setRepos([])
+    setForm(current => ({ ...current, name: '', repoUrl: '', branch: 'main' }))
+    void fetch('/api/github/repos?connectionId=' + encodeURIComponent(connectionId), { signal: abort.signal }).then(async res => {
+      const body = await res.json(); if (!res.ok) throw new Error(body.error || 'Could not load repositories'); setRepos(body.repos || [])
+    }).catch(err => { if (err.name !== 'AbortError') setError(err.message) }).finally(() => { if (!abort.signal.aborted) setLoading(false) })
+    return () => abort.abort()
+  }, [connectionId])
+  const visible = useMemo(() => repos.filter(repo => repo.fullName.toLowerCase().includes(search.toLowerCase())), [repos, search])
+  const select = (repo: Repo) => { setSelected(repo); setForm(current => ({ ...current, name: repo.name, repoUrl: repo.cloneUrl, branch: repo.defaultBranch })) }
+  const create = async (event: React.FormEvent) => {
+    event.preventDefault(); setCreating(true); setError('')
     try {
-      const res = await fetch('/api/sites/discover', { method: 'POST' })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.error || 'Auto-register failed')
-      }
-      router.push('/sites')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Sync failed')
-    } finally {
-      setDiscovering(false)
-    }
+      if (!form.staging) throw new Error('Choose the environments for this application')
+      const response = await fetch('/api/sites', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: form.name.trim(), repoUrl: form.repoUrl.trim(), defaultBranch: form.branch.trim(), rootPath: form.rootPath.trim() || null, projectType: 'next', githubConnectionId: connectionId || null, createStaging: form.staging === 'yes', stagingBranch: form.stagingBranch.trim(), relatedProjectId: form.relatedProjectId || null, componentRole: form.componentRole, setupDraft: true, autoDeploy: false }) })
+      const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Could not create application')
+      router.push('/sites/' + body.id + '?tab=setup')
+    } catch (err) { setError((err as Error).message); setCreating(false) }
   }
-
-  const handleCreate = async (event: React.FormEvent) => {
-    event.preventDefault()
-    if (!canWrite) return
-
-    setCreating(true)
-    setError(null)
-
-    const payload = {
-      name: form.name.trim() || selectedRepo?.name || '',
-      projectType: form.projectType,
-      repoUrl: form.repoUrl.trim() || selectedRepo?.cloneUrl || '',
-      defaultBranch: form.defaultBranch.trim(),
-      rootPath: form.rootPath.trim() || null,
-      deployScript: form.deployScript.trim() || null,
-      startCmd: form.startCmd.trim() || null,
-      pm2Name: form.pm2Name.trim() || null,
-      port: form.port ? Number(form.port) : null,
-      url: form.url.trim() || null,
-      autoDeploy: form.autoDeploy,
-      githubConnectionId: githubConnectionId || null,
-    }
-
-    try {
-      const res = await fetch('/api/sites', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.error || 'Failed to create project')
-      }
-      router.push('/sites')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create site')
-    } finally {
-      setCreating(false)
-    }
-  }
-
-  return (
-    <AppShell
-      title="Create New Site"
-      subtitle="Register a new site or sync from host environment."
-      user={{ name: user?.name, role: user?.role }}
-      actions={null}
-    >
-      {error && (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-          {error}
+  return <AppShell title="New application" subtitle="Production / Setup" actions={<Link href="/sites" className="text-sm text-muted-foreground flex items-center gap-2"><ArrowLeft className="h-4 w-4" />Applications</Link>}>
+    <div className="setup-layout">
+      <SetupSteps step="repository" />
+      <div className="min-w-0">
+        <div className="section-heading"><div><p className="eyebrow">APPLICATION SETUP</p><h2 className="text-xl font-semibold">Connect a repository</h2></div><Github className="h-6 w-6 text-muted-foreground" /></div>
+        {error && <div role="alert" className="notice-error">{error}</div>}
+        <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_minmax(260px,0.8fr)]">
+          <section className="min-w-0 space-y-4" aria-label="Repository selection">
+            <div className="flex items-center justify-between"><h3 className="text-sm font-semibold">Source</h3><Link href="/settings" className="text-xs text-primary">Manage connections</Link></div>
+            <label className="field-label">GitHub account<select className={input} value={connectionId} onChange={event => setConnectionId(event.target.value)}><option value="">Public repository</option>{connections.map(connection => <option key={connection.id} value={connection.id}>{connection.name} / {connection.account_login}</option>)}</select></label>
+            <div className="flex border-b border-border" role="tablist" aria-label="Repository source">
+              <button type="button" role="tab" aria-selected={!manual} className={'inline-tab ' + (!manual ? 'inline-tab-active' : '')} onClick={() => setManual(false)}>Repositories</button>
+              <button type="button" role="tab" aria-selected={manual} className={'inline-tab ' + (manual ? 'inline-tab-active' : '')} onClick={() => { setManual(true); setSelected(null) }}>Repository URL</button>
+            </div>
+            {manual ? <label className="field-label">GitHub HTTPS URL<input className={input} value={form.repoUrl} onChange={event => setForm({ ...form, repoUrl: event.target.value })} placeholder="https://github.com/organization/repository" /></label> : <>
+              <div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><input aria-label="Search repositories" className={input + ' pl-9'} value={search} onChange={event => setSearch(event.target.value)} placeholder="Search repositories" /></div>
+              <div className="max-h-[440px] min-h-40 overflow-y-auto divide-y divide-border border-y border-border" aria-busy={loading}>
+                {loading ? <div className="flex justify-center py-14"><Loader2 aria-label="Loading repositories" className="h-5 w-5 animate-spin" /></div> : !visible.length ? <p className="py-10 text-sm text-muted-foreground text-center">{connectionId ? 'No matching repositories' : 'No GitHub account selected'}</p> : visible.map(repo => <button type="button" key={repo.id} onClick={() => select(repo)} aria-pressed={selected?.id === repo.id} className={'flex w-full items-center gap-3 p-3 text-left hover:bg-muted ' + (selected?.id === repo.id ? 'bg-primary/10' : '')}>
+                  {repo.avatarUrl ? <Image src={repo.avatarUrl} alt="" width={32} height={32} unoptimized className="h-8 w-8 shrink-0 rounded-md" /> : <Github className="h-8 w-8 shrink-0" />}
+                  <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{repo.name}</span><span className="block truncate text-xs text-muted-foreground">{repo.fullName}{repo.registered ? ' / Already registered' : ''}</span></span>
+                  {repo.private && <LockKeyhole aria-label="Private repository" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}{selected?.id === repo.id && <Check className="h-4 w-4 shrink-0 text-primary" />}
+                </button>)}
+              </div>
+            </>}
+          </section>
+          <form onSubmit={create} className="min-w-0 space-y-5 xl:border-l xl:border-border xl:pl-8">
+            <h3 className="text-sm font-semibold">Application details</h3>
+            <label className="field-label">Application name<input required maxLength={100} className={input} value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} placeholder="payments-api" /></label>
+            <label className="field-label">Deployment branch<div className="relative"><GitBranch className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><input required className={input + ' pl-9'} value={form.branch} onChange={event => setForm({ ...form, branch: event.target.value })} /></div></label>
+            <dl className="summary-list"><div><dt>Application port</dt><dd>Assigned automatically</dd></div><div><dt>Auto deploy</dt><dd>Off during setup</dd></div><div><dt>Framework</dt><dd>Detect after checkout</dd></div></dl>
+            <fieldset className="space-y-3 border-t border-border pt-4"><legend className="text-sm font-semibold">Deployment environments</legend>
+              <label className="flex items-center gap-3 text-sm"><input required type="radio" name="staging" value="no" checked={form.staging === 'no'} onChange={() => setForm({ ...form, staging: 'no' })} className="h-4 w-4 accent-emerald-400" />Production only</label>
+              <label className="flex items-center gap-3 text-sm"><input required type="radio" name="staging" value="yes" checked={form.staging === 'yes'} onChange={() => setForm({ ...form, staging: 'yes' })} className="h-4 w-4 accent-emerald-400" />Production and staging</label>
+              {form.staging === 'yes' && <label className="field-label">Staging branch<input required className={input} value={form.stagingBranch} onChange={event => setForm({ ...form, stagingBranch: event.target.value })} /></label>}
+            </fieldset>
+            <div className="space-y-4 border-t border-border pt-4">
+              <label className="field-label">Component role<select className={input} value={form.componentRole} onChange={event => setForm({ ...form, componentRole: event.target.value })}><option value="application">Application</option><option value="frontend">Frontend</option><option value="backend">Backend API</option><option value="service">Service</option></select></label>
+              <label className="field-label">Related application<select className={input} value={form.relatedProjectId} onChange={event => setForm({ ...form, relatedProjectId: event.target.value })}><option value="">Independent application</option>{applications.map(app => <option key={app.id} value={app.id}>{app.name} ({app.project_type}){app.application_group_name ? ' / ' + app.application_group_name : ''}</option>)}</select></label>
+            </div>
+            <details className="border-t border-border pt-4"><summary className="cursor-pointer text-xs text-muted-foreground">Advanced directory</summary><label className="field-label mt-4">Absolute application directory<input className={input} value={form.rootPath} onChange={event => setForm({ ...form, rootPath: event.target.value })} placeholder="Automatic" /></label></details>
+            <div className="border-t border-border pt-5"><Button type="submit" className="w-full" disabled={creating || role === 'viewer' || !form.name.trim() || !form.repoUrl.trim() || !form.staging}>{creating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ArrowRight className="mr-2 h-4 w-4" />}{creating ? 'Creating application...' : 'Create & continue'}</Button></div>
+          </form>
         </div>
-      )}
-
-      <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
-        <Card className="surface-card">
-          <CardHeader>
-            <CardTitle className="text-foreground">Site Registration</CardTitle>
-            <CardDescription className="text-muted-foreground">
-              Select a GitHub repository. The manager will assign paths, PM2 IDs, and ports automatically.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form className="grid gap-4 md:grid-cols-2" onSubmit={handleCreate}>
-              <div className="md:col-span-2 space-y-3">
-                <select
-                  className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
-                  value={githubConnectionId}
-                  onChange={(event) => setGithubConnectionId(event.target.value)}
-                >
-                  <option value="">Select GitHub connection</option>
-                  {githubConnections.map((connection) => (
-                    <option key={connection.id} value={connection.id}>{connection.name} (@{connection.account_login})</option>
-                  ))}
-                </select>
-                <div className="flex items-center justify-between gap-3">
-                  <input
-                    className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
-                    placeholder="Search GitHub repositories"
-                    value={repoSearch}
-                    onChange={(e) => setRepoSearch(e.target.value)}
-                  />
-                  <Link href="/settings" className="text-xs text-muted-foreground hover:text-white whitespace-nowrap">
-                    GitHub settings
-                  </Link>
-                </div>
-                <div className="max-h-72 overflow-auto rounded-lg border border-white/[0.08] bg-black/30">
-                  {reposLoading ? (
-                    <div className="px-4 py-6 text-sm text-muted-foreground">Loading repositories...</div>
-                  ) : !githubConnected ? (
-                    <div className="px-4 py-6 text-sm text-muted-foreground">
-                      Add or select a GitHub connection in Settings to browse repositories here.
-                    </div>
-                  ) : visibleRepos.length === 0 ? (
-                    <div className="px-4 py-6 text-sm text-muted-foreground">No repositories found.</div>
-                  ) : visibleRepos.map((repo) => (
-                    <button
-                      type="button"
-                      key={repo.id}
-                      onClick={() => handleSelectRepo(repo)}
-                      disabled={repo.registered}
-                      className={`flex w-full items-center justify-between gap-3 border-b border-white/[0.08] px-4 py-3 text-left last:border-b-0 transition-colors ${
-                        selectedRepo?.id === repo.id ? 'bg-blue-500/10' : 'hover:bg-white/[0.05]'
-                      } ${repo.registered ? 'opacity-50' : ''}`}
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-foreground">{repo.fullName}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {repo.private ? 'Private' : 'Public'} · {repo.defaultBranch}
-                        </p>
-                      </div>
-                      <span className="text-xs text-muted-foreground">{repo.registered ? 'Registered' : 'Select'}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <select
-                className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
-                value={form.projectType}
-                onChange={(e) => {
-                  const projectType = e.target.value as ProjectType
-                  const defaults = projectTypeDefaults[projectType]
-                  setForm({
-                    ...form,
-                    projectType,
-                    startCmd: defaults.startCmd,
-                  })
-                }}
-              >
-                {Object.entries(projectTypeDefaults).map(([value, item]) => (
-                  <option key={value} value={value}>{item.label}</option>
-                ))}
-              </select>
-              <input
-                className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
-                placeholder="Site name"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-              />
-              <input
-                className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
-                placeholder="Default branch"
-                value={form.defaultBranch}
-                onChange={(e) => setForm({ ...form, defaultBranch: e.target.value })}
-              />
-              <input
-                className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
-                placeholder="Public URL (optional)"
-                value={form.url}
-                onChange={(e) => setForm({ ...form, url: e.target.value })}
-              />
-              <button
-                type="button"
-                onClick={() => setShowAdvanced(!showAdvanced)}
-                className="md:col-span-2 text-left text-xs text-muted-foreground hover:text-white"
-              >
-                {showAdvanced ? 'Hide advanced overrides' : 'Show advanced overrides'}
-              </button>
-              {showAdvanced && (
-                <>
-                  <input
-                    className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
-                    placeholder="GitHub repo URL override"
-                    value={form.repoUrl}
-                    onChange={(e) => setForm({ ...form, repoUrl: e.target.value })}
-                  />
-                  <input
-                    className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
-                    placeholder="PM2 identifier override"
-                    value={form.pm2Name}
-                    onChange={(e) => setForm({ ...form, pm2Name: e.target.value })}
-                  />
-                  <input
-                    className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
-                    placeholder="Root path override"
-                    value={form.rootPath}
-                    onChange={(e) => setForm({ ...form, rootPath: e.target.value })}
-                  />
-                  <input
-                    className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
-                    placeholder="Port override"
-                    value={form.port}
-                    onChange={(e) => setForm({ ...form, port: e.target.value })}
-                  />
-                </>
-              )}
-              <div className="md:col-span-2 grid gap-2">
-                <label className="text-sm font-medium text-foreground">Deployment script</label>
-                <textarea
-                  rows={12}
-                  className="min-h-64 w-full resize-y rounded-lg border border-white/10 bg-black/30 px-3 py-3 font-mono text-sm leading-6 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
-                  value={form.deployScript}
-                  onChange={(e) => setForm({ ...form, deployScript: e.target.value })}
-                  placeholder={`git pull origin $BRANCH
-
-composer install --no-interaction --prefer-dist --optimize-autoloader
-php artisan migrate --force
-
-php artisan optimize:clear
-php artisan optimize
-
-npm install
-npm run build
-
-echo "✅ Deployment completed successfully!"`}
-                />
-                <p className="text-xs text-muted-foreground">Commands run from the project root and stop on the first failure. <code className="font-mono">$BRANCH</code> resolves to the default branch.</p>
-              </div>
-              <input
-                className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground"
-                placeholder="Runtime start command"
-                value={form.startCmd}
-                onChange={(e) => setForm({ ...form, startCmd: e.target.value })}
-              />
-              <div className="flex items-center justify-between rounded-lg border border-white/10 bg-black/20 px-3 py-2.5">
-                <div>
-                  <p className="text-xs font-medium text-foreground">Auto deploy</p>
-                  <p className="text-[11px] text-muted-foreground">Deploy when GitHub pushes to this branch.</p>
-                </div>
-                <Switch
-                  checked={form.autoDeploy}
-                  onCheckedChange={(checked) => setForm({ ...form, autoDeploy: checked })}
-                  aria-label="Auto deploy"
-                />
-              </div>
-              <div className="md:col-span-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2.5">
-                <p className="text-xs font-medium text-amber-400">Automatic runtime setup</p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Production and staging folders, PM2 process names, and an available production/staging port pair will be assigned in the background.
-                </p>
-              </div>
-              <div className="md:col-span-2 flex items-center justify-between">
-                <p className="text-xs text-muted-foreground">
-                  Only admins/operators can add projects.
-                </p>
-                <Button type="submit" disabled={!canWrite || creating}>
-                  {creating ? 'Creating...' : 'Create Site'}
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
-
-        <Card className="surface-card">
-          <CardHeader>
-            <CardTitle className="text-foreground">Sync From Production</CardTitle>
-            <CardDescription className="text-muted-foreground">
-              Auto-register any folders under the production directory.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm text-muted-foreground">
-            <p>
-              This will scan the production folder and register any missing projects with their
-              staging counterparts auto-created. You can update GitHub repo URLs later.
-            </p>
-            <Button size="sm" variant="secondary" onClick={handleDiscover} disabled={!canWrite || discovering}>
-              {discovering ? 'Scanning...' : 'Sync from Production'}
-            </Button>
-          </CardContent>
-        </Card>
       </div>
-    </AppShell>
-  )
+    </div>
+  </AppShell>
 }

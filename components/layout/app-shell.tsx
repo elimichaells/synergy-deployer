@@ -4,34 +4,35 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { ReactNode, useState } from 'react'
 import { Boxes, Database, Gauge, Globe2, HardDrive, LogOut, Menu, Rocket, Server, Settings, User, Workflow, X } from 'lucide-react'
+import { Sheet, SheetContent, SheetTitle, SheetDescription } from '@/components/ui/sheet'
 
 const navGroups = [
-  { label: 'Operate', items: [
+  { label: 'Workspace', items: [
     { href: '/', label: 'Overview', icon: Gauge },
     { href: '/sites', label: 'Applications', icon: Boxes },
     { href: '/deployments', label: 'Deployments', icon: Rocket },
-    { href: '/automation', label: 'Automation', icon: Workflow },
+    { href: '/automation', label: 'Jobs & workers', icon: Workflow },
   ] },
   { label: 'Infrastructure', items: [
-    { href: '/services', label: 'Runtime & proxy', icon: Server },
-    { href: '/data-services', label: 'Data services', icon: HardDrive },
-    { href: '/database', label: 'PostgreSQL', icon: Database },
+    { href: '/services', label: 'Processes & Caddy', icon: Server },
+    { href: '/data-services', label: 'Database connections', icon: HardDrive },
+    { href: '/database', label: 'PostgreSQL server', icon: Database },
     { href: '/domains', label: 'Domains & SSL', icon: Globe2 },
   ] },
   { label: 'Administration', items: [
-    { href: '/settings', label: 'Settings', icon: Settings },
+    { href: '/settings', label: 'Host & integrations', icon: Settings },
   ] },
 ]
 
 function ProductMark() {
   return (
     <div className="flex min-w-0 items-center gap-3">
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-cyan-400/30 bg-cyan-400/10">
-        <Rocket className="h-4 w-4 text-cyan-300" />
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-primary/30 bg-primary/10">
+        <Boxes className="h-4 w-4 text-primary" />
       </div>
       <div className="min-w-0">
-        <p className="truncate text-sm font-semibold text-foreground">Manager</p>
-        <p className="truncate text-[11px] text-muted-foreground">Deployment control plane</p>
+        <p className="truncate text-base font-semibold text-foreground">Manager</p>
+        <p className="truncate text-[10px] text-muted-foreground">Deployment workspace</p>
       </div>
     </div>
   )
@@ -75,11 +76,11 @@ export function AppShell({ children, title, subtitle, user, actions }: {
                   onClick={() => setMobileOpen(false)}
                   aria-current={active ? 'page' : undefined}
                   className={`flex h-10 items-center gap-3 rounded-md border-l-2 px-3 text-sm transition-colors ${active
-                    ? 'border-cyan-400 bg-cyan-400/10 text-foreground'
+                    ? 'border-primary bg-primary/10 text-foreground'
                     : 'border-transparent text-muted-foreground hover:bg-white/[0.04] hover:text-foreground'
                   }`}
                 >
-                  <item.icon className={`h-4 w-4 ${active ? 'text-cyan-300' : ''}`} />
+                  <item.icon className={`h-4 w-4 ${active ? 'text-primary' : ''}`} />
                   <span className="truncate">{item.label}</span>
                 </Link>
               )
@@ -98,7 +99,7 @@ export function AppShell({ children, title, subtitle, user, actions }: {
         </div>
         <div className="min-w-0 flex-1">
           <p className="truncate text-xs font-medium">{user?.name || 'Signed in'}</p>
-          <p className="text-[10px] capitalize text-muted-foreground">{user?.role || 'operator'}</p>
+          <p className="text-[10px] capitalize text-muted-foreground">{user?.role || 'Account'}</p>
         </div>
         <button onClick={() => void handleLogout()} title="Sign out" aria-label="Sign out" className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-300">
           <LogOut className="h-4 w-4" />
@@ -108,7 +109,7 @@ export function AppShell({ children, title, subtitle, user, actions }: {
   )
 
   return (
-    <div className="h-screen overflow-hidden bg-background text-foreground">
+    <div className="h-dvh overflow-hidden bg-background text-foreground">
       <div className="flex h-full">
         <aside className="hidden w-60 shrink-0 flex-col border-r border-border bg-[hsl(var(--sidebar))] md:flex">
           <div className="flex h-16 items-center border-b border-border px-5"><ProductMark /></div>
@@ -116,21 +117,14 @@ export function AppShell({ children, title, subtitle, user, actions }: {
           {account}
         </aside>
 
-        {mobileOpen && (
-          <div className="fixed inset-0 z-50 md:hidden">
-            <button className="absolute inset-0 bg-black/70" onClick={() => setMobileOpen(false)} aria-label="Close navigation" />
-            <aside className="relative flex h-full w-[min(19rem,85vw)] flex-col border-r border-border bg-[hsl(var(--sidebar))] shadow-2xl">
-              <div className="flex h-16 items-center justify-between border-b border-border px-5">
-                <ProductMark />
-                <button onClick={() => setMobileOpen(false)} aria-label="Close navigation" className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground">
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-              {navigation}
-              {account}
-            </aside>
-          </div>
-        )}
+        <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+          <SheetContent side="left" className="flex w-[min(19rem,85vw)] flex-col gap-0 bg-[hsl(var(--sidebar))] p-0">
+            <SheetTitle className="sr-only">Navigation</SheetTitle>
+            <SheetDescription className="sr-only">Manager workspace navigation</SheetDescription>
+            <div className="flex h-16 shrink-0 items-center border-b border-border px-5"><ProductMark /></div>
+            {navigation}{account}
+          </SheetContent>
+        </Sheet>
 
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="shrink-0 border-b border-border bg-background/95 backdrop-blur">
@@ -142,7 +136,7 @@ export function AppShell({ children, title, subtitle, user, actions }: {
                 <h1 className="truncate text-lg font-semibold leading-6 sm:text-xl">{title}</h1>
                 {subtitle && <p className="truncate text-xs text-muted-foreground sm:text-sm">{subtitle}</p>}
               </div>
-              {actions && <div className="flex w-full shrink-0 items-center gap-2 overflow-x-auto pb-1 sm:w-auto sm:pb-0">{actions}</div>}
+              {actions && <div className="flex w-full shrink-0 items-center justify-end gap-2 overflow-x-auto pb-1 sm:w-auto sm:pb-0">{actions}</div>}
             </div>
           </header>
 

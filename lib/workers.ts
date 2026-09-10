@@ -4,6 +4,7 @@ import { query } from '@/lib/db'
 import { runCommand } from '@/lib/exec'
 import { ensureAutomationSchema } from '@/lib/automation-schema'
 import { ApiError } from '@/lib/api'
+import { projectRuntimeEnvironment } from '@/lib/runtimes'
 
 export interface WorkerRecord {
   id: string
@@ -70,7 +71,12 @@ export async function controlWorker(worker: WorkerRecord, action: 'start' | 'sto
   validatePm2Name(worker.pm2_name)
   if (action !== 'stop') await validateWorkingDirectory(worker.working_directory)
 
+  const { rows: projects } = await query<{ runtime_versions: Record<string, string> }>(
+    'select runtime_versions from projects where lower(root_path)=lower($1) order by environment asc limit 1',
+    [worker.working_directory]
+  )
   const env = {
+    ...(projects[0] ? projectRuntimeEnvironment(projects[0].runtime_versions) : {}),
     MANAGER_WORKER_CMD: worker.command,
     MANAGER_WORKER_CWD: worker.working_directory,
   }

@@ -5,6 +5,11 @@ export interface CommandResult {
   output: string
 }
 
+interface CommandControl {
+  signal?: AbortSignal
+  heartbeatMs?: number
+}
+
 /** Kill a process tree on Windows using taskkill, falls back to SIGKILL */
 export function killProcessTree(pid: number) {
   try {
@@ -24,9 +29,17 @@ export function runCommand(
   cwd?: string,
   timeoutMs = 300_000,
   onData?: (data: string) => void,
-  env?: Record<string, string>
+  env?: Record<string, string>,
+  inheritProcessEnv = true,
+  control: CommandControl = {}
 ): Promise<CommandResult> {
   return new Promise((resolve) => {
+    if (control.signal?.aborted) {
+      const output = '[cancelled] Command was not started\n'
+      onData?.(output)
+      resolve({ code: 1, output })
+      return
+    }
     const pathEntries = [
       'C:\\Program Files\\Go\\bin',
       'C:\\Program Files\\PostgreSQL\\18\\bin',
@@ -36,12 +49,16 @@ export function runCommand(
     ].filter(Boolean)
     const requestedPath = env?.Path || env?.PATH || ''
     const managedPath = [requestedPath, ...pathEntries, process.env.Path || process.env.PATH || ''].filter(Boolean).join(';')
+    const systemEnv: NodeJS.ProcessEnv = { NODE_ENV: process.env.NODE_ENV || 'production' }
+    for (const key of ['SystemRoot', 'WINDIR', 'ComSpec', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA', 'PM2_HOME']) {
+      if (process.env[key]) systemEnv[key] = process.env[key]
+    }
     const child = spawn(command, {
       cwd,
       shell: true,
       windowsHide: true,
       env: {
-        ...process.env,
+        ...(inheritProcessEnv ? process.env : systemEnv),
         ...env,
         Path: managedPath,
         PATH: managedPath,
@@ -57,44 +74,54 @@ export function runCommand(
     })
 
     let output = ''
-    let killed = false
-
-    const timer = setTimeout(() => {
-      killed = true
+    let settled = false
+    const startedAt = Date.now()
+    let lastOutputAt = startedAt
+    const emit = (message: string) => {
+      if (settled) return
+      lastOutputAt = Date.now()
+      output += message
+      onData?.(message)
+    }
+    const finish = (code: number) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (heartbeat) clearInterval(heartbeat)
+      control.signal?.removeEventListener('abort', cancel)
+      resolve({ code, output })
+    }
+    const stop = (message: string) => {
+      if (settled) return
       if (child.pid) killProcessTree(child.pid)
-      const msg = `\n[timeout] Command killed after ${timeoutMs / 1000}s\n`
-      output += msg
-      if (onData) onData(msg)
-      resolve({ code: 1, output })
-    }, timeoutMs)
+      emit(message)
+      finish(1)
+    }
+    const cancel = () => stop('\n[cancelled] Command process tree stopped\n')
+    const timer = setTimeout(() => stop(`\n[timeout] Command killed after ${timeoutMs / 1000}s\n`), timeoutMs)
+    const heartbeat = control.heartbeatMs ? setInterval(() => {
+      if (Date.now() - lastOutputAt >= control.heartbeatMs!) {
+        emit(`[progress] Command is still running (${Math.floor((Date.now() - startedAt) / 1000)}s elapsed; limit ${timeoutMs / 1000}s)\n`)
+      }
+    }, control.heartbeatMs) : undefined
+    control.signal?.addEventListener('abort', cancel, { once: true })
+    if (control.signal?.aborted) cancel()
 
     child.stdout.on('data', (data) => {
-      const str = data.toString()
-      output += str
-      if (onData) onData(str)
+      emit(data.toString())
     })
 
     child.stderr.on('data', (data) => {
-      const str = data.toString()
-      output += str
-      if (onData) onData(str)
+      emit(data.toString())
     })
 
     child.on('error', (error) => {
-      clearTimeout(timer)
-      if (!killed) {
-        const msg = `\n[error] ${error.message}\n`
-        output += msg
-        if (onData) onData(msg)
-        resolve({ code: 1, output })
-      }
+      emit(`\n[error] ${error.message}\n`)
+      finish(1)
     })
 
     child.on('close', (code) => {
-      clearTimeout(timer)
-      if (!killed) {
-        resolve({ code: code ?? 0, output })
-      }
+      finish(code ?? 1)
     })
   })
 }

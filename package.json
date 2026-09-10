@@ -1,6 +1,6 @@
 {
   "name": "trueid-manager-v2",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "private": true,
   "scripts": {
     "dev": "next dev -p 4000",
@@ -8,6 +8,7 @@
     "start": "next start -p 4000",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "test": "node scripts/test.cjs",
     "package:windows": "powershell -ExecutionPolicy Bypass -File ./scripts/package-manager.ps1",
     "package:windows:exe": "powershell -ExecutionPolicy Bypass -File ./scripts/package-manager-exe.ps1"
   },

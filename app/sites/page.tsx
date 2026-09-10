@@ -24,11 +24,14 @@ import {
   Server,
   Network,
   Search,
-  LayoutList,
-  LayoutGrid
+  Pin
 } from 'lucide-react'
 
 interface Project {
+  pinned?: boolean
+  application_group_name?: string | null
+  component_role?: string
+  setup_required?: boolean
   id: string
   name: string
   slug: string
@@ -44,10 +47,19 @@ interface Project {
   github_account_login: string | null
   is_active: boolean
   environment: 'production' | 'staging'
+  project_type: 'next' | 'angular' | 'go' | 'laravel' | 'node'
   production_id: string | null
   staging_id: string | null
   created_at: string
   updated_at: string
+}
+
+function FrameworkLogo({ type }: { type: Project['project_type'] }) {
+  if (type === 'angular') return <svg viewBox="0 0 32 32" className="h-6 w-6" aria-hidden="true"><path fill="#dd0031" d="M16 2 29 6.7 27 23.8 16 30 5 23.8 3 6.7Z" /><path fill="#fff" d="m16 6-7.2 16h3.6l1.45-3.6h4.3L19.6 22h3.6Zm0 5.1 1.15 4.2h-2.3Z" /></svg>
+  if (type === 'next') return <svg viewBox="0 0 32 32" className="h-6 w-6" aria-hidden="true"><circle cx="16" cy="16" r="14" fill="#fff" /><path fill="#050505" d="M10 9h3.2l8.7 13.5V9H25v14.5h-3.2L13.1 10v13.5H10Z" /></svg>
+  if (type === 'node') return <svg viewBox="0 0 32 32" className="h-6 w-6" aria-hidden="true"><path fill="#5fa04e" d="m16 2.5 12 6.8v13.4l-12 6.8-12-6.8V9.3Z" /><text x="16" y="19" textAnchor="middle" fill="white" fontSize="9" fontWeight="700">JS</text></svg>
+  if (type === 'laravel') return <svg viewBox="0 0 32 32" className="h-6 w-6" aria-hidden="true"><rect x="3" y="3" width="26" height="26" rx="6" fill="#ff2d20" /><path d="M10 8v12.5L16.5 24l6-3.5V14l-6 3.4-3-1.7V8Z" fill="none" stroke="#fff" strokeWidth="2" strokeLinejoin="round" /></svg>
+  return <svg viewBox="0 0 32 32" className="h-6 w-6" aria-hidden="true"><rect x="2" y="7" width="28" height="18" rx="9" fill="#00add8" /><text x="16" y="20" textAnchor="middle" fill="white" fontSize="10" fontWeight="800" fontStyle="italic">GO</text></svg>
 }
 
 interface Deployment {
@@ -79,7 +91,9 @@ export default function ProjectsPage() {
   const [deployingId, setDeployingId] = useState<string | null>(null)
   const [promotingId, setPromotingId] = useState<string | null>(null)
   const [autoDeployBusyId, setAutoDeployBusyId] = useState<string | null>(null)
+  const [pinBusyId, setPinBusyId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [environmentFilter, setEnvironmentFilter] = useState('all')
 
   const canWrite = user?.role === 'admin' || user?.role === 'operator'
 
@@ -111,6 +125,27 @@ export default function ProjectsPage() {
 
   useEffect(() => {
     void refresh()
+    const controller = new AbortController()
+    let polling = false
+    const interval = setInterval(async () => {
+      if (polling || document.hidden) return
+      polling = true
+      try {
+        const response = await fetch('/api/deployments', { signal: controller.signal })
+        if (response.ok) {
+          const current = await response.json()
+          if (!controller.signal.aborted) setDeployments(current)
+        }
+      } catch {
+        // Preserve the last known status if a background refresh fails.
+      } finally {
+        polling = false
+      }
+    }, 5000)
+    return () => {
+      controller.abort()
+      clearInterval(interval)
+    }
   }, [])
 
   const handleDeploy = async (id: string) => {
@@ -196,306 +231,104 @@ export default function ProjectsPage() {
     }
   }
 
+  const handlePin = async (project: Project) => {
+    if (pinBusyId) return
+    const pinned = !project.pinned
+    setPinBusyId(project.id)
+    setProjects(current => current.map(item => item.id === project.id ? { ...item, pinned } : item))
+    try {
+      const res = await fetch(`/api/sites/${project.id}/pin`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pinned }) })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error || 'Failed to update pin')
+      }
+    } catch (err) {
+      setProjects(current => current.map(item => item.id === project.id ? { ...item, pinned: project.pinned } : item))
+      setError(err instanceof Error ? err.message : 'Failed to update pin')
+    } finally { setPinBusyId(null) }
+  }
+
   const latestDeployments = useMemo(() => deployments.slice(0, 10), [deployments])
 
+  const activeDeployments = useMemo(() => {
+    const active = new Map<string, Deployment>()
+    for (const deployment of deployments) {
+      if ((deployment.status === 'running' || deployment.status === 'queued') && !active.has(deployment.project_id)) {
+        active.set(deployment.project_id, deployment)
+      }
+    }
+    return active
+  }, [deployments])
+
   const filteredProjects = useMemo(() => {
-    if (!searchQuery) return projects
     const q = searchQuery.toLowerCase()
+    const priority = (id: string) => deployingId === id || activeDeployments.get(id)?.status === 'running' ? 2 : activeDeployments.has(id) ? 1 : 0
+    const startedAt = (id: string) => Date.parse(activeDeployments.get(id)?.started_at || '') || 0
     return projects.filter(p =>
+      (environmentFilter === 'all' || (environmentFilter === 'draft' ? p.setup_required : p.environment === environmentFilter)) && (
       p.name.toLowerCase().includes(q) ||
       p.pm2_name.toLowerCase().includes(q) ||
-      (p.repo_url && p.repo_url.toLowerCase().includes(q))
-    )
-  }, [projects, searchQuery])
+      p.application_group_name?.toLowerCase().includes(q) ||
+      (p.repo_url && p.repo_url.toLowerCase().includes(q)))
+    ).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned))
+      || priority(b.id) - priority(a.id)
+      || startedAt(b.id) - startedAt(a.id)
+      || a.name.localeCompare(b.name))
+  }, [projects, searchQuery, environmentFilter, activeDeployments, deployingId])
 
   // Stats
   const totalSites = projects.length
   const activeSites = projects.filter(p => p.is_active).length
   const stagingSites = projects.filter(p => p.environment === 'staging').length
   const prodSites = projects.filter(p => p.environment === 'production').length
+  const pinnedProjects = filteredProjects.filter(project => project.pinned)
+  const otherProjects = filteredProjects.filter(project => !project.pinned)
 
-  return (
-    <AppShell
-      title="Applications"
-      subtitle="Environments, releases, and runtime assignments."
-      user={{ name: user?.name, role: user?.role }}
-      actions={
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1.5 h-4 w-4 text-muted-foreground pointer-events-none" />
-            <input
-              type="text"
-              placeholder="Search sites..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-9 w-64 rounded-lg bg-secondary/50 pl-9 pr-4 text-sm outline-none focus:ring-1 focus:ring-primary/50 transition-all"
-            />
-          </div>
-          <div className="h-6 w-px bg-border/40 mx-1" />
-          <button
-            onClick={() => void refresh()}
-            className="flex items-center gap-2 rounded-lg bg-secondary px-3 py-2 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground hover:bg-muted"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
-          <button
-            onClick={handleDiscover}
-            disabled={!canWrite || discovering}
-            className="flex items-center gap-2 rounded-lg bg-primary/10 px-3 py-2 text-xs font-semibold text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${discovering ? 'animate-spin' : ''}`} />
-            Sync Host
-          </button>
-          <Link href="/sites/new">
-            <button
-              disabled={!canWrite}
-              className="flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50 shadow-[0_0_15px_hsl(199_89%_48%/0.3)]"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              New Site
-            </button>
-          </Link>
-        </div>
-      }
-    >
-      {error && (
-        <div className="mb-6 flex items-center gap-3 rounded-2xl border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-          <div className="h-1.5 w-1.5 rounded-full bg-destructive animate-pulse" />
-          {error}
-        </div>
-      )}
-
-      {/* Hero Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-        <div className="surface-card p-4 flex flex-col gap-1">
-          <span className="text-[10px] uppercase font-bold text-muted-foreground/60">Total Sites</span>
-          <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-bold">{totalSites}</span>
-          </div>
-        </div>
-        <div className="surface-card p-4 flex flex-col gap-1">
-          <span className="text-[10px] uppercase font-bold text-muted-foreground/60">Active Services</span>
-          <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-bold text-emerald-500">{activeSites}</span>
-            <span className="text-sm font-medium text-muted-foreground">/ {totalSites}</span>
-          </div>
-          <div className="w-full bg-secondary h-1 rounded-full mt-2 overflow-hidden">
-            <div className="h-full bg-emerald-500 transition-all duration-500" style={{ width: `${(activeSites / (totalSites || 1)) * 100}%` }} />
-          </div>
-        </div>
-        <div className="surface-card p-4 flex flex-col gap-1">
-          <span className="text-[10px] uppercase font-bold text-muted-foreground/60">Environments</span>
-          <div className="flex items-center gap-4 mt-1">
-            <div className="flex items-center gap-1.5">
-              <div className="h-2 w-2 rounded-full bg-blue-400" />
-              <span className="text-sm font-bold">{prodSites}</span>
-              <span className="text-xs text-muted-foreground">Prod</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="h-2 w-2 rounded-full bg-amber-400" />
-              <span className="text-sm font-bold">{stagingSites}</span>
-              <span className="text-xs text-muted-foreground">Staging</span>
-            </div>
-          </div>
-        </div>
-        <div className="surface-card p-4 flex flex-col gap-1">
-          <span className="text-[10px] uppercase font-bold text-muted-foreground/60">System Health</span>
-          <div className="flex items-center gap-2 mt-1">
-            <Activity className="h-5 w-5 text-emerald-500" />
-            <span className="text-sm font-medium text-emerald-500">Operational</span>
-          </div>
-          <span className="text-[10px] text-muted-foreground mt-0.5">All systems normal</span>
-        </div>
+  const renderProjectRow = (project: Project) => {
+    const latest = activeDeployments.get(project.id) || deployments.find(deployment => deployment.project_id === project.id)
+    const busy = activeDeployments.has(project.id) || deployingId === project.id
+    const deployTone = project.setup_required ? 'text-amber-300' : busy ? 'text-sky-300' : latest?.status === 'failed' ? 'text-red-300' : latest?.status === 'success' ? 'text-emerald-300' : 'text-muted-foreground'
+    const emptyAction = <span aria-hidden="true" className="hidden h-7 w-7 sm:block" />
+    return <article key={project.id} className={`group grid h-12 min-w-0 grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-2 rounded-lg border px-2 transition-colors sm:grid-cols-[32px_minmax(0,1fr)_68px_176px] hover:border-sky-400/25 hover:bg-white/[0.04] ${project.pinned ? 'border-amber-300/15 bg-amber-300/[0.025]' : 'border-white/[0.06] bg-white/[0.018]'}`}>
+      <Link href={`/sites/${project.id}${project.setup_required ? '?tab=setup' : ''}`} className="flex h-8 w-8 items-center justify-center rounded-md bg-white/[0.035]" title={`${project.project_type} application`} aria-label={`Open ${project.name}, ${project.project_type} application`}><FrameworkLogo type={project.project_type} /></Link>
+      <div className="min-w-0 self-center">
+        <div className="flex min-w-0 items-center gap-1.5"><Link href={`/sites/${project.id}${project.setup_required ? '?tab=setup' : ''}`} className="truncate text-xs font-semibold hover:text-sky-300">{project.name}</Link><span className={`h-1.5 w-1.5 shrink-0 rounded-full ${project.is_active ? 'bg-emerald-400' : 'bg-slate-600'}`} title={project.is_active ? 'Online' : 'Offline'} /></div>
+        <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground"><span className={project.environment === 'production' ? 'text-emerald-300' : 'text-amber-300'}>{project.environment}</span><span>·</span><span className="capitalize">{project.project_type}</span><span>·</span><span className="font-mono">:{project.port || '—'}</span><span className="hidden truncate 2xl:inline">· {project.default_branch}</span></div>
       </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-8">
-        {/* Main List */}
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-              <LayoutList className="h-4 w-4" /> Applications
-            </h3>
-            <span className="text-xs text-muted-foreground font-mono">
-              {filteredProjects.length} / {totalSites} sites
-            </span>
-          </div>
-
-          {loading ? (
-            <div className="space-y-3">
-              {[1, 2, 3, 4, 5].map((i) => (
-                <div key={i} className="h-16 w-full animate-pulse rounded-xl bg-card/50 border border-border" />
-              ))}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {/* Table Header */}
-              <div className="hidden md:grid grid-cols-[2fr_110px_1.5fr_1fr_100px_140px] gap-4 px-6 py-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
-                <div>Name</div>
-                <div>Environment</div>
-                <div>Branch / Repo</div>
-                <div>Process</div>
-                <div>Auto Deploy</div>
-                <div className="text-right">Actions</div>
-              </div>
-
-              {filteredProjects.map(project => (
-                <div
-                  key={project.id}
-                  className="group relative grid grid-cols-1 md:grid-cols-[2fr_110px_1.5fr_1fr_100px_140px] items-center gap-4 rounded-xl border border-border/40 bg-card/30 p-4 transition-all hover:border-primary/30 hover:bg-card/60 hover:shadow-lg hover:shadow-black/20"
-                >
-                  {/* Name & Status */}
-                  <div className="flex items-center gap-3 overflow-hidden">
-                    <div className={`h-2.5 w-2.5 rounded-full flex-shrink-0 ${project.is_active ? 'bg-emerald-500 shadow-[0_0_8px_hsl(141_76%_36%/0.6)]' : 'bg-muted-foreground'}`} />
-                    <div className="flex flex-col min-w-0">
-                      <Link
-                        href={`/sites/${project.id}`}
-                        className="font-bold text-sm hover:text-primary transition-colors truncate"
-                      >
-                        {project.name}
-                      </Link>
-                      {project.url && (
-                        <a href={project.url} target="_blank" rel="noopener noreferrer" className="text-[10px] text-muted-foreground hover:text-foreground truncate flex items-center gap-1">
-                          {project.url.replace(/^https?:\/\//, '')} <ExternalLink className="h-2.5 w-2.5 inline" />
-                        </a>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Environment */}
-                  <div>
-                    <Badge variant="outline" className={`text-[10px] uppercase font-bold px-2 py-0 h-5 border-none ${project.environment === 'staging'
-                        ? 'text-amber-400 bg-amber-400/10'
-                        : 'text-blue-400 bg-blue-400/10'
-                      }`}>
-                      {project.environment}
-                    </Badge>
-                  </div>
-
-                  {/* Branch / Repo */}
-                  <div className="flex flex-col text-xs text-muted-foreground min-w-0">
-                    <div className="flex items-center gap-1.5 text-foreground/80 font-medium">
-                      <GitBranch className="h-3 w-3 text-muted-foreground/70" />
-                      <span className="truncate">{project.default_branch}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 text-[10px] truncate opacity-70">
-                      <Folder className="h-3 w-3" />
-                      <span className="truncate">{project.repo_url?.split('/').slice(-2).join('/') || 'No Repo'}</span>
-                    </div>
-                    <span className="truncate text-[10px] opacity-70">{project.github_connection_name ? `${project.github_connection_name} (@${project.github_account_login})` : 'Legacy GitHub connection'}</span>
-                  </div>
-
-                  {/* Process Info */}
-                  <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
-                    <Terminal className="h-3 w-3 opacity-50" />
-                    <span className="truncate">{project.pm2_name}</span>
-                    {project.port && (
-                      <span className="px-1.5 py-0.5 rounded bg-secondary/50 text-[10px] font-bold text-foreground/70">:{project.port}</span>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <Switch
-                      aria-label={`Auto deploy ${project.name}`}
-                      checked={project.auto_deploy}
-                      disabled={!canWrite || autoDeployBusyId === project.id}
-                      onCheckedChange={() => void handleAutoDeploy(project)}
-                      title={project.auto_deploy ? 'Disable auto deploy' : 'Enable auto deploy'}
-                    />
-                    <span className={`text-[10px] font-medium ${project.auto_deploy ? 'text-emerald-400' : 'text-muted-foreground'}`}>
-                      {project.auto_deploy ? 'On' : 'Off'}
-                    </span>
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex items-center justify-end gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-                    {project.environment === 'staging' && (
-                      <button
-                        onClick={() => handlePromote(project.id)}
-                        disabled={!canWrite || promotingId === project.id}
-                        className="h-7 w-7 flex items-center justify-center rounded-lg bg-amber-500/10 text-amber-400 hover:bg-amber-500 hover:text-white transition-all disabled:opacity-50"
-                        title="Promote to Production"
-                      >
-                        <ArrowUpRight className={`h-3.5 w-3.5 ${promotingId === project.id ? 'animate-bounce' : ''}`} />
-                      </button>
-                    )}
-
-                    <button
-                      onClick={() => handleDeploy(project.id)}
-                      disabled={!canWrite || deployingId === project.id}
-                      className="h-7 w-7 flex items-center justify-center rounded-lg bg-primary/10 text-primary hover:bg-primary hover:text-primary-foreground transition-all disabled:opacity-50"
-                      title="Deploy"
-                    >
-                      <Rocket className={`h-3.5 w-3.5 ${deployingId === project.id ? 'animate-bounce' : ''}`} />
-                    </button>
-
-                    <Link
-                      href={`/sites/${project.id}`}
-                      className="h-7 w-7 flex items-center justify-center rounded-lg bg-secondary text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-all"
-                      title="Details"
-                    >
-                      <ChevronRight className="h-4 w-4" />
-                    </Link>
-                  </div>
-                </div>
-              ))}
-
-              {filteredProjects.length === 0 && (
-                <div className="py-20 text-center border-2 border-dashed border-border rounded-3xl opacity-50 flex flex-col items-center justify-center">
-                  <Search className="h-10 w-10 mb-4 opacity-20" />
-                  <p className="text-sm font-medium">No sites match your search.</p>
-                  {projects.length === 0 && (
-                    <p className="text-xs text-muted-foreground mt-1">Try syncing from host or create a new site.</p>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Activity Sidebar */}
-        <div>
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Recent Activity</h3>
-            <Link href="/deployments" className="text-[10px] font-bold text-primary hover:text-primary/80 transition-colors">
-              VIEW ALL
-            </Link>
-          </div>
-
-          <div className="space-y-4">
-            {latestDeployments.length === 0 ? (
-              <div className="py-8 text-center text-xs text-muted-foreground border border-dashed border-border rounded-xl">
-                No recent activity.
-              </div>
-            ) : (
-              <div className="relative border-l border-border/40 ml-3 space-y-6">
-                {latestDeployments.map((deployment) => (
-                  <div key={deployment.id} className="relative pl-6">
-                    <div className={`absolute -left-[5px] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-background ${deployment.status === 'success' ? 'bg-emerald-500' :
-                        deployment.status === 'failed' ? 'bg-destructive' : 'bg-blue-500 animate-pulse'
-                      }`} />
-
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] font-mono text-muted-foreground">
-                        {deployment.finished_at ? new Date(deployment.finished_at).toLocaleString() : 'Running...'}
-                      </span>
-                      <p className="text-sm font-medium leading-none">{deployment.project_name}</p>
-                      <div className="flex items-center gap-2 mt-1">
-                        <Badge variant="secondary" className="text-[9px] h-4 px-1 rounded-sm font-normal text-muted-foreground">
-                          {deployment.branch || 'main'}
-                        </Badge>
-                        <span className="text-[10px] font-mono text-muted-foreground/50">
-                          {deployment.commit_sha?.slice(0, 7) || '---'}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+      <Link href={`/sites/${project.id}?tab=${project.setup_required ? 'setup' : 'deployments'}`} className={`hidden w-[68px] truncate text-[10px] font-medium capitalize sm:block ${deployTone}`}>{project.setup_required ? 'Setup' : latest ? latest.status === 'success' ? 'Deployed' : latest.status : 'Not deployed'}</Link>
+      <div className="grid shrink-0 grid-cols-2 items-center justify-end gap-0.5 sm:grid-cols-6">
+        <button onClick={() => void handlePin(project)} disabled={pinBusyId === project.id} className={`h-7 w-7 rounded p-1.5 transition-colors ${project.pinned ? 'text-amber-300' : 'text-muted-foreground/45 hover:bg-white/[0.06] hover:text-white'}`} title={project.pinned ? 'Unpin application' : 'Pin application'} aria-label={`${project.pinned ? 'Unpin' : 'Pin'} ${project.name}`}><Pin className={`h-3.5 w-3.5 ${project.pinned ? 'fill-current' : ''}`} /></button>
+        <button onClick={() => void handleAutoDeploy(project)} disabled={!canWrite || autoDeployBusyId === project.id || project.setup_required} className={`hidden h-7 w-7 rounded p-1.5 transition-colors disabled:opacity-30 sm:block ${project.auto_deploy ? 'text-emerald-300' : 'text-muted-foreground/45 hover:bg-white/[0.06] hover:text-white'}`} title={`Automatic deployment ${project.auto_deploy ? 'on' : 'off'}`} aria-label={`Turn automatic deployment ${project.auto_deploy ? 'off' : 'on'} for ${project.name}`}><Activity className="h-3.5 w-3.5" /></button>
+        {project.url ? <a href={project.url.startsWith('http') ? project.url : `https://${project.url}`} target="_blank" rel="noreferrer" className="hidden h-7 w-7 rounded p-1.5 text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-white sm:block" title="Open live application" aria-label={`Open live ${project.name}`}><ExternalLink className="h-3.5 w-3.5" /></a> : emptyAction}
+        {project.environment === 'staging' ? <button title="Promote to production" aria-label={`Promote ${project.name}`} disabled={!canWrite || busy || project.setup_required || promotingId === project.id} onClick={() => void handlePromote(project.id)} className="hidden h-7 w-7 rounded p-1.5 text-amber-300 transition-colors hover:bg-white/[0.06] disabled:opacity-30 sm:block"><ArrowUpRight className="h-3.5 w-3.5" /></button> : emptyAction}
+        <button title={project.setup_required ? 'Complete setup first' : 'Deploy'} aria-label={`Deploy ${project.name}`} disabled={!canWrite || busy || project.setup_required} onClick={() => void handleDeploy(project.id)} className="hidden h-7 w-7 rounded p-1.5 text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-white disabled:opacity-30 sm:block"><Rocket className={`h-3.5 w-3.5 ${busy ? 'animate-pulse' : ''}`} /></button>
+        <Link href={`/sites/${project.id}`} title="Open application workspace" aria-label={`Open ${project.name}`} className="h-7 w-7 rounded p-1.5 text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-white"><ChevronRight className="h-4 w-4" /></Link>
       </div>
-    </AppShell>
-  )
+    </article>
+  }
+
+  return <AppShell title="Applications" subtitle="Workspace / Applications" user={{ name: user?.name, role: user?.role }} actions={<div className="flex items-center gap-2"><Button variant="outline" size="icon" title="Refresh applications" aria-label="Refresh applications" onClick={() => void refresh()}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></Button><Button asChild disabled={!canWrite}><Link href="/sites/new"><Plus className="mr-2 h-4 w-4" />New application</Link></Button></div>}>
+    {error && <div role="alert" className="notice-error">{error}</div>}
+
+    <div className="mb-5 grid grid-cols-2 gap-2 sm:grid-cols-5">
+      {[['Applications', totalSites], ['Pinned', projects.filter(p => p.pinned).length], ['Online', activeSites], ['Production', prodSites], ['Staging', stagingSites]].map(([label, count]) => <div key={label} className="rounded-lg border border-white/[0.07] bg-white/[0.025] px-3 py-2.5"><p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p><p className="mt-1 text-xl font-semibold tracking-tight">{count}</p></div>)}
+    </div>
+
+    <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-white/[0.07] bg-white/[0.02] p-2">
+      <div className="relative min-w-[220px] flex-1"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><input aria-label="Search applications" className="control-input h-9 border-0 bg-transparent pl-9 shadow-none" value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="Search applications or repositories..." /></div>
+      <label className="sr-only" htmlFor="environment-filter">Environment</label><select id="environment-filter" className="control-input h-9 w-40" value={environmentFilter} onChange={event => setEnvironmentFilter(event.target.value)}><option value="all">All environments</option><option value="production">Production</option><option value="staging">Staging</option><option value="draft">Setup incomplete</option></select>
+      <Button variant="ghost" size="sm" onClick={handleDiscover} disabled={!canWrite || discovering}>{discovering ? 'Importing…' : 'Import from host'}</Button>
+    </div>
+
+    {loading ? <div className="grid gap-3 xl:grid-cols-[minmax(300px,0.8fr)_minmax(0,1.35fr)]"><div className="h-48 animate-pulse rounded-xl bg-muted/40" /><div className="h-64 animate-pulse rounded-xl bg-muted/40" /></div> : filteredProjects.length === 0 ? <div className="rounded-xl border border-dashed border-border py-16 text-center"><Boxes className="mx-auto mb-4 h-8 w-8 text-muted-foreground" /><h2 className="text-base font-medium">{projects.length ? 'No matching applications' : 'No applications yet'}</h2><Button asChild variant="link" className="mt-3"><Link href="/sites/new">Create application</Link></Button></div> : <div className="grid min-w-0 gap-3 xl:grid-cols-[minmax(340px,0.8fr)_minmax(0,1.35fr)]">
+      <section className="flex h-[560px] min-w-0 flex-col overflow-hidden rounded-xl border border-amber-300/10 bg-amber-300/[0.012] p-2">
+        <div className="mb-1.5 flex shrink-0 items-center justify-between border-b border-amber-300/10 px-1 pb-2 pt-1"><div className="flex items-center gap-2"><Pin className="h-3.5 w-3.5 fill-amber-300 text-amber-300" /><h2 className="text-xs font-semibold">Pinned</h2></div><span className="rounded-full bg-amber-300/10 px-2 py-0.5 text-[10px] text-amber-200">{pinnedProjects.length}</span></div>
+        <div className="grid min-h-0 flex-1 content-start gap-1.5 overflow-y-auto overscroll-contain pr-1">{pinnedProjects.length ? pinnedProjects.map(renderProjectRow) : <div className="rounded-lg border border-dashed border-white/[0.07] px-4 py-8 text-center text-xs text-muted-foreground"><Pin className="mx-auto mb-2 h-4 w-4 opacity-40" />Pin applications for quick access.</div>}</div>
+      </section>
+      <section className="flex h-[560px] min-w-0 flex-col overflow-hidden rounded-xl border border-white/[0.07] bg-white/[0.012] p-2">
+        <div className="mb-1.5 flex shrink-0 items-center justify-between border-b border-white/[0.07] px-1 pb-2 pt-1"><h2 className="text-xs font-semibold">All other applications</h2><span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[10px] text-muted-foreground">{otherProjects.length}</span></div>
+        <div className="grid min-h-0 flex-1 content-start gap-1.5 overflow-y-auto overscroll-contain pr-1">{otherProjects.length ? otherProjects.map(renderProjectRow) : <div className="rounded-lg border border-dashed border-white/[0.07] px-4 py-8 text-center text-xs text-muted-foreground">All matching applications are pinned.</div>}</div>
+      </section>
+    </div>}
+  </AppShell>
 }

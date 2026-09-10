@@ -8,6 +8,7 @@ import { db, query } from '@/lib/db'
 import { killProcessTree } from '@/lib/exec'
 import { decryptSecret } from '@/lib/secret-crypto'
 import type { DataProvider } from '@/lib/data-services'
+import { migrationRemovalReason } from '@/lib/data-removal-policy'
 
 export const RELATIONAL_MIGRATION_PROVIDERS = ['postgresql', 'mysql', 'mariadb', 'sqlserver'] as const
 type RelationalProvider = typeof RELATIONAL_MIGRATION_PROVIDERS[number]
@@ -26,6 +27,7 @@ interface MigrationService {
   password_ciphertext: string | null
   tls_enabled: boolean
   env_prefix: string
+  application_primary: boolean
 }
 
 interface MigrationTable {
@@ -37,8 +39,23 @@ interface MigrationTable {
   targetObject: string
 }
 
-interface MySqlTableRow extends RowDataPacket { table_schema: string; table_name: string }
+interface MySqlTableRow extends RowDataPacket {
+  table_schema?: string
+  table_name?: string
+  TABLE_SCHEMA?: string
+  TABLE_NAME?: string
+}
 interface MySqlCountRow extends RowDataPacket { count: string | number }
+interface MySqlColumnRow extends RowDataPacket {
+  column_name?: string
+  COLUMN_NAME?: string
+  is_nullable?: string
+  IS_NULLABLE?: string
+  column_default?: unknown
+  COLUMN_DEFAULT?: unknown
+  extra?: string
+  EXTRA?: string
+}
 
 export interface DataMigrationJob {
   id: string
@@ -63,9 +80,11 @@ export interface DataMigrationJob {
   finished_at: string | null
   activated_at: string | null
   created_at: string
+  removal_blocked_reason: string | null
 }
 
 const activeJobs = ((globalThis as unknown as { __dataMigrationJobs?: Map<string, ChildProcess> }).__dataMigrationJobs ??= new Map<string, ChildProcess>())
+const executingJobs = ((globalThis as unknown as { __executingDataMigrations?: Set<string> }).__executingDataMigrations ??= new Set<string>())
 let migrationSchemaPromise: Promise<void> | null = null
 
 export function ensureDataMigrationSchema() {
@@ -110,7 +129,7 @@ function assertRelational(provider: DataProvider): asserts provider is Relationa
 async function migrationService(id: string) {
   const { rows } = await query<MigrationService>(
     `select pds.id,pds.project_id,p.name as project_name,pds.name,pds.database_name,pds.username,
-            pds.password_ciphertext,pds.env_prefix,dc.provider,dc.host,dc.port,dc.tls_enabled
+            pds.password_ciphertext,pds.env_prefix,pds.application_primary,dc.provider,dc.host,dc.port,dc.tls_enabled
        from project_data_services pds join projects p on p.id=pds.project_id
        join data_connections dc on dc.id=pds.connection_id where pds.id=$1`,
     [id]
@@ -152,7 +171,10 @@ async function listTables(service: MigrationService & { provider: RelationalProv
     const client = await mysql.createConnection({ host: service.host, port: service.port, user: service.username || undefined, password: password(service), database: service.database_name, ssl: service.tls_enabled ? {} : undefined, connectTimeout: 10_000 })
     try {
       const [rows] = await client.query<MySqlTableRow[]>(`select table_schema,table_name from information_schema.tables where table_type='BASE TABLE' and table_schema=? order by table_name`, [service.database_name])
-      return rows.map((row) => ({ schema: row.table_schema, table: row.table_name }))
+      return rows.map((row) => ({
+        schema: row.table_schema || row.TABLE_SCHEMA || service.database_name,
+        table: row.table_name || row.TABLE_NAME || '',
+      })).filter((row) => row.table)
     } finally { await client.end() }
   }
   const sql = await import('mssql')
@@ -190,7 +212,7 @@ export async function previewDataMigration(sourceServiceId: string, targetServic
   const existing = new Set(targetTables.map((item) => `${item.schema}.${item.table}`.toLowerCase()))
   return {
     source: { id: source.id, name: source.name, provider: source.provider, database: source.database_name, projectId: source.project_id, projectName: source.project_name },
-    target: { id: target.id, name: target.name, provider: target.provider, database: target.database_name },
+    target: { id: target.id, name: target.name, provider: target.provider, database: target.database_name, applicationPrimary: target.application_primary },
     tables: mapped.map((item) => ({ ...item, targetExists: existing.has(item.targetObject.toLowerCase()) })),
     existingTargetTables: mapped.filter((item) => existing.has(item.targetObject.toLowerCase())).length,
   }
@@ -210,7 +232,30 @@ export async function listDataMigrationJobs(projectId?: string) {
        ${where} order by dmj.created_at desc limit 100`,
     params
   )
-  return rows
+  return rows.map((job) => ({ ...job, removal_blocked_reason: migrationRemovalReason(job.status, executingJobs.has(job.id)) }))
+}
+
+export async function deleteDataMigration(id: string) {
+  await ensureDataMigrationSchema()
+  const client = await db.connect()
+  try {
+    await client.query('begin')
+    const lock = await client.query<{ locked: boolean }>(`select pg_try_advisory_xact_lock(hashtext('manager-data-migration'),hashtext($1)) as locked`, [id])
+    if (!lock.rows[0].locked) throw new ApiError('The migration worker is still active. Wait for it to finish or stop completely.', 409)
+    const { rows } = await client.query<Pick<DataMigrationJob, 'id' | 'project_id' | 'source_service_id' | 'target_service_id' | 'status'>>(
+      'select id,project_id,source_service_id,target_service_id,status from data_migration_jobs where id=$1 for update', [id])
+    const job = rows[0]
+    if (!job) throw new ApiError('Migration not found', 404)
+    const reason = migrationRemovalReason(job.status, executingJobs.has(id))
+    if (reason) throw new ApiError(reason, 409)
+    // History only. Source/target databases, credentials and application selection are untouched.
+    await client.query('delete from data_migration_jobs where id=$1', [id])
+    await client.query('commit')
+    return job
+  } catch (error) {
+    await client.query('rollback')
+    throw error
+  } finally { client.release() }
 }
 
 function slingExecutable() {
@@ -275,8 +320,100 @@ async function countTables(service: MigrationService & { provider: RelationalPro
   return results
 }
 
+type MySqlMigrationService = MigrationService & { provider: 'mysql' | 'mariadb' }
+type StagingTable = { migration: MigrationTable; table: string; object: string }
+
+function mySqlColumnName(row: MySqlColumnRow) {
+  return row.column_name || row.COLUMN_NAME || ''
+}
+
+async function dropMySqlStagingTables(service: MySqlMigrationService, staging: StagingTable[]) {
+  if (!staging.length) return
+  const mysql = await import('mysql2/promise')
+  const client = await mysql.createConnection({ host: service.host, port: service.port, user: service.username || undefined, password: password(service), database: service.database_name, ssl: service.tls_enabled ? {} : undefined })
+  try {
+    for (const item of staging) {
+      await client.query(`drop table if exists ${quoteIdentifier(service.provider, service.database_name)}.${quoteIdentifier(service.provider, item.table)}`)
+    }
+  } finally { await client.end() }
+}
+
+async function promoteMySqlStagingTables(service: MySqlMigrationService, staging: StagingTable[], jobId: string) {
+  const mysql = await import('mysql2/promise')
+  const client = await mysql.createConnection({ host: service.host, port: service.port, user: service.username || undefined, password: password(service), database: service.database_name, ssl: service.tls_enabled ? {} : undefined })
+  const database = quoteIdentifier(service.provider, service.database_name)
+  await appendJobLog(jobId, `[migration] Promoting ${staging.length} staging table(s) into the existing target schema...\n`, [])
+  try {
+    await client.query('set session foreign_key_checks=0')
+    await client.beginTransaction()
+    try {
+      for (const item of staging) {
+        const [targetRows] = await client.query<MySqlColumnRow[]>(
+          `select column_name,is_nullable,column_default,extra from information_schema.columns where table_schema=? and table_name=? order by ordinal_position`,
+          [service.database_name, item.migration.targetTable]
+        )
+        if (!targetRows.length) throw new Error(`Target table ${item.migration.targetObject} does not exist. Create the application schema before migrating data.`)
+        const [stagingRows] = await client.query<MySqlColumnRow[]>(
+          `select column_name,is_nullable,column_default,extra from information_schema.columns where table_schema=? and table_name=? order by ordinal_position`,
+          [service.database_name, item.table]
+        )
+        const targetTable = `${database}.${quoteIdentifier(service.provider, item.migration.targetTable)}`
+        if (!stagingRows.length) {
+          await client.query(`delete from ${targetTable}`)
+          continue
+        }
+        const stagingColumns = new Map<string, string>()
+        for (const row of stagingRows) {
+          const name = mySqlColumnName(row)
+          if (name) stagingColumns.set(name.toLowerCase(), name)
+        }
+        const targetColumns = targetRows
+          .filter((row) => !String(row.extra || row.EXTRA || '').toLowerCase().includes('generated'))
+          .map((row) => ({ row, name: mySqlColumnName(row), source: stagingColumns.get(mySqlColumnName(row).toLowerCase()) }))
+        const missingRequired = targetColumns.filter(({ row, source }) => !source && String(row.is_nullable || row.IS_NULLABLE).toUpperCase() === 'NO' && (row.column_default ?? row.COLUMN_DEFAULT) == null && !String(row.extra || row.EXTRA || '').toLowerCase().includes('auto_increment'))
+        if (missingRequired.length) throw new Error(`Target table ${item.migration.targetObject} has required column(s) missing from the source: ${missingRequired.map(({ name }) => name).join(', ')}`)
+        const transferable = targetColumns.filter((column): column is typeof column & { source: string } => Boolean(column.name && column.source))
+        if (!transferable.length) throw new Error(`Source and target table ${item.migration.sourceObject} have no compatible columns`)
+        const targetList = transferable.map(({ name }) => quoteIdentifier(service.provider, name)).join(',')
+        const sourceList = transferable.map(({ source }) => quoteIdentifier(service.provider, source)).join(',')
+        const stagingTable = `${database}.${quoteIdentifier(service.provider, item.table)}`
+        await client.query(`delete from ${targetTable}`)
+        await client.query(`insert into ${targetTable} (${targetList}) select ${sourceList} from ${stagingTable}`)
+      }
+      await client.commit()
+    } catch (error) {
+      await client.rollback()
+      throw error
+    } finally {
+      await client.query('set session foreign_key_checks=1')
+    }
+  } finally { await client.end() }
+  await appendJobLog(jobId, '[migration] Existing target schema preserved; staged data promoted transactionally.\n', [])
+}
+
 async function executeMigrationJob(jobId: string) {
-  const { rows } = await query<{ source_service_id: string; target_service_id: string; preserve_schema: boolean; table_map: MigrationTable[] }>('select source_service_id,target_service_id,preserve_schema,table_map from data_migration_jobs where id=$1', [jobId])
+  const client = await db.connect()
+  let locked = false
+  try {
+    const lock = await client.query<{ locked: boolean }>(`select pg_try_advisory_lock(hashtext('manager-data-migration'),hashtext($1)) as locked`, [jobId])
+    locked = lock.rows[0].locked
+    if (!locked) return
+    executingJobs.add(jobId)
+    await runMigrationJob(jobId)
+  } catch (error) {
+    await query(`update data_migration_jobs set status='failed',error='Migration worker could not complete. Check Manager logs.',finished_at=now(),updated_at=now() where id=$1 and status in ('queued','running','validating')`, [jobId])
+    console.error('[migration] Worker failed:', error instanceof Error ? error.name : 'Unknown error')
+  } finally {
+    if (locked) executingJobs.delete(jobId)
+    try {
+      if (locked) await client.query(`select pg_advisory_unlock(hashtext('manager-data-migration'),hashtext($1))`, [jobId])
+      client.release()
+    } catch { client.release(true) }
+  }
+}
+
+async function runMigrationJob(jobId: string) {
+  const { rows } = await query<{ source_service_id: string; target_service_id: string; preserve_schema: boolean; replace_target: boolean; table_map: MigrationTable[] }>('select source_service_id,target_service_id,preserve_schema,replace_target,table_map from data_migration_jobs where id=$1', [jobId])
   if (!rows[0]) return
   const [source, target] = await Promise.all([migrationService(rows[0].source_service_id), migrationService(rows[0].target_service_id)])
   const tables = rows[0].table_map
@@ -284,13 +421,18 @@ async function executeMigrationJob(jobId: string) {
   const configPath = path.join(jobRoot, 'replication.json')
   const sourceSecret = password(source)
   const targetSecret = password(target)
+  const preserveMySqlTarget = rows[0].replace_target && (target.provider === 'mysql' || target.provider === 'mariadb')
+  const stagingTables: StagingTable[] = preserveMySqlTarget ? tables.map((migration, index) => {
+    const table = `_manager_migration_${jobId.replace(/-/g, '').slice(0, 10)}_${index}`
+    return { migration, table, object: `${target.database_name}.${table}` }
+  }) : []
   try {
     const claimed = await query(`update data_migration_jobs set status='running',started_at=now(),error=null,log='',updated_at=now() where id=$1 and status='queued' returning id`, [jobId])
     if (!claimed.rowCount) return
     await mkdir(jobRoot, { recursive: true })
-    const streams = Object.fromEntries(tables.map((item) => [item.sourceObject, { object: item.targetObject }]))
+    const streams = Object.fromEntries(tables.map((item, index) => [item.sourceObject, { object: preserveMySqlTarget ? stagingTables[index].object : item.targetObject }]))
     await writeFile(configPath, JSON.stringify({ source: 'MANAGER_MIGRATION_SOURCE', target: 'MANAGER_MIGRATION_TARGET', defaults: { mode: 'full-refresh', target_options: { column_casing: 'source' } }, streams }, null, 2), 'utf8')
-    await appendJobLog(jobId, `[migration] ${source.provider} ${source.database_name} -> ${target.provider} ${target.database_name}\n[migration] ${tables.length} table(s), schema preservation ${rows[0].preserve_schema ? 'enabled' : 'disabled'}\n`, [])
+    await appendJobLog(jobId, `[migration] ${source.provider} ${source.database_name} -> ${target.provider} ${target.database_name}\n[migration] ${tables.length} table(s), ${preserveMySqlTarget ? 'existing target schema preserved through staging' : `schema translation ${rows[0].preserve_schema ? 'enabled' : 'disabled'}`}\n`, [])
 
     const currentBeforeSpawn = await query<{ status: MigrationStatus }>('select status from data_migration_jobs where id=$1', [jobId])
     if (currentBeforeSpawn.rows[0]?.status !== 'running') return
@@ -303,7 +445,7 @@ async function executeMigrationJob(jobId: string) {
         ...process.env,
         MANAGER_MIGRATION_SOURCE: slingConnection(source),
         MANAGER_MIGRATION_TARGET: slingConnection(target),
-        SLING_SCHEMA_MIGRATION: rows[0].preserve_schema ? 'all' : '',
+        SLING_SCHEMA_MIGRATION: !preserveMySqlTarget && rows[0].preserve_schema ? 'all' : '',
         SLING_SEND_TELEMETRY: 'false',
         AWS_EC2_METADATA_DISABLED: 'true',
       },
@@ -319,6 +461,7 @@ async function executeMigrationJob(jobId: string) {
     const current = await query<{ status: MigrationStatus }>('select status from data_migration_jobs where id=$1', [jobId])
     if (current.rows[0]?.status === 'cancelled') return
     if (exitCode !== 0) throw new Error(`Sling exited with code ${exitCode}`)
+    if (preserveMySqlTarget) await promoteMySqlStagingTables(target as MySqlMigrationService, stagingTables, jobId)
 
     await query(`update data_migration_jobs set status='validating',updated_at=now() where id=$1`, [jobId])
     await appendJobLog(jobId, '\n[validation] Comparing exact source and target row counts...\n', [])
@@ -343,6 +486,7 @@ async function executeMigrationJob(jobId: string) {
       await appendJobLog(jobId, `\n[failed] ${message}\n`, [sourceSecret, targetSecret])
     }
   } finally {
+    if (preserveMySqlTarget) await dropMySqlStagingTables(target as MySqlMigrationService, stagingTables).catch(() => undefined)
     await rm(jobRoot, { recursive: true, force: true }).catch(() => undefined)
   }
 }
@@ -356,6 +500,9 @@ export async function startDataMigration(input: Record<string, unknown>, created
   if (!selected.length) throw new ApiError('Select at least one source table', 400)
   const replaceTarget = input.replaceTarget === true
   if (!replaceTarget && selected.some((item) => item.targetExists)) throw new ApiError('Target tables already exist. Confirm replacement or choose an empty target service.', 409)
+  if (preview.target.applicationPrimary && (input.backupConfirmed !== true || input.writesPaused !== true)) {
+    throw new ApiError('Active application databases can only be migrated from the project wizard after backups and paused writes are confirmed.', 409)
+  }
   slingExecutable()
   const client = await db.connect()
   let jobId = ''
@@ -398,13 +545,18 @@ export async function activateDataMigration(id: string) {
     const job = rows[0]
     if (!job) throw new ApiError('Migration not found', 404)
     if (job.status !== 'succeeded') throw new ApiError('Only a successfully validated migration can be activated', 409)
-    const services = await client.query<{ id: string; name: string; env_prefix: string }>('select id,name,env_prefix from project_data_services where id in ($1,$2) for update', [job.source_service_id, job.target_service_id])
+    const services = await client.query<{ id: string; name: string; env_prefix: string; application_primary: boolean }>('select id,name,env_prefix,application_primary from project_data_services where id in ($1,$2) for update', [job.source_service_id, job.target_service_id])
     const source = services.rows.find((item) => item.id === job.source_service_id)
     const target = services.rows.find((item) => item.id === job.target_service_id)
     if (!source || !target) throw new ApiError('Migration services no longer exist', 409)
-    const suffix = Date.now().toString(36).toUpperCase()
-    await client.query('update project_data_services set name=$1,env_prefix=$2,updated_at=now() where id=$3', [`legacy_${suffix.toLowerCase()}`, `LEGACY_${suffix}`, source.id])
-    await client.query('update project_data_services set name=$1,env_prefix=$2,updated_at=now() where id=$3', [source.name, source.env_prefix, target.id])
+
+    await client.query('update project_data_services set application_primary=false,updated_at=now() where project_id=$1 and application_primary=true', [job.project_id])
+    if (source.application_primary) {
+      const suffix = Date.now().toString(36).toUpperCase()
+      await client.query('update project_data_services set name=$1,env_prefix=$2,updated_at=now() where id=$3', [`legacy_${suffix.toLowerCase()}`, `LEGACY_${suffix}`, source.id])
+      await client.query('update project_data_services set name=$1,env_prefix=$2,updated_at=now() where id=$3', [source.name, source.env_prefix, target.id])
+    }
+    await client.query('update project_data_services set application_primary=true,updated_at=now() where id=$1', [target.id])
     await client.query(`update data_migration_jobs set status='activated',activated_at=now(),updated_at=now() where id=$1`, [id])
     await client.query('commit')
   } catch (error) {

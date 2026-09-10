@@ -54,6 +54,16 @@ create table if not exists projects (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists project_pins (
+  user_id uuid not null references users(id) on delete cascade,
+  project_id uuid not null references projects(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (user_id, project_id)
+);
+
+create index if not exists project_pins_user_created_idx
+  on project_pins (user_id, created_at desc);
+
 create table if not exists github_connections (
   id uuid primary key default gen_random_uuid(),
   name text unique not null,

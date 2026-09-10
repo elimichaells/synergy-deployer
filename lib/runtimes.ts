@@ -4,7 +4,7 @@ import { db, query } from '@/lib/db'
 import { runCommand } from '@/lib/exec'
 import { ApiError } from '@/lib/api'
 
-export type RuntimeId = 'git' | 'node' | 'go' | 'angular' | 'php' | 'composer' | 'postgresql' | 'caddy' | 'sling' | 'mysql' | 'mariadb' | 'sqlserver' | 'mongodb' | 'redis'
+export type RuntimeId = 'git' | 'node' | 'go' | 'angular' | 'php' | 'composer' | 'postgresql' | 'caddy' | 'sling' | 'mysql' | 'mariadb' | 'sqlserver' | 'mongodb' | 'redis' | 'phpmyadmin'
 export type VersionedRuntimeId = 'node' | 'php' | 'go'
 export type RuntimeJobAction = 'install' | 'update' | 'configure' | 'install-version'
 type RuntimeJobStatus = 'queued' | 'running' | 'success' | 'failed' | 'interrupted'
@@ -44,8 +44,9 @@ const definitions: RuntimeDefinition[] = [
   { id: 'postgresql', name: 'PostgreSQL tools', purpose: 'psql, pg_dump, and pg_restore', command: 'psql', versionCommand: 'psql --version', installCommand: null, updateCommand: null, candidates: ['C:\\Program Files\\PostgreSQL\\18\\bin\\psql.exe'] },
   { id: 'caddy', name: 'Caddy', purpose: 'Reverse proxy and automatic TLS', command: 'caddy', versionCommand: 'caddy version', packageName: 'caddy', installCommand: 'choco install caddy -y', updateCommand: 'choco upgrade caddy -y', candidates: [process.env.CADDY_EXE || 'C:\\web\\caddy.exe'] },
   { id: 'sling', name: 'Sling migration engine', purpose: 'Verified cross-provider database transfer runtime', command: 'sling', versionCommand: 'sling --version', installCommand: 'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "C:\\web\\manager\\scripts\\install-sling.ps1"', updateCommand: 'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "C:\\web\\manager\\scripts\\install-sling.ps1" -Latest', candidates: [process.env.SLING_EXE || 'C:\\web\\tools\\sling\\sling.exe'] },
-  { id: 'mysql', name: 'MySQL', purpose: 'Optional project database engine and client', command: 'mysql', versionCommand: 'mysql --version', packageName: 'mysql', installCommand: 'choco install mysql -y', updateCommand: 'choco upgrade mysql -y', candidates: ['C:\\tools\\mysql\\current\\bin\\mysql.exe'] },
-  { id: 'mariadb', name: 'MariaDB', purpose: 'Optional project database engine and client', command: 'mariadb', versionCommand: 'mariadb --version', packageName: 'mariadb', installCommand: 'choco install mariadb -y', updateCommand: 'choco upgrade mariadb -y' },
+  { id: 'mysql', name: 'MySQL', purpose: 'Project database engine with secured phpMyAdmin access', command: 'mysql', versionCommand: 'mysql --version', packageName: 'mysql', installCommand: 'choco install mysql -y', updateCommand: 'choco upgrade mysql -y', candidates: ['C:\\tools\\mysql\\current\\bin\\mysql.exe'] },
+  { id: 'phpmyadmin', name: 'phpMyAdmin', purpose: 'Admin-only web client for MySQL and MariaDB', command: 'manager-phpmyadmin', versionCommand: `powershell.exe -NoLogo -NoProfile -Command "Get-Content -LiteralPath 'C:\\web\\tools\\phpmyadmin\\VERSION' -TotalCount 1"`, installCommand: 'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "C:\\web\\manager\\scripts\\install-phpmyadmin.ps1"', updateCommand: 'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "C:\\web\\manager\\scripts\\install-phpmyadmin.ps1" -Latest' },
+  { id: 'mariadb', name: 'MariaDB', purpose: 'Project database engine with secured phpMyAdmin access', command: 'mariadb', versionCommand: 'mariadb --version', packageName: 'mariadb', installCommand: 'choco install mariadb -y', updateCommand: 'choco upgrade mariadb -y' },
   { id: 'sqlserver', name: 'SQL Server tools', purpose: 'SQL Server project database administration', command: 'sqlcmd', versionCommand: 'sqlcmd -?', packageName: 'sql-server-express', installCommand: 'choco install sql-server-express -y', updateCommand: 'choco upgrade sql-server-express -y' },
   { id: 'mongodb', name: 'MongoDB', purpose: 'Optional document database engine', command: 'mongod', versionCommand: 'mongod --version', packageName: 'mongodb', installCommand: 'choco install mongodb -y', updateCommand: 'choco upgrade mongodb -y' },
   { id: 'redis', name: 'Redis', purpose: 'Register a remote or supported Windows-compatible Redis service', command: 'redis-server', versionCommand: 'redis-server --version', installCommand: null, updateCommand: null },
@@ -218,11 +219,40 @@ function runtimeJobCommand(runtimeId: RuntimeId, action: RuntimeJobAction, reque
   }
   if (action === 'configure') {
     if (runtimeId !== 'mysql') throw new ApiError('This runtime has no Manager configuration step', 400)
-    return 'cmd /c echo [configure] Securing MySQL and registering the Manager provisioning credential'
+    return 'cmd /c echo [configure] Checking MySQL and Manager provisioning setup'
   }
   const command = action === 'update' ? definition.updateCommand : definition.installCommand
   if (!command) throw new ApiError(`${definition.name} does not support ${action} from Manager`, 409)
   return command
+}
+
+async function activatePhpMyAdmin(jobId: string, installIfMissing: boolean) {
+  const versionFile = 'C:\\web\\tools\\phpmyadmin\\VERSION'
+  if (!existsSync(versionFile)) {
+    if (!installIfMissing) throw new Error('phpMyAdmin installation did not produce a version marker')
+    await appendRuntimeLog(jobId, '[dependency] Installing the secured phpMyAdmin client for this database engine\n')
+    let logQueue = Promise.resolve()
+    const installer = await runCommand(
+      'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "C:\\web\\manager\\scripts\\install-phpmyadmin.ps1"',
+      undefined,
+      10 * 60_000,
+      (chunk) => { logQueue = logQueue.then(() => appendRuntimeLog(jobId, chunk)) },
+    )
+    await logQueue
+    if (installer.code !== 0 || !existsSync(versionFile)) throw new Error('phpMyAdmin dependency installation failed')
+  }
+
+  const runner = path.join(process.cwd(), 'scripts', 'pm2-phpmyadmin-runner.js')
+  const existing = await runCommand('pm2 describe "manager-phpmyadmin"')
+  const command = existing.code === 0
+    ? 'pm2 restart "manager-phpmyadmin"'
+    : `pm2 start "${runner}" --interpreter node --name "manager-phpmyadmin"`
+  const service = await runCommand(command, process.cwd(), 60_000, undefined, { MANAGER_ROOT: process.cwd() }, false)
+  if (service.code !== 0) throw new Error('phpMyAdmin PM2 service could not be started')
+  await runCommand('pm2 save')
+  const { updateCaddyStrict } = await import('@/lib/caddy')
+  await updateCaddyStrict(process.env.MANAGER_DOMAIN || 'deploy.smartcloudgh.com', Number(process.env.MANAGER_PORT || 4000))
+  await appendRuntimeLog(jobId, '[service] phpMyAdmin is running on the admin-protected /mysql route\n')
 }
 
 async function executeRuntimeJob(jobId: string) {
@@ -238,11 +268,34 @@ async function executeRuntimeJob(jobId: string) {
     await logQueue
     if (result.code !== 0) throw new Error(`${definition.name} ${job.action} exited with code ${result.code}`)
     if (job.runtime_id === 'mysql' && job.action !== 'install-version') {
+      await appendRuntimeLog(jobId, '[security] Restricting MySQL network listeners to this host\n')
+      const binding = await runCommand(
+        'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "C:\\web\\manager\\scripts\\configure-database-loopback.ps1" -Engine mysql',
+        undefined,
+        2 * 60_000,
+        (chunk) => { logQueue = logQueue.then(() => appendRuntimeLog(jobId, chunk)) },
+      )
+      await logQueue
+      if (binding.code !== 0) throw new Error('MySQL loopback security configuration failed')
       const { configureManagedMySqlRuntime } = await import('@/lib/data-services')
       await appendRuntimeLog(jobId, '[configure] Verifying MySQL service and project provisioning credential\n')
-      await configureManagedMySqlRuntime()
-      await appendRuntimeLog(jobId, '[configure] MySQL is secured and registered for project provisioning\n')
+      const configuration = await configureManagedMySqlRuntime()
+      await appendRuntimeLog(jobId, configuration.reused
+        ? '[configure] Existing encrypted provisioning credential is healthy; no credentials were changed\n'
+        : '[configure] Fresh MySQL setup was secured and a dedicated provisioning credential was registered\n')
     }
+    if (job.runtime_id === 'mariadb' && job.action !== 'install-version') {
+      await appendRuntimeLog(jobId, '[security] Restricting MariaDB network listeners to this host\n')
+      const binding = await runCommand(
+        'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "C:\\web\\manager\\scripts\\configure-database-loopback.ps1" -Engine mariadb',
+        undefined,
+        2 * 60_000,
+        (chunk) => { logQueue = logQueue.then(() => appendRuntimeLog(jobId, chunk)) },
+      )
+      await logQueue
+      if (binding.code !== 0) throw new Error('MariaDB loopback security configuration failed')
+    }
+    if (job.runtime_id === 'phpmyadmin') await activatePhpMyAdmin(jobId, false)
     if (job.action === 'install-version') {
       if (!getInstalledRuntimeVersions(job.runtime_id as VersionedRuntimeId).includes(job.requested_version || '')) throw new Error('Installed runtime version could not be verified')
     } else {
@@ -250,6 +303,7 @@ async function executeRuntimeJob(jobId: string) {
       if (!inspection.installed) throw new Error(`${definition.name} was not detected after ${job.action}`)
       await appendRuntimeLog(jobId, `[verify] ${inspection.version}\n`)
     }
+    if (job.runtime_id === 'mysql' || job.runtime_id === 'mariadb') await activatePhpMyAdmin(jobId, true)
     await query(`update runtime_jobs set status='success',finished_at=now(),updated_at=now() where id=$1`, [jobId])
   } catch (error) {
     const message = error instanceof Error ? error.message : `${definition.name} operation failed`
@@ -312,6 +366,16 @@ export async function checkRuntimeUpdates() {
     if (current && latest && current !== latest) found.set('sling', { current, latest })
   } catch {
     // A transient catalog error does not hide Chocolatey update results.
+  }
+  try {
+    const phpMyAdminCurrent = await inspectRuntime(definitionFor('phpmyadmin'))
+    const response = await fetch('https://www.phpmyadmin.net/home_page/version.json', { cache: 'no-store' })
+    const release = response.ok ? await response.json() as { version?: string } : null
+    const current = phpMyAdminCurrent.version?.match(/\d+\.\d+\.\d+/)?.[0]
+    const latest = release?.version
+    if (current && latest && current !== latest) found.set('phpmyadmin', { current, latest })
+  } catch {
+    // A transient catalog error does not hide other update results.
   }
   for (const definition of definitions) {
     const update = found.get(definition.id)

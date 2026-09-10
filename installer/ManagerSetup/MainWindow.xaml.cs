@@ -2,6 +2,8 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Mail;
+using System.Net;
+using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -114,9 +116,20 @@ public partial class MainWindow : Window
         AppendLog("Cancellation requested. Waiting for the active process to stop...");
     }
 
+    private async void UseEmbeddedPackageButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_running || _installationComplete) return;
+        OfflineSourceRadio.IsChecked = true;
+        InvalidatePreflight();
+        PopulateReview();
+        await RunPreflightAsync();
+    }
+
     private async Task RunPreflightAsync()
     {
         var options = ReadOptions();
+        InvalidatePreflight();
+        UseEmbeddedPackageButton.Visibility = Visibility.Collapsed;
         SetRunning(true);
         InstallStatusText.Text = "Verifying the Manager package";
         InstallDetailText.Text = "No server changes are being made.";
@@ -149,6 +162,8 @@ public partial class MainWindow : Window
             InstallStatusText.Text = "Preflight failed";
             InstallDetailText.Text = exception.Message;
             AppendLog("FAIL: " + exception.Message);
+            if (options.UseOnlinePackage && exception is HttpRequestException { StatusCode: HttpStatusCode.NotFound })
+                UseEmbeddedPackageButton.Visibility = Visibility.Visible;
         }
         finally
         {
@@ -218,6 +233,12 @@ public partial class MainWindow : Window
             InstallLogTextBox.AppendText(line + Environment.NewLine);
             InstallLogTextBox.ScrollToEnd();
         });
+    }
+
+    private void DatabaseEngine_Checked(object sender, RoutedEventArgs e)
+    {
+        if (sender == MySqlCheckBox && MariaDbCheckBox is not null) MariaDbCheckBox.IsChecked = false;
+        if (sender == MariaDbCheckBox && MySqlCheckBox is not null) MySqlCheckBox.IsChecked = false;
     }
 
     private bool ValidateStep(int step)
@@ -314,7 +335,8 @@ public partial class MainWindow : Window
             string.Empty,
             $"CONTROL DB  PostgreSQL 127.0.0.1:5432 ({Enabled(options.InstallPostgreSql)})",
             $"PROJECT DB  PostgreSQL 127.0.0.1:5433 ({Enabled(options.InstallApplicationPostgreSql)})",
-            $"DB BROWSER  {Enabled(options.InstallPgweb)}",
+            $"PGWEB       {Enabled(options.InstallPgweb)}",
+            $"PHPMYADMIN  {Enabled(options.OptionalDatabaseEngines.Any(engine => engine is "mysql" or "mariadb"))}",
             $"LATEST NPM  {Enabled(options.InstallLatestNpm)}",
             $"RUNTIMES    {ListOrNone(options.OptionalRuntimes)}",
             $"EXTRA DBS   {ListOrNone(options.OptionalDatabaseEngines)}",
@@ -340,6 +362,7 @@ public partial class MainWindow : Window
 
     private void UpdateStep()
     {
+        if (_currentStep != 5) UseEmbeddedPackageButton.Visibility = Visibility.Collapsed;
         for (var index = 0; index < _panels.Length; index++)
         {
             _panels[index].Visibility = index == _currentStep ? Visibility.Visible : Visibility.Collapsed;

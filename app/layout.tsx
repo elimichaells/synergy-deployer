@@ -1,12 +1,12 @@
 import type { Metadata } from 'next'
-import { Space_Grotesk } from 'next/font/google'
+import { Inter } from 'next/font/google'
 import './globals.css'
 
-const space = Space_Grotesk({ subsets: ['latin'] })
+const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'NextOps Control',
-  description: 'Professional multi-site server management dashboard',
+  title: 'Manager | Deployment workspace',
+  description: 'Application deployments and infrastructure management',
 }
 
 export default function RootLayout({
@@ -16,7 +16,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={space.className}>{children}</body>
+      <body className={inter.className}>{children}</body>
     </html>
   )
 }

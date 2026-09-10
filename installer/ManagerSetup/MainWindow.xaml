@@ -75,7 +75,7 @@
                                         <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
-                                    <RadioButton x:Name="OnlineSourceRadio" GroupName="PackageSource" IsChecked="True" Checked="SourceMode_Checked" VerticalAlignment="Top" Margin="0,3,15,0" />
+                                    <RadioButton x:Name="OnlineSourceRadio" GroupName="PackageSource" Checked="SourceMode_Checked" VerticalAlignment="Top" Margin="0,3,15,0" />
                                     <StackPanel Grid.Column="1">
                                         <TextBlock Text="Online installation" FontSize="16" FontWeight="SemiBold" />
                                         <TextBlock Text="Download an immutable, versioned package from GitHub Releases and verify its checksum."
@@ -89,10 +89,10 @@
                                         <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
-                                    <RadioButton x:Name="OfflineSourceRadio" GroupName="PackageSource" Checked="SourceMode_Checked" VerticalAlignment="Top" Margin="0,3,15,0" />
+                                    <RadioButton x:Name="OfflineSourceRadio" GroupName="PackageSource" IsChecked="True" Checked="SourceMode_Checked" VerticalAlignment="Top" Margin="0,3,15,0" />
                                     <StackPanel Grid.Column="1">
-                                        <TextBlock Text="Embedded offline package" FontSize="16" FontWeight="SemiBold" />
-                                        <TextBlock Text="Use the Manager package carried inside this setup executable. No GitHub access is required."
+                                        <TextBlock Text="Embedded package (recommended)" FontSize="16" FontWeight="SemiBold" />
+                                        <TextBlock Text="Install the verified Manager version included in this setup file. No GitHub release or token is required. Internet is still needed to install dependencies."
                                                    Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,5,0,0" />
                                     </StackPanel>
                                 </Grid>
@@ -221,7 +221,7 @@
                                     <TextBlock Text="Core services" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,18" />
                                     <CheckBox x:Name="InstallPostgresCheckBox" IsChecked="True" Content="PostgreSQL control database" />
                                     <CheckBox x:Name="InstallAppPostgresCheckBox" IsChecked="True" Content="Isolated project PostgreSQL cluster" />
-                                    <CheckBox x:Name="InstallPgwebCheckBox" IsChecked="True" Content="Managed database browser" />
+                                    <CheckBox x:Name="InstallPgwebCheckBox" IsChecked="True" Content="Pgweb for PostgreSQL" />
                                     <CheckBox x:Name="LatestNpmCheckBox" IsChecked="True" Content="Current npm release" />
                                 </StackPanel>
                                 <StackPanel Grid.Column="2">
@@ -233,11 +233,11 @@
                             </Grid>
                             <Border Height="1" Background="{StaticResource BorderBrush}" Margin="0,22,0,24" />
                             <TextBlock Text="Optional project database engines" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,8" />
-                            <TextBlock Text="Install only the engines this host is expected to run. More providers can be registered later from Manager."
+                            <TextBlock Text="Choose MySQL or MariaDB for automatic installation; they share the default service and port. Either choice also installs the secured phpMyAdmin web client."
                                        Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,0,0,18" />
                             <UniformGrid Columns="2">
-                                <CheckBox x:Name="MySqlCheckBox" Content="MySQL" />
-                                <CheckBox x:Name="MariaDbCheckBox" Content="MariaDB" />
+                                <CheckBox x:Name="MySqlCheckBox" Content="MySQL" Checked="DatabaseEngine_Checked" />
+                                <CheckBox x:Name="MariaDbCheckBox" Content="MariaDB" Checked="DatabaseEngine_Checked" />
                                 <CheckBox x:Name="MongoDbCheckBox" Content="MongoDB" />
                                 <CheckBox x:Name="SqlServerCheckBox" Content="SQL Server Express" />
                             </UniformGrid>
@@ -283,6 +283,7 @@
                 <Grid>
                     <StackPanel Orientation="Horizontal">
                         <Button x:Name="BackButton" Content="Back" Style="{StaticResource SecondaryButton}" Click="BackButton_Click" />
+                        <Button x:Name="UseEmbeddedPackageButton" Content="Use embedded package" Style="{StaticResource SecondaryButton}" Visibility="Collapsed" Click="UseEmbeddedPackageButton_Click" />
                         <Button x:Name="CancelOperationButton" Content="Cancel operation" Style="{StaticResource SecondaryButton}"
                                 Margin="12,0,0,0" Visibility="Collapsed" Click="CancelOperationButton_Click" />
                     </StackPanel>

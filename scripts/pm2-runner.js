@@ -22,9 +22,24 @@ const child = spawn(command, {
   env: childEnv,
 })
 
+let stopping = false
+let killingTree = false
+let childExit
+const finish = () => {
+  if (killingTree || !childExit) return
+  process.exit(stopping ? 0 : (childExit.code ?? 1))
+}
+
 const shutdown = () => {
+  if (stopping) return
+  stopping = true
   if (process.platform === 'win32' && child.pid) {
-    execFile('taskkill', ['/T', '/F', '/PID', String(child.pid)], { windowsHide: true }, () => {})
+    killingTree = true
+    execFile('taskkill', ['/T', '/F', '/PID', String(child.pid)], { windowsHide: true, timeout: 10000 }, (error) => {
+      killingTree = false
+      if (error && !childExit) console.error('Application process tree shutdown failed')
+      finish()
+    })
     return
   }
   if (!child.killed) child.kill()
@@ -32,10 +47,11 @@ const shutdown = () => {
 
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
+process.on('message', (message) => { if (message === 'shutdown') shutdown() })
 
 child.on('exit', (code, signal) => {
-  if (signal) process.kill(process.pid, signal)
-  process.exit(code ?? 0)
+  childExit = { code, signal }
+  finish()
 })
 
 child.on('error', (error) => {

@@ -1,685 +1,218 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import Link from 'next/link'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { ArrowUpRight, Bell, Check, Database, Eye, EyeOff, Folder, Github, Globe2, HardDrive, Loader2, LockKeyhole, RefreshCw, Save, Search, Send, Server, Undo2, Users } from 'lucide-react'
 import { AppShell } from '@/components/layout/app-shell'
-import { Save, Check, Github, Copy, Loader2, Trash2, RefreshCw, Plus } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { RuntimeManager } from '@/components/runtime-manager'
+import { GitHubConnections } from '@/components/settings/github-connections'
+import { EDITABLE_SETTINGS, SETTINGS_SECTIONS, SECTION_FIELDS, settingsChanges, settingsForm, settingsSection, validateSettingsSection, type SettingsField, type SettingsForm, type SettingsSection } from '@/lib/settings-workspace'
 
-interface SessionUser {
-  id: string
-  email: string
-  name: string
-  role: 'admin' | 'operator' | 'viewer'
+interface SessionUser { id: string; email: string; name: string; role: 'admin' | 'operator' | 'viewer' }
+interface UserRow { id: string; email: string; name: string; role: string; status: string; created_at: string; last_login_at: string | null }
+type Notice = { kind: 'success' | 'error'; text: string }
+const icons = { general: Folder, runtimes: Server, integrations: Github, notifications: Bell, backups: HardDrive, access: Users }
+const roleNames: Record<string, string> = { admin: 'Administrator', operator: 'Operator', viewer: 'Viewer' }
+
+function FieldRow({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+  return <div className="grid min-w-0 items-start gap-3 border-b border-border py-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)] sm:gap-6">
+    <div><p className="text-sm font-medium">{label}</p>{hint && <p className="mt-1 text-xs leading-5 text-muted-foreground">{hint}</p>}</div>
+    <div className="min-w-0">{children}</div>
+  </div>
 }
 
-interface UserRow {
-  id: string
-  email: string
-  name: string
-  role: string
-  status: string
-  created_at: string
-  last_login_at: string | null
+function ManagementLink({ href, label, detail, icon: Icon }: { href: string; label: string; detail: string; icon: typeof Database }) {
+  return <Link href={href} className="group flex min-w-0 items-center gap-3 border-b border-border py-4">
+    <Icon className="h-5 w-5 shrink-0 text-muted-foreground group-hover:text-primary" aria-hidden="true" />
+    <div className="min-w-0 flex-1"><p className="text-sm font-medium group-hover:text-primary">{label}</p><p className="mt-1 text-xs text-muted-foreground">{detail}</p></div>
+    <ArrowUpRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+  </Link>
 }
 
-interface Settings {
-  PRODUCTION_PATH: string
-  STAGING_PATH: string
-  LOGS_PATH: string
-  CADDY_PATH: string
-  GITHUB_TOKEN: string
-  NOTIFY_WEBHOOK_URL: string
-  BACKUP_DIR: string
-  BACKUP_ENABLED: string
-  BACKUP_RETENTION_DAYS: string
-  PG_BIN_PATH: string
+function AccountAccess({ user }: { user: SessionUser | null }) {
+  const [users, setUsers] = useState<UserRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [search, setSearch] = useState('')
+  const load = useCallback(async () => {
+    if (user?.role !== 'admin') { setLoading(false); return }
+    setLoading(true); setError('')
+    try {
+      const response = await fetch('/api/users')
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error || 'Unable to load Manager users')
+      if (!Array.isArray(body)) throw new Error('Invalid users response')
+      setUsers(body)
+    } catch (error) { setError(error instanceof Error ? error.message : 'Unable to load Manager users') }
+    finally { setLoading(false) }
+  }, [user?.role])
+  useEffect(() => { void load() }, [load])
+  const shown = users.filter(item => `${item.name} ${item.email} ${item.role}`.toLowerCase().includes(search.toLowerCase()))
+  return <div className="space-y-8">
+    <div><h3 className="mb-3 text-sm font-semibold">Your account</h3><dl className="summary-list">
+      <div><dt>Name</dt><dd className="break-words">{user?.name || '-'}</dd></div>
+      <div><dt>Email</dt><dd className="break-all">{user?.email || '-'}</dd></div>
+      <div><dt>Access</dt><dd><Badge variant="outline">{roleNames[user?.role || ''] || '-'}</Badge></dd></div>
+    </dl></div>
+    {user?.role === 'admin' && <div>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h3 className="text-sm font-semibold">Manager users <span className="ml-1 font-normal text-muted-foreground">{users.length}</span></h3><Button variant="ghost" size="icon" title="Refresh users" aria-label="Refresh users" disabled={loading} onClick={() => void load()}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></Button></div>
+      <div className="relative mb-4 max-w-sm"><Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><input aria-label="Search users" className="control-input pl-9" placeholder="Search name, email, or role" value={search} onChange={event => setSearch(event.target.value)} /></div>
+      {error && <p role="alert" className="notice-error">{error}</p>}
+      {loading ? <p role="status" className="py-8 text-sm text-muted-foreground">Loading users...</p> : <div className="divide-y divide-border border-y border-border">
+        {shown.map(item => <div key={item.id} className="grid min-w-0 gap-2 py-4 sm:grid-cols-[minmax(0,1fr)_auto]">
+          <div className="min-w-0"><p className="break-words text-sm font-medium">{item.name}{item.id === user.id && <span className="ml-2 text-xs font-normal text-muted-foreground">You</span>}</p><p className="mt-1 break-all text-xs text-muted-foreground">{item.email}</p></div>
+          <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{roleNames[item.role] || item.role}</Badge><span className={`text-xs capitalize ${item.status === 'active' ? 'text-emerald-400' : 'text-muted-foreground'}`}>{item.status}</span></div>
+        </div>)}
+        {!shown.length && <p className="py-8 text-sm text-muted-foreground">{search ? 'No matching users.' : 'No users found.'}</p>}
+      </div>}
+    </div>}
+  </div>
 }
 
-const EMPTY_SETTINGS: Settings = {
-  PRODUCTION_PATH: '',
-  STAGING_PATH: '',
-  LOGS_PATH: '',
-  CADDY_PATH: '',
-  GITHUB_TOKEN: '',
-  NOTIFY_WEBHOOK_URL: '',
-  BACKUP_DIR: '',
-  BACKUP_ENABLED: 'false',
-  BACKUP_RETENTION_DAYS: '14',
-  PG_BIN_PATH: '',
-}
+function SettingsWorkspace() {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const section = settingsSection(searchParams.get('section'))
+  const current = SETTINGS_SECTIONS.find(item => item.id === section)!
+  const [visited, setVisited] = useState<SettingsSection[]>([])
+  const [user, setUser] = useState<SessionUser | null>(null)
+  const [saved, setSaved] = useState<SettingsForm>({ ...EDITABLE_SETTINGS })
+  const [draft, setDraft] = useState<SettingsForm>({ ...EDITABLE_SETTINGS })
+  const [loading, setLoading] = useState(true)
+  const [loaded, setLoaded] = useState(false)
+  const [loadError, setLoadError] = useState('')
+  const [saving, setSaving] = useState<SettingsSection | null>(null)
+  const [notices, setNotices] = useState<Partial<Record<SettingsSection, Notice>>>({})
+  const [testing, setTesting] = useState(false)
+  const [showWebhook, setShowWebhook] = useState(false)
+  const isAdmin = user?.role === 'admin'
+  const dirtySections = SETTINGS_SECTIONS.filter(item => Object.keys(settingsChanges(item.id, saved, draft)).length > 0)
+  const changed = Object.keys(settingsChanges(section, saved, draft)).length
 
-interface GitHubConnectionRow {
-  id: string
-  name: string
-  account_login: string
-  account_name: string | null
-  avatar_url: string | null
-  token_last_four: string
-  token_scopes: string[]
-  last_validated_at: string | null
-  last_error: string | null
-  project_count: number
-}
-
-function GitHubConnection({ isAdmin }: { isAdmin: boolean }) {
-  const [status, setStatus] = useState<'idle' | 'requesting' | 'waiting' | 'polling' | 'connected' | 'error'>('idle')
-  const [userCode, setUserCode] = useState('')
-  const [verificationUri, setVerificationUri] = useState('')
-  const [deviceCode, setDeviceCode] = useState('')
-  const [interval, setIntervalMs] = useState(5)
-  const [errorMsg, setErrorMsg] = useState('')
-  const [copied, setCopied] = useState(false)
-  const [hasToken, setHasToken] = useState(false)
-  const [disconnecting, setDisconnecting] = useState(false)
-  const [connections, setConnections] = useState<GitHubConnectionRow[]>([])
-  const [connectionName, setConnectionName] = useState('')
-  const [connectionBusy, setConnectionBusy] = useState<string | null>(null)
-  const [showConnectForm, setShowConnectForm] = useState(false)
-
-  const loadConnections = async () => {
-    const response = await fetch('/api/github/connections')
-    if (!response.ok) return
-    const data = await response.json()
-    const nextConnections = data.connections || []
-    setConnections(nextConnections)
-    setHasToken(nextConnections.length > 0)
-  }
-
-  useEffect(() => {
-    void loadConnections()
+  const load = useCallback(async () => {
+    setLoading(true); setLoadError('')
+    try {
+      const meResponse = await fetch('/api/auth/me')
+      const me = await meResponse.json()
+      if (!meResponse.ok || !me.user) throw new Error('Sign in to access Manager settings.')
+      setUser(me.user)
+      const response = await fetch('/api/settings', { cache: 'no-store' })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error || 'Unable to load settings')
+      const values = settingsForm(body)
+      setSaved(values); setDraft(values); setLoaded(true)
+    } catch (error) { setLoadError(error instanceof Error ? error.message : 'Unable to load settings') }
+    finally { setLoading(false) }
   }, [])
+  useEffect(() => { void load() }, [load])
+  useEffect(() => { setVisited(previous => previous.includes(section) ? previous : [...previous, section]) }, [section])
+  useEffect(() => {
+    if (!dirtySections.length) return
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [dirtySections.length])
 
-  const startFlow = async () => {
-    if (!connectionName.trim()) {
-      setErrorMsg('Enter a name for this GitHub connection.')
-      setStatus('error')
-      return
-    }
-    setStatus('requesting')
-    setErrorMsg('')
+  const notify = (target: SettingsSection, notice?: Notice) => setNotices(previous => ({ ...previous, [target]: notice }))
+  const edit = (key: SettingsField, value: string) => { setDraft(previous => ({ ...previous, [key]: value })); notify(section) }
+  const handleSave = async () => {
+    if (!isAdmin || !loaded || saving) return
+    const target = section
+    const validation = validateSettingsSection(target, draft)
+    if (validation) { notify(target, { kind: 'error', text: validation }); return }
+    const updates = settingsChanges(target, saved, draft)
+    if (!Object.keys(updates).length) return
+    setSaving(target); notify(target)
     try {
-      const res = await fetch('/api/auth/github/device', { method: 'POST' })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Failed to start')
-
-      setUserCode(data.userCode)
-      setVerificationUri(data.verificationUri)
-      setDeviceCode(data.deviceCode)
-      setIntervalMs(data.interval || 5)
-      setStatus('waiting')
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Failed to start device flow')
-      setStatus('error')
-    }
+      const response = await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates) })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error || 'Unable to save settings')
+      setSaved(previous => ({ ...previous, ...updates }))
+      notify(target, { kind: 'success', text: 'Changes saved.' })
+    } catch (error) { notify(target, { kind: 'error', text: error instanceof Error ? error.message : 'Unable to save settings' }) }
+    finally { setSaving(null) }
   }
-
-  const openGitHub = () => {
-    window.open(verificationUri, '_blank')
-    setStatus('polling')
-    pollForToken()
+  const discard = () => {
+    if (!window.confirm(`Discard unsaved ${current.label.toLowerCase()} changes?`)) return
+    setDraft(previous => ({ ...previous, ...Object.fromEntries(SECTION_FIELDS[section].map(key => [key, saved[key]])) }))
+    notify(section)
   }
-
-  const pollForToken = async () => {
-    const pollInterval = (interval + 1) * 1000
-    const maxAttempts = 60
-
-    for (let i = 0; i < maxAttempts; i++) {
-      await new Promise(r => setTimeout(r, pollInterval))
-
-      try {
-        const res = await fetch('/api/auth/github/poll', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ deviceCode, connectionName: connectionName.trim() }),
-        })
-        const data = await res.json()
-
-        if (data.status === 'success') {
-          await loadConnections()
-          setConnectionName('')
-          setShowConnectForm(false)
-          setStatus('connected')
-          return
-        }
-
-        if (data.status === 'expired_token') {
-          setErrorMsg('Code expired. Please try again.')
-          setStatus('error')
-          return
-        }
-
-        if (data.status === 'access_denied') {
-          setErrorMsg('Authorization was denied.')
-          setStatus('error')
-          return
-        }
-
-        // authorization_pending or slow_down — keep polling
-      } catch {
-        // Network error — keep trying
-      }
-    }
-
-    setErrorMsg('Timed out waiting for authorization.')
-    setStatus('error')
-  }
-
-  const handleCopyCode = async () => {
-    await navigator.clipboard.writeText(userCode)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-
-  const handleDisconnect = async (connection: GitHubConnectionRow) => {
-    if (!window.confirm(`Remove GitHub connection "${connection.name}"?`)) return
-    setDisconnecting(true)
-    setConnectionBusy(connection.id)
-    setErrorMsg('')
+  const testNotification = async () => {
+    if (!isAdmin || testing || !saved.NOTIFY_WEBHOOK_URL || Object.keys(settingsChanges('notifications', saved, draft)).length) return
+    setTesting(true); notify('notifications')
     try {
-      const response = await fetch(`/api/github/connections/${connection.id}`, { method: 'DELETE' })
-      const body = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(body.error || 'Failed to remove GitHub connection')
-      await loadConnections()
-    } catch (error) {
-      setErrorMsg(error instanceof Error ? error.message : 'Failed to remove GitHub connection')
-    } finally {
-      setDisconnecting(false)
-      setConnectionBusy(null)
-    }
+      const response = await fetch('/api/settings/test-notification', { method: 'POST' })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error || 'Unable to send test notification')
+      notify('notifications', { kind: 'success', text: 'Test notification sent.' })
+    } catch (error) { notify('notifications', { kind: 'error', text: error instanceof Error ? error.message : 'Unable to send test notification' }) }
+    finally { setTesting(false) }
   }
+  const input = (key: SettingsField, label: string, placeholder?: string) => <input aria-label={label} className="control-input font-mono text-xs" value={draft[key]} onChange={event => edit(key, event.target.value)} disabled={!isAdmin || !loaded || !!saving} placeholder={placeholder} autoComplete="off" spellCheck={false} />
+  const saveControls = isAdmin && <footer className="sticky bottom-0 flex flex-wrap items-center justify-between gap-3 border-t border-border bg-background py-4">
+    <p className={`text-xs ${changed ? 'text-amber-400' : 'text-muted-foreground'}`} role="status">{changed ? `${changed} unsaved change${changed === 1 ? '' : 's'}` : 'No unsaved changes'}</p>
+    <div className="flex items-center gap-2"><Button type="button" variant="ghost" size="icon" disabled={!changed || !!saving} onClick={discard} title="Discard section changes" aria-label="Discard section changes"><Undo2 className="h-4 w-4" /></Button><Button type="submit" disabled={!loaded || !!saving || !changed}><span className="mr-2">{saving === section ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}</span>{saving === section ? 'Saving...' : 'Save changes'}</Button></div>
+  </footer>
+  const formSubmit = (event: FormEvent) => { event.preventDefault(); void handleSave() }
 
-  const handleTestConnection = async (connection: GitHubConnectionRow) => {
-    setConnectionBusy(connection.id)
-    setErrorMsg('')
-    try {
-      const response = await fetch(`/api/github/connections/${connection.id}/test`, { method: 'POST' })
-      const body = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(body.error || 'GitHub connection test failed')
-      await loadConnections()
-    } catch (error) {
-      setErrorMsg(error instanceof Error ? error.message : 'GitHub connection test failed')
-    } finally {
-      setConnectionBusy(null)
-    }
-  }
-
-  if (!isAdmin) {
-    return (
-      <div className="rounded-lg border border-white/10 bg-black/30 p-4">
-        <p className="text-sm text-muted-foreground">GitHub: {hasToken ? 'Connected' : 'Not connected'}</p>
-      </div>
-    )
-  }
-
-  // Connected state
-  if (hasToken && !showConnectForm && status !== 'waiting' && status !== 'polling' && status !== 'requesting') {
-    return (
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div><p className="text-sm font-medium">GitHub connections</p><p className="text-[11px] text-muted-foreground">Assign a connection independently on each project.</p></div>
-          <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => { setShowConnectForm(true); setStatus('idle'); setErrorMsg('') }}>
-            <Plus className="h-3.5 w-3.5" /> Add connection
-          </Button>
+  return <AppShell title="Settings" subtitle="Host configuration and administration" user={user || undefined}>
+    <div className="grid min-w-0 gap-6 lg:grid-cols-[210px_minmax(0,1fr)] lg:gap-8">
+      <aside className="min-w-0 lg:border-r lg:border-border lg:pr-5">
+        <div className="lg:sticky lg:top-0">
+          <label className="field-label lg:hidden">Settings section<select className="control-input" value={section} onChange={event => router.push('/settings?section=' + event.target.value, { scroll: false })}>{SETTINGS_SECTIONS.map(item => <option key={item.id} value={item.id}>{item.label}{dirtySections.some(dirty => dirty.id === item.id) ? ' (unsaved)' : ''}</option>)}</select></label>
+          <nav aria-label="Settings sections" className="hidden space-y-1 lg:block">
+            {SETTINGS_SECTIONS.map(item => { const Icon = icons[item.id]; const dirty = dirtySections.some(value => value.id === item.id); return <Link key={item.id} href={'/settings?section=' + item.id} scroll={false} aria-current={section === item.id ? 'page' : undefined} className={`flex min-h-11 items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors ${section === item.id ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
+              <Icon className={`h-4 w-4 shrink-0 ${section === item.id ? 'text-primary' : ''}`} aria-hidden="true" /><span className="min-w-0 flex-1">{item.label}</span>{dirty && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" title="Unsaved changes"><span className="sr-only">Unsaved changes</span></span>}
+            </Link> })}
+          </nav>
+          <p className="mt-5 hidden border-t border-border pt-4 text-xs text-muted-foreground lg:block">{roleNames[user?.role || ''] || 'Loading account...'}</p>
         </div>
-        <div className="divide-y divide-border rounded-md border border-border">
-          {connections.map((connection) => (
-            <div key={connection.id} className="flex flex-wrap items-center gap-3 px-3 py-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-muted text-xs font-semibold uppercase">{connection.account_login.slice(0, 1)}</div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{connection.name}</p>
-                <p className="truncate text-[11px] text-muted-foreground">@{connection.account_login} · token ending {connection.token_last_four} · {connection.project_count} project{connection.project_count === 1 ? '' : 's'}</p>
-                {connection.last_error && <p className="mt-1 text-[11px] text-red-400">{connection.last_error}</p>}
-              </div>
-              <button type="button" title="Test connection" aria-label={`Test ${connection.name}`} onClick={() => void handleTestConnection(connection)} disabled={!!connectionBusy} className="rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40">
-                <RefreshCw className={`h-4 w-4 ${connectionBusy === connection.id ? 'animate-spin' : ''}`} />
-              </button>
-              <button type="button" title={connection.project_count ? 'Reassign projects before removing' : 'Remove connection'} aria-label={`Remove ${connection.name}`} onClick={() => void handleDisconnect(connection)} disabled={disconnecting || connection.project_count > 0} className="rounded-md p-2 text-muted-foreground hover:bg-red-500/10 hover:text-red-400 disabled:opacity-40">
-                <Trash2 className="h-4 w-4" />
-              </button>
-            </div>
-          ))}
-        </div>
-        {errorMsg && <p className="text-xs text-red-400">{errorMsg}</p>}
-      </div>
-    )
-  }
-
-  // Waiting / Polling state — show user code
-  if (status === 'waiting' || status === 'polling') {
-    return (
-      <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-5">
-        <div className="text-center space-y-4">
-          <Github className="h-8 w-8 text-blue-400 mx-auto" />
-          <div>
-            <p className="text-sm font-medium text-foreground mb-1">Enter this code on GitHub</p>
-            <div className="flex items-center justify-center gap-2">
-              <code className="text-2xl font-bold tracking-[0.3em] text-blue-300 bg-blue-500/10 px-4 py-2 rounded-lg border border-blue-500/20">
-                {userCode}
-              </code>
-              <button
-                onClick={handleCopyCode}
-                className="rounded-md p-2 text-blue-400 hover:bg-blue-500/10 transition-colors"
-                title="Copy code"
-              >
-                {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-              </button>
-            </div>
-          </div>
-
-          {status === 'waiting' ? (
-            <Button onClick={openGitHub} className="gap-2">
-              <Github className="h-4 w-4" />
-              Open GitHub
-            </Button>
-          ) : (
-            <div className="flex items-center justify-center gap-2 text-sm text-blue-300">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Waiting for authorization...
-            </div>
-          )}
-
-          <button
-            onClick={() => { setStatus('idle'); setShowConnectForm(false) }}
-            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  // Error state
-  if (status === 'error') {
-    return (
-      <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4">
-        <p className="text-sm text-red-400 mb-3">{errorMsg}</p>
-        <Button onClick={startFlow} variant="outline" size="sm" className="gap-2">
-          <Github className="h-4 w-4" />
-          Try Again
-        </Button>
-      </div>
-    )
-  }
-
-  // Idle / Requesting state
-  return (
-    <div className="rounded-lg border border-white/10 bg-black/30 p-4 space-y-3">
-      <div>
-        <p className="text-sm text-foreground mb-0.5">New GitHub connection</p>
-        <p className="text-[11px] text-muted-foreground">Give this account a recognizable name, then authorize it with GitHub.</p>
-      </div>
-      <div className="flex flex-col gap-2 sm:flex-row">
-        <input value={connectionName} onChange={(event) => setConnectionName(event.target.value)} placeholder="e.g. Synergy Africa" className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring" />
-        <Button
-          onClick={startFlow}
-          disabled={status === 'requesting' || !connectionName.trim()}
-          variant="outline"
-          size="sm"
-          className="gap-2"
-        >
-          {status === 'requesting' ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Github className="h-4 w-4" />
-          )}
-          Connect GitHub
-        </Button>
-      </div>
-      {hasToken && <button type="button" onClick={() => { setShowConnectForm(false); setStatus('connected'); setErrorMsg('') }} className="text-xs text-muted-foreground hover:text-foreground">Cancel</button>}
+      </aside>
+      <section aria-labelledby="settings-section-heading" className="min-w-0">
+        <header className="mb-6 flex flex-wrap items-start justify-between gap-3 border-b border-border pb-5">
+          <div className="min-w-0"><h2 id="settings-section-heading" className="text-xl font-semibold">{current.label}</h2><p className="mt-1 text-sm text-muted-foreground">{current.description}</p></div>
+          {user && !isAdmin && <Badge variant="outline"><LockKeyhole className="mr-1.5 h-3 w-3" />View only</Badge>}
+        </header>
+        {loadError && <div role="alert" className="notice-error"><p>{loadError}</p><Button variant="outline" size="sm" className="mt-3" onClick={() => void load()} disabled={loading}><RefreshCw className="mr-2 h-4 w-4" />Retry loading</Button></div>}
+        {notices[section] && <p role={notices[section]?.kind === 'error' ? 'alert' : 'status'} className={`mb-5 flex items-start gap-2 break-words text-sm ${notices[section]?.kind === 'error' ? 'text-red-400' : 'text-emerald-400'}`}>{notices[section]?.kind === 'success' && <Check className="mt-0.5 h-4 w-4 shrink-0" />}{notices[section]?.text}</p>}
+        {loading && !loaded ? <div role="status" className="flex items-center gap-2 py-12 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading settings...</div> : <>
+          {section === 'general' && <form onSubmit={formSubmit}>
+            <FieldRow label="Production directory" hint="New production application checkouts.">{input('PRODUCTION_PATH', 'Production directory', 'C:\\web\\production')}</FieldRow>
+            <FieldRow label="Staging directory" hint="Optional staging application checkouts.">{input('STAGING_PATH', 'Staging directory', 'C:\\web\\staging')}</FieldRow>
+            <FieldRow label="Logs directory" hint="Manager deployment logs.">{input('LOGS_PATH', 'Logs directory', 'C:\\web\\logs')}</FieldRow>
+            <FieldRow label="Caddy directory" hint="Edge proxy installation.">{input('CADDY_PATH', 'Caddy directory', 'C:\\web')}</FieldRow>
+            <div className="mb-6 mt-6"><ManagementLink href="/services" icon={Server} label="Processes & Caddy" detail="Service status and active proxy configuration" /></div>
+            {saveControls}
+          </form>}
+          {(section === 'runtimes' || visited.includes('runtimes')) && <div hidden={section !== 'runtimes'}><RuntimeManager isAdmin={isAdmin} workspace /></div>}
+          {(section === 'integrations' || visited.includes('integrations')) && <div hidden={section !== 'integrations'} className="space-y-8">
+            <GitHubConnections isAdmin={isAdmin} />
+            <div><h3 className="mb-2 text-sm font-semibold">Infrastructure connections</h3><ManagementLink href="/domains" icon={Globe2} label="Cloudflare & domains" detail="Scoped API tokens, DNS zones, and SSL" /><ManagementLink href="/data-services" icon={Database} label="Database connections" detail="PostgreSQL, MySQL, and other project data providers" /></div>
+          </div>}
+          {section === 'notifications' && <form onSubmit={formSubmit}>
+            <FieldRow label="Deployment webhook" hint="Slack, Discord, or a JSON webhook endpoint."><div className="flex items-center gap-2"><input aria-label="Deployment webhook URL" className="control-input" type={showWebhook ? 'text' : 'password'} autoComplete="off" spellCheck={false} value={draft.NOTIFY_WEBHOOK_URL} onChange={event => edit('NOTIFY_WEBHOOK_URL', event.target.value)} disabled={!isAdmin || !loaded || !!saving} placeholder="https://hooks.example.com/..." /><Button type="button" variant="ghost" size="icon" className="shrink-0" onClick={() => setShowWebhook(value => !value)} title={showWebhook ? 'Hide webhook URL' : 'Show webhook URL'} aria-label={showWebhook ? 'Hide webhook URL' : 'Show webhook URL'}>{showWebhook ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</Button></div></FieldRow>
+            <div className="flex flex-wrap items-center justify-between gap-4 py-6"><div><p className="text-sm font-medium">Delivery test</p><p className="mt-1 text-xs text-muted-foreground">{changed ? 'Unsaved webhook changes' : saved.NOTIFY_WEBHOOK_URL ? 'Saved endpoint configured' : 'No endpoint configured'}</p></div>{isAdmin && <Button type="button" variant="outline" onClick={() => void testNotification()} disabled={!loaded || testing || !!saving || changed > 0 || !saved.NOTIFY_WEBHOOK_URL} title={changed ? 'Save the webhook before testing' : 'Send a test notification'}>{testing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}Send test</Button>}</div>
+            {saveControls}
+          </form>}
+          {section === 'backups' && <form onSubmit={formSubmit}>
+            <FieldRow label="Nightly fallback" hint="All PostgreSQL databases; 03:00-05:00 server time when no individual database schedules exist."><div className="flex items-center justify-between gap-4"><label htmlFor="nightly-backups" className="text-sm">Automatic backups</label><Switch id="nightly-backups" checked={draft.BACKUP_ENABLED === 'true'} onCheckedChange={checked => edit('BACKUP_ENABLED', checked ? 'true' : 'false')} disabled={!isAdmin || !loaded || !!saving} /></div></FieldRow>
+            <FieldRow label="Backup directory" hint="PostgreSQL backup destination.">{input('BACKUP_DIR', 'Backup directory', 'C:\\web\\backups\\postgres')}</FieldRow>
+            <FieldRow label="Retention" hint="Backup files kept before cleanup."><div className="flex items-center gap-3"><input aria-label="Backup retention days" type="number" min={1} max={3650} step={1} required className="control-input max-w-28" value={draft.BACKUP_RETENTION_DAYS} onChange={event => edit('BACKUP_RETENTION_DAYS', event.target.value)} disabled={!isAdmin || !loaded || !!saving} /><span className="text-sm text-muted-foreground">days</span></div></FieldRow>
+            <FieldRow label="PostgreSQL tools" hint="Directory containing pg_dump and pg_restore.">{input('PG_BIN_PATH', 'PostgreSQL tools directory')}</FieldRow>
+            <div className="mb-6 mt-6"><ManagementLink href="/database" icon={HardDrive} label="PostgreSQL backup schedules" detail="Individual database schedules and restore points" /><ManagementLink href="/sites" icon={Database} label="Application databases" detail="Project data services and provider-specific backups" /></div>
+            {saveControls}
+          </form>}
+          {(section === 'access' || visited.includes('access')) && <div hidden={section !== 'access'}><AccountAccess user={user} /></div>}
+        </>}
+      </section>
     </div>
-  )
+  </AppShell>
 }
 
 export default function SettingsPage() {
-  const [user, setUser] = useState<SessionUser | null>(null)
-  const [users, setUsers] = useState<UserRow[]>([])
-  const [settings, setSettings] = useState<Settings>(EMPTY_SETTINGS)
-  const [form, setForm] = useState<Settings>(EMPTY_SETTINGS)
-  const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [testingNotify, setTestingNotify] = useState(false)
-  const [notifyTestResult, setNotifyTestResult] = useState<'ok' | 'fail' | null>(null)
-
-  const handleTestNotification = async () => {
-    setTestingNotify(true)
-    setNotifyTestResult(null)
-    try {
-      const res = await fetch('/api/settings/test-notification', { method: 'POST' })
-      setNotifyTestResult(res.ok ? 'ok' : 'fail')
-    } catch {
-      setNotifyTestResult('fail')
-    } finally {
-      setTestingNotify(false)
-      setTimeout(() => setNotifyTestResult(null), 4000)
-    }
-  }
-
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const meRes = await fetch('/api/auth/me')
-        const meData = meRes.ok ? await meRes.json() : { user: null }
-        setUser(meData.user)
-
-        const settingsRes = await fetch('/api/settings')
-        if (settingsRes.ok) {
-          const data = await settingsRes.json()
-          setSettings(data)
-          setForm(data)
-        }
-
-        if (meData.user?.role === 'admin') {
-          const usersRes = await fetch('/api/users')
-          if (usersRes.ok) {
-            const usersData = await usersRes.json()
-            setUsers(usersData)
-          }
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load settings')
-      }
-    }
-    void load()
-  }, [])
-
-  const isAdmin = user?.role === 'admin'
-  const hasChanges = JSON.stringify(form) !== JSON.stringify(settings)
-
-  const handleSave = async () => {
-    setSaving(true)
-    setError(null)
-    setSaved(false)
-    try {
-      const res = await fetch('/api/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
-      })
-      if (!res.ok) {
-        const data = await res.json()
-        throw new Error(data.error || 'Failed to save settings')
-      }
-      setSettings({ ...form })
-      setSaved(true)
-      setTimeout(() => setSaved(false), 3000)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save settings')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const inputClass =
-    'w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/60 disabled:opacity-50 disabled:cursor-not-allowed'
-
-  return (
-    <AppShell
-      title="Settings"
-      subtitle="Manage system configuration and access."
-      user={{ name: user?.name, role: user?.role }}
-      actions={null}
-    >
-      {error && (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-          {error}
-        </div>
-      )}
-
-      {saved && (
-        <div className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-          <Check className="h-4 w-4" />
-          Settings saved successfully.
-        </div>
-      )}
-
-      <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
-        {/* System Settings */}
-        <Card className="surface-card">
-          <CardHeader>
-            <CardTitle className="text-foreground">System Settings</CardTitle>
-            <CardDescription className="text-muted-foreground">
-              Server paths and integration tokens.{' '}
-              {!isAdmin && <span className="text-amber-400/80">View only — admin access required to edit.</span>}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            {/* Paths Section */}
-            <div>
-              <h4 className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">Paths</h4>
-              <div className="space-y-3">
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Production Path</label>
-                  <input
-                    type="text"
-                    className={inputClass}
-                    value={form.PRODUCTION_PATH}
-                    onChange={(e) => setForm({ ...form, PRODUCTION_PATH: e.target.value })}
-                    disabled={!isAdmin}
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Staging Path</label>
-                  <input
-                    type="text"
-                    className={inputClass}
-                    value={form.STAGING_PATH}
-                    onChange={(e) => setForm({ ...form, STAGING_PATH: e.target.value })}
-                    disabled={!isAdmin}
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Logs Path</label>
-                  <input
-                    type="text"
-                    className={inputClass}
-                    value={form.LOGS_PATH}
-                    onChange={(e) => setForm({ ...form, LOGS_PATH: e.target.value })}
-                    disabled={!isAdmin}
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Caddy Path</label>
-                  <input
-                    type="text"
-                    className={inputClass}
-                    value={form.CADDY_PATH}
-                    onChange={(e) => setForm({ ...form, CADDY_PATH: e.target.value })}
-                    disabled={!isAdmin}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Integrations Section */}
-            <div>
-              <h4 className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">Integrations</h4>
-              <GitHubConnection isAdmin={isAdmin} />
-            </div>
-
-            <div>
-              <h4 className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">Dependencies</h4>
-              <RuntimeManager isAdmin={isAdmin} />
-            </div>
-
-            {/* Notifications Section */}
-            <div>
-              <h4 className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">Notifications</h4>
-              <div className="space-y-3">
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">
-                    Webhook URL <span className="opacity-60">(Slack, Discord, or any JSON endpoint — deploy results are posted here)</span>
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      className={inputClass}
-                      placeholder="https://discord.com/api/webhooks/… or https://hooks.slack.com/…"
-                      value={form.NOTIFY_WEBHOOK_URL}
-                      onChange={(e) => setForm({ ...form, NOTIFY_WEBHOOK_URL: e.target.value })}
-                      disabled={!isAdmin}
-                    />
-                    {isAdmin && (
-                      <Button
-                        variant="outline"
-                        onClick={handleTestNotification}
-                        disabled={testingNotify || !settings.NOTIFY_WEBHOOK_URL || hasChanges}
-                        title={hasChanges ? 'Save settings first, then test' : 'Send a test notification'}
-                        className="shrink-0"
-                      >
-                        {testingNotify ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Test'}
-                      </Button>
-                    )}
-                  </div>
-                  {notifyTestResult === 'ok' && <p className="mt-1 text-xs text-emerald-400">Test notification sent — check the channel.</p>}
-                  {notifyTestResult === 'fail' && <p className="mt-1 text-xs text-red-400">Failed to send. Verify the URL is saved and reachable.</p>}
-                </div>
-              </div>
-            </div>
-
-            {/* Backups Section */}
-            <div>
-              <h4 className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">Postgres Backups</h4>
-              <div className="space-y-3">
-                <label className="flex items-center gap-2 text-sm text-foreground">
-                  <input
-                    type="checkbox"
-                    checked={form.BACKUP_ENABLED === 'true'}
-                    onChange={(e) => setForm({ ...form, BACKUP_ENABLED: e.target.checked ? 'true' : 'false' })}
-                    disabled={!isAdmin}
-                    className="accent-sky-500"
-                  />
-                  Nightly automatic backups of all databases (runs at ~3:00 AM)
-                </label>
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">Backup Directory</label>
-                    <input
-                      type="text"
-                      className={inputClass}
-                      value={form.BACKUP_DIR}
-                      onChange={(e) => setForm({ ...form, BACKUP_DIR: e.target.value })}
-                      disabled={!isAdmin}
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">Retention (days)</label>
-                    <input
-                      type="number"
-                      className={inputClass}
-                      value={form.BACKUP_RETENTION_DAYS}
-                      onChange={(e) => setForm({ ...form, BACKUP_RETENTION_DAYS: e.target.value })}
-                      disabled={!isAdmin}
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">PostgreSQL bin path (pg_dump / pg_restore)</label>
-                  <input
-                    type="text"
-                    className={inputClass}
-                    value={form.PG_BIN_PATH}
-                    onChange={(e) => setForm({ ...form, PG_BIN_PATH: e.target.value })}
-                    disabled={!isAdmin}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Save Button */}
-            {isAdmin && (
-              <div className="flex items-center gap-3 pt-2">
-                <Button
-                  onClick={handleSave}
-                  disabled={saving || !hasChanges}
-                  className="gap-2"
-                >
-                  <Save className="h-4 w-4" />
-                  {saving ? 'Saving...' : 'Save Settings'}
-                </Button>
-                {hasChanges && (
-                  <span className="text-xs text-amber-400/80">Unsaved changes</span>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Right Column */}
-        <div className="space-y-6">
-          <Card className="surface-card">
-            <CardHeader>
-              <CardTitle className="text-foreground">Account</CardTitle>
-              <CardDescription className="text-muted-foreground">
-                Signed-in user details.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-1 text-sm text-foreground">
-              <p>Name: {user?.name}</p>
-              <p>Email: {user?.email}</p>
-              <p>Role: {user?.role}</p>
-            </CardContent>
-          </Card>
-
-          <Card className="surface-card">
-            <CardHeader>
-              <CardTitle className="text-foreground">Database</CardTitle>
-              <CardDescription className="text-muted-foreground">
-                Connection configured via environment.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-1 text-xs text-muted-foreground">
-              <p>These settings remain in .env.local:</p>
-              <p className="font-mono text-muted-foreground">DATABASE_HOST, DATABASE_PORT, DATABASE_NAME</p>
-              <p className="font-mono text-muted-foreground">DATABASE_USER, DATABASE_PASSWORD, JWT_SECRET</p>
-              <div className="pt-2">
-                <Link href="/services" className="text-foreground underline">
-                  Manage services and Caddy
-                </Link>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-      {/* Users Section */}
-      {isAdmin && (
-        <Card className="mt-6 surface-card">
-          <CardHeader>
-            <CardTitle className="text-foreground">Users</CardTitle>
-            <CardDescription className="text-muted-foreground">
-              Admin-only user list.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {users.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No users found.</p>
-            ) : (
-              users.map((row) => (
-                <div
-                  key={row.id}
-                  className="rounded-lg border border-white/10 bg-black/30 p-3 text-xs text-foreground"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-foreground">{row.name}</p>
-                      <p className="text-[11px] text-muted-foreground">{row.email}</p>
-                    </div>
-                    <div className="text-right text-[11px] text-muted-foreground">
-                      <p>{row.role}</p>
-                      <p>{row.status}</p>
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
-      )}
-    </AppShell>
-  )
+  return <Suspense fallback={<AppShell title="Settings"><p role="status" className="text-sm text-muted-foreground">Loading settings...</p></AppShell>}><SettingsWorkspace /></Suspense>
 }

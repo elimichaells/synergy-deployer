@@ -2,8 +2,10 @@
 param([string]$ConfigPath, [switch]$Unattended, [switch]$Plan)
 
 $ErrorActionPreference = 'Stop'
+$env:PSModulePath = (Join-Path $PSHOME 'Modules') + ';' + $env:PSModulePath
 $ProgressPreference = 'SilentlyContinue'
 $packageRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'installer-database-policy.ps1')
 $results = [System.Collections.Generic.List[object]]::new()
 
 function Write-Step([string]$Message) {
@@ -225,6 +227,7 @@ $installPgweb = Get-BoolSetting 'InstallPgweb' $true
 $installLatestNpm = Get-BoolSetting 'InstallLatestNpm' $true
 $optionalRuntimes = @(Get-ListSetting 'OptionalRuntimes' @('go','php','composer'))
 $optionalEngines = @(Get-ListSetting 'OptionalDatabaseEngines' @())
+$installPhpMyAdmin = @($optionalEngines | Where-Object { $_ -in @('mysql','mariadb') }).Count -gt 0
 $postgresPackage = [string](Get-Setting 'PostgreSqlPackage' 'postgresql18')
 $caddyExe = Join-Path $webRoot 'caddy.exe'
 $caddyfile = Join-Path $webRoot 'Caddyfile'
@@ -241,6 +244,11 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 Add-Result 'Administrator' 'pass' $identity.Name
 if (-not [Environment]::Is64BitOperatingSystem) { throw 'A 64-bit Windows installation is required' }
 Add-Result 'Operating system' 'pass' ([Environment]::OSVersion.VersionString)
+if ($installPhpMyAdmin) {
+    $databaseConflict = Get-ManagerDatabaseConflict $optionalEngines @(Get-CimInstance Win32_Service)
+    if ($databaseConflict) { throw $databaseConflict }
+    Add-Result 'Optional database selection' 'pass' 'MySQL/MariaDB service selection is compatible'
+}
 $driveName = [IO.Path]::GetPathRoot($webRoot).TrimEnd('\').TrimEnd(':')
 $drive = Get-PSDrive -Name $driveName
 if ($drive.Free -lt 5GB) { throw 'At least 5 GB of free disk space is required' }
@@ -283,10 +291,16 @@ if (($installPostgres -or $installApplicationPostgres) -and -not (Find-PostgresT
 }
 if ($installApplicationPostgres) { Initialize-ApplicationPostgres }
 if ($optionalRuntimes -contains 'go') { Ensure-Package 'go.exe' 'golang' }
-if ($optionalRuntimes -contains 'php') { Ensure-Package 'php.exe' 'php' }
+if (($optionalRuntimes -contains 'php') -or $installPhpMyAdmin) { Ensure-Package 'php.exe' 'php' }
 if ($optionalRuntimes -contains 'composer') { Ensure-Package 'composer.exe' 'composer' }
 if ($optionalEngines -contains 'mysql') { Ensure-Package 'mysql.exe' 'mysql' }
 if ($optionalEngines -contains 'mariadb') { Ensure-Package 'mariadb.exe' 'mariadb' }
+if ($optionalEngines -contains 'mysql') {
+    Invoke-Native 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $packageRoot 'scripts\configure-database-loopback.ps1'),'-Engine','mysql') 'Secure MySQL network binding'
+}
+if ($optionalEngines -contains 'mariadb') {
+    Invoke-Native 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $packageRoot 'scripts\configure-database-loopback.ps1'),'-Engine','mariadb') 'Secure MariaDB network binding'
+}
 if ($optionalEngines -contains 'mongodb') { Ensure-Package 'mongod.exe' 'mongodb' }
 if ($optionalEngines -contains 'sqlserver') { Ensure-Package 'sqlcmd.exe' 'sql-server-express' }
 if ($optionalEngines -contains 'redis') { Add-Result 'Redis' 'warn' 'Register a remote Redis or a supported Windows-compatible distribution after installation' }
@@ -350,6 +364,10 @@ try {
         'CADDY_EXE=' + $caddyExe.Replace('\','\\')
         'PGWEB_EXE=' + (Join-Path $webRoot 'tools\pgweb\pgweb.exe').Replace('\','\\')
         'PGWEB_PORT=8432'
+        'PHPMYADMIN_ROOT=' + (Join-Path $webRoot 'tools\phpmyadmin').Replace('\','\\')
+        'PHPMYADMIN_PORT=8433'
+        'PHPMYADMIN_DB_HOST=127.0.0.1'
+        'PHPMYADMIN_DB_PORT=3306'
     ) -join [Environment]::NewLine
     Set-Content -LiteralPath $envPath -Value $environmentText -Encoding UTF8
     & icacls.exe $envPath /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
@@ -367,13 +385,40 @@ try {
 } finally { Pop-Location }
 
 Write-Step 'Configuring and validating Caddy'
+$managerRoutes = ''
+if ($installPgweb) {
+    $managerRoutes += @"
+    @databaseClient path /postgres /postgres/*
+    handle @databaseClient {
+        forward_auth 127.0.0.1:$managerPort {
+            uri /api/auth/proxy
+        }
+        reverse_proxy 127.0.0.1:8432
+    }
+"@
+}
+if ($installPhpMyAdmin) {
+    $managerRoutes += @"
+    @mysqlClient path /mysql /mysql/*
+    handle @mysqlClient {
+        forward_auth 127.0.0.1:$managerPort {
+            uri /api/auth/proxy
+        }
+        uri strip_prefix /mysql
+        reverse_proxy 127.0.0.1:8433
+    }
+"@
+}
 $managerBlock = @"
 # $managerDomain
 $managerDomain {
-    reverse_proxy 127.0.0.1:$managerPort {
-        header_up Host {host}
-        header_up X-Real-IP {remote}
-        header_up X-Forwarded-Proto {scheme}
+$managerRoutes
+    handle {
+        reverse_proxy 127.0.0.1:$managerPort {
+            header_up Host {host}
+            header_up X-Real-IP {remote}
+            header_up X-Forwarded-Proto {scheme}
+        }
     }
     log {
         output file C:\Caddy\logs\$($managerDomain.Replace('.','-'))-error.log {
@@ -403,14 +448,19 @@ if ($installPgweb) {
         if ($downloaded.FullName -ne $pgwebExe) { Move-Item $downloaded.FullName $pgwebExe -Force }
     }
 }
+if ($installPhpMyAdmin) {
+    Write-Step 'Installing phpMyAdmin for MySQL and MariaDB'
+    Invoke-Native 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $managerRoot 'scripts\install-phpmyadmin.ps1')) 'Install phpMyAdmin'
+}
 
 Write-Step 'Starting services and configuring boot recovery'
 $env:PM2_HOME = $pm2Home
-foreach ($processName in @('manager','manager-caddy','manager-pgweb')) { & pm2.cmd delete $processName 2>$null | Out-Null }
+foreach ($processName in @('manager','manager-caddy','manager-pgweb','manager-phpmyadmin')) { & pm2.cmd delete $processName 2>$null | Out-Null }
 $nextBin = Join-Path $managerRoot 'node_modules\next\dist\bin\next'
 Invoke-Native 'pm2.cmd' @('start',$nextBin,'--interpreter','node','--name','manager','--','start','-p',$managerPort) 'Start Manager'
 Invoke-Native 'pm2.cmd' @('start',$caddyExe,'--name','manager-caddy','--interpreter','none','--','run','--config',$caddyfile,'--adapter','caddyfile') 'Start Caddy'
 if ($installPgweb) { Invoke-Native 'pm2.cmd' @('start',(Join-Path $managerRoot 'scripts\pm2-pgweb-runner.js'),'--name','manager-pgweb') 'Start Pgweb' }
+if ($installPhpMyAdmin) { Invoke-Native 'pm2.cmd' @('start',(Join-Path $managerRoot 'scripts\pm2-phpmyadmin-runner.js'),'--name','manager-phpmyadmin') 'Start phpMyAdmin' }
 Invoke-Native 'pm2.cmd' @('save') 'Save PM2 process list'
 $startupScript = Join-Path $managerRoot 'scripts\pm2-resurrect.ps1'
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $startupScript + '"')
@@ -443,6 +493,7 @@ $report = [ordered]@{
     optionalRuntimes=$optionalRuntimes
     optionalDatabaseEngines=$optionalEngines
     pgweb=$installPgweb
+    phpMyAdmin=$installPhpMyAdmin
     components=[ordered]@{
         node=Get-NativeVersion 'node.exe' @('--version')
         npm=Get-NativeVersion 'npm.cmd' @('--version')

@@ -2,6 +2,7 @@ import { ApiError } from '@/lib/api'
 import { query } from '@/lib/db'
 import { decryptSecret, encryptSecret } from '@/lib/secret-crypto'
 import { removeFromCaddyStrict, updateCaddyStrict } from '@/lib/caddy'
+import { isIP } from 'node:net'
 
 const API_BASE = 'https://api.cloudflare.com/client/v4'
 
@@ -205,20 +206,36 @@ export async function listProjectDomains(projectId?: string) {
 export async function createProjectDomain(projectId: string, input: Record<string, unknown>, createdBy?: string | null) {
   await ensureCloudflareSchema()
   const name = hostname(input.hostname)
-  const connection = await secretConnection(String(input.cloudflareConnectionId || ''))
+  const manual = input.mode === 'manual'
   const { rows } = await query<{ name: string; port: number | null }>('select name,port from projects where id=$1', [projectId])
   const project = rows[0]
   if (!project) throw new ApiError('Project not found', 404)
   if (!project.port) throw new ApiError('Assign an application port before configuring a domain', 400)
+  const conflict = await query(`select id from project_domains where hostname=$1 union all select id from projects where id<>$2 and lower(regexp_replace(regexp_replace(url, '^https?://', ''), '/.*$', ''))=$1`, [name, projectId])
+  if (conflict.rows.length) throw new ApiError('This hostname is already assigned. Manage the existing domain instead.', 409)
   const type = String(input.recordType || 'A').toUpperCase()
   if (!['A', 'AAAA', 'CNAME'].includes(type)) throw new ApiError('Unsupported DNS record type', 400)
   const content = typeof input.recordContent === 'string' ? input.recordContent.trim() : ''
   if (!content) throw new ApiError('DNS record target is required', 400)
+  if ((type === 'A' && isIP(content) !== 4) || (type === 'AAAA' && isIP(content) !== 6)) throw new ApiError(`A valid ${type === 'A' ? 'IPv4' : 'IPv6'} address is required`, 400)
+  if (type === 'CNAME') hostname(content)
   const proxied = input.proxied !== false
   const isPrimary = input.isPrimary === true
+  if (manual) {
+    // Manual mode never calls Cloudflare. Caddy validates the complete shared configuration.
+    await updateCaddyStrict(name, project.port)
+    if (isPrimary) await query('update project_domains set is_primary=false,updated_at=now() where project_id=$1', [projectId])
+    const { rows: inserted } = await query<{ id: string }>(`insert into project_domains
+      (project_id,hostname,record_type,record_content,proxied,is_primary,dns_status,ssl_status,created_by)
+      values($1,$2,$3,$4,false,$5,'manual','pending',$6) returning id`, [projectId, name, type, content, isPrimary, createdBy || null])
+    if (isPrimary) await query('update projects set url=$2,updated_at=now() where id=$1', [projectId, `https://${name}`])
+    return (await listProjectDomains(projectId)).find(item => item.id === inserted[0].id)
+  }
+  const connection = await secretConnection(String(input.cloudflareConnectionId || ''))
   const { zone, token } = await getZone(connection, name)
 
   const existing = await cfRequest<Array<{ id: string }>>(token, `/zones/${zone.id}/dns_records?type=${type}&name=${encodeURIComponent(name)}`)
+  if (existing.length) throw new ApiError('This DNS record already exists in Cloudflare. Use manual DNS mode to retain it; Manager will not overwrite an unmanaged record.', 409)
   const payload = { type, name, content, ttl: 1, proxied, comment: `Managed by deployment Manager for ${project.name}` }
   const record = existing[0]
     ? await cfRequest<{ id: string }>(token, `/zones/${zone.id}/dns_records/${existing[0].id}`, { method: 'PATCH', body: JSON.stringify(payload) })

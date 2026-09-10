@@ -8,12 +8,15 @@ export async function GET(_: Request, context: { params: Promise<{ id: string }>
   try {
     const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator', 'viewer'])
+    const { ensureProjectSetupSchema } = await import('@/lib/project-setup')
+    await ensureProjectSetupSchema()
 
     const { rows } = await query(
       `select p.id, p.name, p.slug, p.repo_url, p.default_branch, p.project_type, p.root_path, p.install_cmd, p.build_cmd, p.deploy_script, p.start_cmd, p.pre_deploy_cmd, p.post_deploy_cmd, p.runtime_versions, p.pm2_name, p.port, p.url, p.auto_deploy, p.github_connection_id, p.is_active, p.environment, p.production_id, p.created_at, p.updated_at,
-              s.id as staging_id, s.name as staging_name,
+              s.id as staging_id, s.name as staging_name, ps.step as setup_step, (ps.project_id is not null and ps.completed_at is null) as setup_required,
               prod.name as production_name, gc.name as github_connection_name, gc.account_login as github_account_login
        from projects p
+       left join project_setup ps on ps.project_id=p.id
        left join projects s on s.production_id = p.id and s.environment = 'staging'
        left join projects prod on p.production_id = prod.id
        left join github_connections gc on gc.id = p.github_connection_id
@@ -52,6 +55,10 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     if (body.runtimeVersions !== undefined) {
       const { validateProjectRuntimeVersions } = await import('@/lib/runtimes')
       body.runtimeVersions = validateProjectRuntimeVersions(body.runtimeVersions)
+    }
+    if (body.autoDeploy === true) {
+      const { assertProjectSetupComplete } = await import('@/lib/project-setup')
+      await assertProjectSetupComplete((await context.params).id)
     }
 
     const { rows: previousRows } = await query<{ auto_deploy: boolean; github_connection_id: string | null }>(
@@ -112,6 +119,11 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     )
 
     const updatedProject = rows[0]
+    if (['projectType', 'rootPath', 'repoUrl', 'defaultBranch', 'runtimeVersions', 'buildCmd', 'startCmd', 'deployScript', 'installCmd', 'port'].some(field => body[field] !== undefined)) {
+      const { ensureProjectSetupSchema } = await import('@/lib/project-setup')
+      await ensureProjectSetupSchema()
+      await query(`update project_setup set completed_at=null,updated_at=now() where project_id=$1 and not exists(select 1 from deployments where project_id=$1 and status='success')`, [(await context.params).id])
+    }
     let webhook: { action: 'created' | 'updated'; repository: string } | null = null
     const shouldEnsureWebhook = body.autoDeploy === true || (body.githubConnectionId !== undefined && previous.auto_deploy)
     if (shouldEnsureWebhook) {

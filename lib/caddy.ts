@@ -11,6 +11,7 @@ interface CaddyProxyRoute {
     matcher: string
     paths: string[]
     port: number
+    stripPrefix?: string
     forwardAuth?: { upstream: string; uri: string }
 }
 
@@ -35,6 +36,13 @@ function appProxyRoutes(domain: string): CaddyProxyRoute[] {
             port: Number(process.env.PGWEB_PORT || 8432),
             forwardAuth: { upstream: '127.0.0.1:' + managerPort, uri: '/api/auth/proxy' },
         })
+        routes.push({
+            matcher: 'mysqlClient',
+            paths: ['/mysql', '/mysql/*'],
+            port: Number(process.env.PHPMYADMIN_PORT || 8433),
+            stripPrefix: '/mysql',
+            forwardAuth: { upstream: '127.0.0.1:' + managerPort, uri: '/api/auth/proxy' },
+        })
     }
     return routes
 }
@@ -55,28 +63,40 @@ ${indent}\theader_up X-Forwarded-Proto {scheme}
 ${indent}}`
 }
 
+function renderProxyRoute(route: CaddyProxyRoute) {
+    const lines = [
+        `\t@${route.matcher} path ${route.paths.join(' ')}`,
+        '',
+        `\thandle @${route.matcher} {`,
+    ]
+
+    if (route.forwardAuth) {
+        lines.push(
+            `\t\tforward_auth ${route.forwardAuth.upstream} {`,
+            `\t\t\turi ${route.forwardAuth.uri}`,
+            '\t\t}',
+            '',
+        )
+    }
+    if (route.stripPrefix) {
+        lines.push(`\t\turi strip_prefix ${route.stripPrefix}`, '')
+    }
+    lines.push(renderReverseProxy(route.port, '\t\t'), '\t}')
+    return lines.join('\n')
+}
+
 function renderCaddyBlock(domain: string, port: number) {
     const logFile = `C:\\Caddy\\logs\\${domain.replace(/\./g, '-')}-error.log`
     const routes = appProxyRoutes(domain)
     const proxyBlock = routes.length
-        ? `${routes.map((route) => `\t@${route.matcher} path ${route.paths.join(' ')}
-
-\thandle @${route.matcher} {
-${route.forwardAuth ? `\t\tforward_auth ${route.forwardAuth.upstream} {
-\t\t\turi ${route.forwardAuth.uri}
-\t\t}
-
-` : ''}
-${renderReverseProxy(route.port, '\t\t')}
-\t}`).join('\n\n')}
+        ? `${routes.map(renderProxyRoute).join('\n\n')}
 
 \thandle {
 ${renderReverseProxy(port, '\t\t')}
 \t}`
         : renderReverseProxy(port)
 
-    return `
-# ${domain}
+    return `# ${domain}
 ${domain} {
 ${proxyBlock}
 
@@ -88,14 +108,13 @@ ${proxyBlock}
 \t\tformat console
 \t\tlevel ERROR
 \t}
-}
-`
+}`
 }
 
 function replaceCaddyBlock(content: string, domain: string, newBlock: string) {
     const startMarker = `${domain} {`
     if (!content.includes(startMarker)) {
-        return content + newBlock
+        return [content.trimEnd(), newBlock.trim()].filter(Boolean).join('\n\n') + '\n'
     }
 
     const startIndex = content.indexOf(startMarker)
@@ -114,7 +133,7 @@ function replaceCaddyBlock(content: string, domain: string, newBlock: string) {
     }
 
     if (endIndex === -1) {
-        return content + newBlock
+        return [content.trimEnd(), newBlock.trim()].filter(Boolean).join('\n\n') + '\n'
     }
 
     let removeStart = startIndex
@@ -124,9 +143,9 @@ function replaceCaddyBlock(content: string, domain: string, newBlock: string) {
         removeStart = content.lastIndexOf(`# ${domain}`, startIndex)
     }
 
-    const before = content.substring(0, removeStart)
-    const after = content.substring(endIndex + 1)
-    return before + newBlock + after
+    const before = content.substring(0, removeStart).trimEnd()
+    const after = content.substring(endIndex + 1).trimStart()
+    return [before, newBlock.trim(), after].filter(Boolean).join('\n\n').trimEnd() + '\n'
 }
 
 async function validateCaddyContent(content: string) {
@@ -163,6 +182,21 @@ async function applyCaddyUpdate(domain: string, port: number) {
 
 export async function updateCaddyStrict(domain: string, port: number) {
     return applyCaddyUpdate(domain, port)
+}
+
+export async function updateCaddyDomainsStrict(domains: string[], port: number) {
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid application port')
+    const sanitized = [...new Set(domains.map(sanitizeDomain))]
+    if (!sanitized.length) return { domains: [], validation: '', reload: '' }
+    let content = await readFile(CADDYFILE_PATH, 'utf8')
+    for (const domain of sanitized) content = replaceCaddyBlock(content, domain, renderCaddyBlock(domain, port))
+    await validateCaddyContent(content)
+    await writeFile(CADDYFILE_PATH, content, 'utf8')
+    const validation = await runCommand(`"${CADDY_EXE}" validate --config "${CADDYFILE_PATH}" --adapter caddyfile`, process.cwd())
+    if (validation.code !== 0) throw new Error(validation.output)
+    const reload = await runCommand(`"${CADDY_EXE}" reload --config "${CADDYFILE_PATH}" --adapter caddyfile`, process.cwd())
+    if (reload.code !== 0) throw new Error(reload.output)
+    return { domains: sanitized, validation: validation.output, reload: reload.output }
 }
 
 export async function updateCaddy(domain: string, port: number) {

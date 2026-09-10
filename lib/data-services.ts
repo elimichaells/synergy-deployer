@@ -1,7 +1,9 @@
 import { randomBytes } from 'crypto'
 import { ApiError } from '@/lib/api'
-import { query } from '@/lib/db'
+import { db, query } from '@/lib/db'
 import { decryptSecret, encryptSecret } from '@/lib/secret-crypto'
+import { dataServiceRemovalReason, type DataServiceRemovalFacts } from '@/lib/data-removal-policy'
+import { acquireProjectOperation } from '@/lib/project-operation'
 
 export const DATA_PROVIDERS = ['postgresql', 'mysql', 'mariadb', 'sqlserver', 'mongodb', 'redis'] as const
 export type DataProvider = typeof DATA_PROVIDERS[number]
@@ -53,6 +55,8 @@ export interface ProjectDataService {
   database_name: string
   username: string | null
   env_prefix: string
+  application_primary: boolean
+  removal_blocked_reason: string | null
   options: Record<string, unknown>
   created_at: string
   updated_at: string
@@ -104,6 +108,9 @@ export function ensureDataServicesSchema() {
         unique (project_id, name),
         unique (project_id, env_prefix)
       );
+      alter table project_data_services add column if not exists application_primary boolean not null default false;
+      create unique index if not exists project_data_services_one_application_primary_idx
+        on project_data_services (project_id) where application_primary;
       create table if not exists data_service_backup_schedules (
         id uuid primary key default gen_random_uuid(),
         service_id uuid unique not null references project_data_services(id) on delete cascade,
@@ -423,18 +430,18 @@ async function provisionProviderDatabase(connection: SecretConnection, databaseN
     const mysql = await import('mysql2/promise')
     const client = await mysql.createConnection({ host: connection.host, port: connection.port, user: connection.username || undefined, password: adminPassword, ssl: connection.tls_enabled ? {} : undefined })
     const db = `\`${databaseName.replace(/`/g, '``')}\``
-    const user = sqlLiteral(username)
-    const secret = sqlLiteral(password)
+    const user = client.escape(username)
+    const secret = client.escape(password)
     let databaseCreated = false
     let userCreated = false
     try {
       await client.query(`create database ${db}`)
       databaseCreated = true
-      await client.query(`create user '${user}'@'%' identified by '${secret}'`)
+      await client.query(`create user ${user}@'%' identified by ${secret}`)
       userCreated = true
-      await client.query(`grant all privileges on ${db}.* to '${user}'@'%'`)
+      await client.query(`grant all privileges on ${db}.* to ${user}@'%'`)
     } catch (error) {
-      if (userCreated) await client.query(`drop user if exists '${user}'@'%'`).catch(() => undefined)
+      if (userCreated) await client.query(`drop user if exists ${user}@'%'`).catch(() => undefined)
       if (databaseCreated) await client.query(`drop database if exists ${db}`).catch(() => undefined)
       throw error
     } finally { await client.end() }
@@ -497,19 +504,26 @@ async function testProjectServiceCredential(connection: SecretConnection, databa
 
 export async function listProjectDataServices(projectId?: string) {
   await ensureDataServicesSchema()
+  const { ensureDataMigrationSchema } = await import('@/lib/data-migrations')
+  await ensureDataMigrationSchema()
   const params = projectId ? [projectId] : []
   const where = projectId ? 'where pds.project_id=$1' : ''
-  const { rows } = await query<ProjectDataService>(
+  const { rows } = await query<ProjectDataService & DataServiceRemovalFacts>(
     `select pds.id,pds.project_id,p.name as project_name,p.environment,pds.connection_id,
             dc.name as connection_name,dc.provider,dc.host,dc.port,dc.tls_enabled,
-            pds.name,pds.database_name,pds.username,pds.env_prefix,pds.options,pds.created_at,pds.updated_at
+            pds.name,pds.database_name,pds.username,pds.env_prefix,pds.application_primary,pds.options,pds.created_at,pds.updated_at,
+            exists(select 1 from deployments d where d.project_id=pds.project_id and d.status in ('queued','running')) as deployment_active,
+            bs.last_status as backup_status,
+            (select count(*)::int from data_migration_jobs m where m.source_service_id=pds.id or m.target_service_id=pds.id) as migration_count,
+            exists(select 1 from data_migration_jobs m where (m.source_service_id=pds.id or m.target_service_id=pds.id) and m.status in ('queued','running','validating')) as migration_active
        from project_data_services pds
        join projects p on p.id=pds.project_id
        join data_connections dc on dc.id=pds.connection_id
+       left join data_service_backup_schedules bs on bs.service_id=pds.id
        ${where} order by p.name,p.environment,pds.name`,
     params
   )
-  return rows
+  return rows.map((service) => ({ ...service, removal_blocked_reason: dataServiceRemovalReason(service) }))
 }
 
 export async function provisionProjectDataService(projectId: string, input: Record<string, unknown>, createdBy?: string | null) {
@@ -534,10 +548,15 @@ export async function provisionProjectDataService(projectId: string, input: Reco
     ? requestedDatabase.slice(0, 128)
     : connection.provider === 'redis' ? String(Number(input.databaseName || 0)) : safeName(requestedDatabase, connection.provider === 'postgresql' ? 63 : 64)
   const usernameMaxLength = connection.provider === 'postgresql' ? 63 : ['mysql', 'mariadb'].includes(connection.provider) ? 32 : 128
+  const requestedUsername = typeof input.username === 'string' ? input.username.trim() : ''
   const username = attachExisting
     ? (requiredText(input.username, 'Database username') || null)
-    : connection.provider === 'redis' ? connection.username : safeName(`${databaseName}_user`, usernameMaxLength)
-  const password = attachExisting ? String(input.password ?? '') : connection.provider === 'redis' ? connectionPassword(connection) : newPassword()
+    : connection.provider === 'redis' ? connection.username : safeName(requestedUsername || `${databaseName}_user`, usernameMaxLength)
+  const requestedPassword = typeof input.password === 'string' ? input.password : ''
+  if (!attachExisting && requestedPassword && (requestedPassword.length < 16 || requestedPassword.length > 256)) {
+    throw new ApiError('Custom database passwords must be between 16 and 256 characters', 400)
+  }
+  const password = attachExisting ? requestedPassword : connection.provider === 'redis' ? connectionPassword(connection) : requestedPassword || newPassword()
   if (attachExisting) {
     try {
       await testProjectServiceCredential(connection, databaseName, username, password)
@@ -568,6 +587,9 @@ export async function provisionProjectDataService(projectId: string, input: Reco
         enabled: true,
       }, createdBy)
     }
+    if (input.applicationPrimary === true) {
+      await setProjectDataServiceApplicationPrimary(projectId, inserted[0].id, true)
+    }
     return (await listProjectDataServices(projectId)).find((item) => item.id === inserted[0].id)
   } catch (error) {
     if ((error as { code?: string }).code === '23505') throw new ApiError('This project already has a service with that name or environment prefix', 409)
@@ -576,8 +598,112 @@ export async function provisionProjectDataService(projectId: string, input: Reco
 }
 
 export async function detachProjectDataService(projectId: string, serviceId: string) {
-  const result = await query('delete from project_data_services where id=$1 and project_id=$2', [serviceId, projectId])
-  if (!result.rowCount) throw new ApiError('Project data service not found', 404)
+  await ensureDataServicesSchema()
+  const { ensureDataMigrationSchema } = await import('@/lib/data-migrations')
+  await ensureDataMigrationSchema()
+  const releaseOperation = await acquireProjectOperation(projectId)
+  try {
+    const client = await db.connect()
+    try {
+      await client.query('begin')
+      // Parent and schedule locks serialize new migrations, primary selection and backup claims.
+      const { rows } = await client.query<{ application_primary: boolean }>(
+        'select application_primary from project_data_services where id=$1 and project_id=$2 for update', [serviceId, projectId])
+      if (!rows[0]) throw new ApiError('Project data service not found', 404)
+      const backup = await client.query<{ last_status: string }>('select last_status from data_service_backup_schedules where service_id=$1 for update', [serviceId])
+      const migrations = await client.query<{ migration_count: number; migration_active: boolean }>(
+        `select count(*)::int as migration_count,coalesce(bool_or(status in ('queued','running','validating')),false) as migration_active
+           from data_migration_jobs where source_service_id=$1 or target_service_id=$1`, [serviceId])
+      const reason = dataServiceRemovalReason({ ...rows[0], ...migrations.rows[0], deployment_active: false, backup_status: backup.rows[0]?.last_status || null })
+      if (reason) throw new ApiError(reason, 409)
+      await client.query('delete from project_data_services where id=$1 and project_id=$2', [serviceId, projectId])
+      await client.query('commit')
+    } catch (error) {
+      await client.query('rollback')
+      if ((error as { code?: string }).code === '23503') throw new ApiError('This resource is still referenced by another operation. Refresh and remove its migration history first.', 409)
+      throw error
+    } finally { client.release() }
+  } finally { await releaseOperation() }
+}
+
+export async function setProjectDataServiceApplicationPrimary(projectId: string, serviceId: string, active: boolean) {
+  await ensureDataServicesSchema()
+  const client = await db.connect()
+  try {
+    await client.query('begin')
+    const service = await client.query<{ id: string }>('select id from project_data_services where id=$1 and project_id=$2 for update', [serviceId, projectId])
+    if (!service.rows[0]) throw new ApiError('Project data service not found', 404)
+    if (active) {
+      await client.query('update project_data_services set application_primary=false,updated_at=now() where project_id=$1 and application_primary=true', [projectId])
+    }
+    await client.query('update project_data_services set application_primary=$1,updated_at=now() where id=$2 and project_id=$3', [active, serviceId, projectId])
+    await client.query('commit')
+  } catch (error) {
+    await client.query('rollback')
+    throw error
+  } finally {
+    client.release()
+  }
+  return (await listProjectDataServices(projectId)).find((item) => item.id === serviceId)
+}
+
+async function setProjectServicePassword(connection: SecretConnection, service: ProjectDataService, password: string) {
+  const adminPassword = connectionPassword(connection)
+  if (!service.username) throw new ApiError('This data service has no individual database user', 409)
+  if (connection.provider === 'postgresql') {
+    const { Client } = await import('pg')
+    const client = new Client({ host: connection.host, port: connection.port, user: connection.username || undefined, password: adminPassword, database: String(connection.options.database || 'postgres'), ssl: connection.tls_enabled ? { rejectUnauthorized: false } : false })
+    await client.connect()
+    try { await client.query(`alter role ${quotePg(service.username)} password '${sqlLiteral(password)}'`) } finally { await client.end() }
+    return
+  }
+  if (connection.provider === 'mysql' || connection.provider === 'mariadb') {
+    const mysql = await import('mysql2/promise')
+    const client = await mysql.createConnection({ host: connection.host, port: connection.port, user: connection.username || undefined, password: adminPassword, ssl: connection.tls_enabled ? {} : undefined })
+    try { await client.query(`alter user ${client.escape(service.username)}@'%' identified by ${client.escape(password)}`) } finally { await client.end() }
+    return
+  }
+  if (connection.provider === 'sqlserver') {
+    const sql = await import('mssql')
+    const pool = await new sql.ConnectionPool({ server: connection.host, port: connection.port, user: connection.username || undefined, password: adminPassword, database: 'master', options: { encrypt: connection.tls_enabled, trustServerCertificate: !connection.tls_enabled } }).connect()
+    try { await pool.request().query(`alter login ${quoteSqlServer(service.username)} with password=N'${sqlLiteral(password)}'`) } finally { await pool.close() }
+    return
+  }
+  if (connection.provider === 'mongodb') {
+    const { MongoClient } = await import('mongodb')
+    const auth = connection.username ? `${encodeURIComponent(connection.username)}:${encodeURIComponent(adminPassword)}@` : ''
+    const client = new MongoClient(`mongodb://${auth}${connection.host}:${connection.port}/?authSource=${encodeURIComponent(String(connection.options.authSource || 'admin'))}`, { tls: connection.tls_enabled })
+    await client.connect()
+    try { await client.db(service.database_name).command({ updateUser: service.username, pwd: password }) } finally { await client.close() }
+    return
+  }
+  throw new ApiError('This provider does not support per-service password rotation', 409)
+}
+
+export async function rotateProjectDataServicePassword(projectId: string, serviceId: string, requestedPassword: unknown) {
+  await ensureDataServicesSchema()
+  const password = typeof requestedPassword === 'string' ? requestedPassword : ''
+  if (password.length < 16 || password.length > 256) throw new ApiError('Password must be between 16 and 256 characters', 400)
+  const { rows } = await query<ProjectDataService & { password_ciphertext: string | null }>(
+    `select pds.*,p.name as project_name,p.environment,dc.name as connection_name,dc.provider,dc.host,dc.port,dc.tls_enabled
+       from project_data_services pds join projects p on p.id=pds.project_id
+       join data_connections dc on dc.id=pds.connection_id where pds.id=$1 and pds.project_id=$2`,
+    [serviceId, projectId]
+  )
+  const service = rows[0]
+  if (!service) throw new ApiError('Project data service not found', 404)
+  if (service.options?.ownership === 'external') throw new ApiError('Manager cannot rotate credentials owned by an external database', 409)
+  const connection = await getSecretConnection(service.connection_id)
+  const previousPassword = service.password_ciphertext ? decryptSecret(service.password_ciphertext) : ''
+  await setProjectServicePassword(connection, service, password)
+  try {
+    await testProjectServiceCredential(connection, service.database_name, service.username, password)
+    await query('update project_data_services set password_ciphertext=$1,updated_at=now() where id=$2', [encryptSecret(password), service.id])
+  } catch (error) {
+    if (previousPassword) await setProjectServicePassword(connection, service, previousPassword).catch(() => undefined)
+    throw error
+  }
+  return { id: service.id, username: service.username }
 }
 
 function serviceUrl(service: ProjectDataService, password: string) {
@@ -589,8 +715,8 @@ function serviceUrl(service: ProjectDataService, password: string) {
 
 export async function getProjectDataServiceEnv(projectId: string) {
   await ensureDataServicesSchema()
-  const { rows } = await query<ProjectDataService & { password_ciphertext: string | null }>(
-    `select pds.*,p.name as project_name,p.environment,dc.name as connection_name,dc.provider,dc.host,dc.port,dc.tls_enabled
+  const { rows } = await query<ProjectDataService & { password_ciphertext: string | null; project_type: string }>(
+    `select pds.*,p.name as project_name,p.environment,p.project_type,dc.name as connection_name,dc.provider,dc.host,dc.port,dc.tls_enabled
        from project_data_services pds join projects p on p.id=pds.project_id
        join data_connections dc on dc.id=pds.connection_id where pds.project_id=$1 order by pds.created_at`,
     [projectId]
@@ -598,22 +724,20 @@ export async function getProjectDataServiceEnv(projectId: string) {
   const env: Record<string, string> = {}
   for (const service of rows) {
     const password = service.password_ciphertext ? decryptSecret(service.password_ciphertext) : ''
-    const prefix = service.env_prefix
     const url = serviceUrl(service, password)
-    env[`${prefix}_URL`] = url
-    env[`${prefix}_HOST`] = service.host
-    env[`${prefix}_PORT`] = String(service.port)
-    env[`${prefix}_DATABASE`] = service.database_name
-    if (service.username) env[`${prefix}_USER`] = service.username
-    if (password) env[`${prefix}_PASSWORD`] = password
-    if (service.name === 'primary') {
-      env.DATABASE_URL = url
-      env.DATABASE_HOST = service.host
-      env.DATABASE_PORT = String(service.port)
-      env.DATABASE_NAME = service.database_name
-      if (service.username) env.DATABASE_USER = service.username
-      if (password) env.DATABASE_PASSWORD = password
-      if (['postgresql', 'mysql', 'mariadb', 'sqlserver'].includes(service.provider)) {
+    // Secondary services stay namespaced. The active application database uses
+    // only the framework's canonical variables so credentials are not duplicated.
+    if (!service.application_primary && service.options?.injectEnv !== false) {
+      const prefix = service.env_prefix
+      env[`${prefix}_URL`] = url
+      env[`${prefix}_HOST`] = service.host
+      env[`${prefix}_PORT`] = String(service.port)
+      env[`${prefix}_DATABASE`] = service.database_name
+      if (service.username) env[`${prefix}_USER`] = service.username
+      if (password) env[`${prefix}_PASSWORD`] = password
+    }
+    if (service.application_primary) {
+      if (service.project_type === 'laravel' && ['postgresql', 'mysql', 'mariadb', 'sqlserver'].includes(service.provider)) {
         env.DB_CONNECTION = service.provider === 'postgresql' ? 'pgsql' : service.provider === 'sqlserver' ? 'sqlsrv' : 'mysql'
         env.DB_HOST = service.host
         env.DB_PORT = String(service.port)
@@ -621,9 +745,26 @@ export async function getProjectDataServiceEnv(projectId: string) {
         if (service.username) env.DB_USERNAME = service.username
         if (password) env.DB_PASSWORD = password
       }
+      if (['next', 'node'].includes(service.project_type)) {
+        env.DATABASE_URL = url
+        env.DATABASE_HOST = service.host
+        env.DATABASE_PORT = String(service.port)
+        env.DATABASE_NAME = service.database_name
+        if (service.username) env.DATABASE_USER = service.username
+        if (password) env.DATABASE_PASSWORD = password
+      }
+      if (service.project_type === 'go') {
+        env.DATABASE_URL = url
+        env.DB_DRIVER = service.provider === 'postgresql' ? 'postgres' : service.provider
+        env.DB_HOST = service.host
+        env.DB_PORT = String(service.port)
+        env.DB_NAME = service.database_name
+        if (service.username) env.DB_USER = service.username
+        if (password) env.DB_PASSWORD = password
+      }
     }
-    if (service.provider === 'mongodb' && service.name === 'primary') env.MONGODB_URI = url
-    if (service.provider === 'redis' && service.name === 'primary') env.REDIS_URL = url
+    if (service.provider === 'mongodb' && service.application_primary) env.MONGODB_URI = url
+    if (service.provider === 'redis' && service.application_primary) env.REDIS_URL = url
   }
   return env
 }

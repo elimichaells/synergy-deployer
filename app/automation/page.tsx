@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import {
   Activity, CalendarClock, Clock3, FileText, Loader2, Pause, Pencil, Play, Plus,
   RefreshCw, RotateCcw, ServerCog, Square, Trash2,
@@ -97,6 +98,11 @@ export default function AutomationPage() {
   const [cronForm, setCronForm] = useState(emptyCron)
   const [workerForm, setWorkerForm] = useState(emptyWorker)
   const [workerLog, setWorkerLog] = useState<{ name: string; output: string } | null>(null)
+  const [projectFilter, setProjectFilter] = useState('')
+  useEffect(() => { setProjectFilter(new URLSearchParams(window.location.search).get('project') || '') }, [])
+  const selectedProject = projects.find(project => project.id === projectFilter)
+  const visibleCronJobs = cronJobs.filter(job => !projectFilter || job.project_id === projectFilter)
+  const visibleWorkers = workers.filter(worker => !selectedProject || worker.working_directory.replace(/[\\/]+$/, '').toLowerCase() === selectedProject.root_path.replace(/[\\/]+$/, '').toLowerCase())
 
   const canWrite = user?.role === 'admin' || user?.role === 'operator'
   const canDelete = user?.role === 'admin'
@@ -132,6 +138,7 @@ export default function AutomationPage() {
       projectId: job.project_id || '', language: job.language || 'custom', name: job.name, description: job.description || '', schedule: job.schedule, timezone: job.timezone,
       command: job.command, workingDirectory: job.working_directory, timeoutSeconds: job.timeout_seconds, enabled: job.enabled,
     })
+    if (job === 'new' && projectFilter) selectCronProject(projectFilter)
   }
 
   const selectCronProject = (projectId: string) => {
@@ -162,7 +169,7 @@ export default function AutomationPage() {
 
   const openWorker = (worker: Worker | 'new') => {
     setWorkerEditor(worker)
-    setWorkerForm(worker === 'new' ? emptyWorker : {
+    setWorkerForm(worker === 'new' ? { ...emptyWorker, workingDirectory: selectedProject?.root_path || emptyWorker.workingDirectory } : {
       name: worker.name, description: worker.description || '', command: worker.command,
       workingDirectory: worker.working_directory, pm2Name: worker.pm2_name, enabled: worker.enabled,
     })
@@ -236,9 +243,13 @@ export default function AutomationPage() {
   const enabledCron = useMemo(() => cronJobs.filter((job) => job.enabled).length, [cronJobs])
 
   return (
-    <AppShell title="Automation" subtitle="Scheduled jobs, background workers, and unattended operations." user={{ name: user?.name, role: user?.role }} actions={
+    <AppShell title={selectedProject ? `${selectedProject.name} / Jobs & workers` : "Jobs & workers"} subtitle="Workspace / Automation" user={{ name: user?.name, role: user?.role }} actions={
       <Button variant="secondary" size="sm" onClick={() => void refresh()}><RefreshCw className={`mr-2 h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />Refresh</Button>
     }>
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        {selectedProject && <Link href={`/sites/${selectedProject.id}`} className="text-sm text-primary">Back to {selectedProject.name}</Link>}
+        <label className="field-label w-full sm:w-72">Application<select className="control-input" value={projectFilter} onChange={event => { setProjectFilter(event.target.value); window.history.replaceState(null, '', event.target.value ? `?project=${event.target.value}` : '/automation') }}><option value="">All applications</option>{projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+      </div>
       {error && <div className="mb-4 rounded-md border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</div>}
 
       <div className="mb-6 grid gap-3 sm:grid-cols-3">
@@ -257,8 +268,8 @@ export default function AutomationPage() {
 
       {activeTab === 'cron' ? (
         <div className="space-y-3">
-          {cronJobs.length === 0 && !loading && <Empty icon={<CalendarClock className="h-7 w-7" />} title="No cron jobs" text="Create a schedule for backups, cleanup, syncs, or maintenance commands." />}
-          {cronJobs.map((job) => (
+          {visibleCronJobs.length === 0 && !loading && <Empty icon={<CalendarClock className="h-7 w-7" />} title="No cron jobs" text="Create a schedule for backups, cleanup, syncs, or maintenance commands." />}
+          {visibleCronJobs.map((job) => (
             <div key={job.id} className="rounded-md border border-border bg-card p-4">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
                 <div className="min-w-0 flex-1">
@@ -289,8 +300,8 @@ export default function AutomationPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {workers.length === 0 && !loading && <Empty icon={<ServerCog className="h-7 w-7" />} title="No workers" text="Register queues, consumers, processors, or other long-running background commands." />}
-          {workers.map((worker) => (
+          {visibleWorkers.length === 0 && !loading && <Empty icon={<ServerCog className="h-7 w-7" />} title="No workers" text="Register queues, consumers, processors, or other long-running background commands." />}
+          {visibleWorkers.map((worker) => (
             <div key={worker.id} className="grid gap-4 rounded-md border border-border bg-card p-4 lg:grid-cols-[minmax(0,2fr)_repeat(4,minmax(5rem,0.6fr))_auto] lg:items-center">
               <div className="min-w-0"><div className="flex items-center gap-2"><p className="truncate text-sm font-semibold">{worker.name}</p><Badge className={worker.status === 'online' ? 'bg-emerald-500/10 text-emerald-300' : worker.status === 'errored' ? 'bg-red-500/10 text-red-300' : 'bg-secondary text-muted-foreground'}>{worker.status}</Badge></div><p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{worker.pm2_name} · {worker.command}</p></div>
               <Metric label="Uptime" value={workerUptime(worker.uptime)} />

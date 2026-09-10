@@ -13,6 +13,18 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $tempRoot = Join-Path $env:TEMP ('manager-runtime-' + [guid]::NewGuid().ToString('N'))
 
+function Get-Sha256Hex {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $stream = [IO.File]::OpenRead($Path)
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha256.ComputeHash($stream))).Replace('-','')
+    } finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
 function Get-VerifiedDownload {
     param([string]$Url,[string]$Destination,[string]$ExpectedSha256)
     Write-Host ('[download] ' + $Url)
@@ -40,7 +52,7 @@ function Get-VerifiedDownload {
     } finally {
         $output.Dispose(); $input.Dispose(); $response.Dispose(); $client.Dispose()
     }
-    $actual = (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actual = (Get-Sha256Hex $Destination).ToLowerInvariant()
     if ($actual -ne $ExpectedSha256.ToLowerInvariant()) { throw 'Downloaded archive failed SHA-256 verification' }
     Write-Host '[verify] SHA-256 passed'
 }
@@ -87,12 +99,16 @@ try {
         Install-Archive $archive $target ''
         Copy-Item (Join-Path $target 'php.ini-production') (Join-Path $target 'php.ini') -Force
         $ini = Get-Content (Join-Path $target 'php.ini') -Raw
-        $ini = $ini -replace ';extension_dir = "ext"','extension_dir = "ext"'
-        foreach ($extension in @('curl','fileinfo','mbstring','openssl','pdo_mysql','pdo_pgsql')) {
-            $ini = $ini -replace (';extension=' + $extension),('extension=' + $extension)
+        $ini = $ini -replace '(?m)^\s*;?\s*extension_dir\s*=.*$','extension_dir="ext"'
+        foreach ($extension in @('bcmath','curl','fileinfo','gd','gmp','intl','mbstring','mysqli','openssl','pdo_mysql','pdo_pgsql','sodium','zip')) {
+            $dll = Join-Path $target ('ext\php_' + $extension + '.dll')
+            if (Test-Path -LiteralPath $dll) {
+                $ini = $ini -replace ('(?m)^\s*;\s*extension\s*=\s*' + [regex]::Escape($extension) + '\s*$'),('extension=' + $extension)
+            }
         }
         Set-Content (Join-Path $target 'php.ini') $ini -Encoding ASCII
         & (Join-Path $target 'php.exe') --version
+        & (Join-Path $target 'php.exe') -r "if (!extension_loaded('openssl')) { exit(2); }"
     } else {
         $catalog = Invoke-RestMethod 'https://go.dev/dl/?mode=json&include=all'
         $release = $catalog | Where-Object { $_.version -eq ('go' + $Version) } | Select-Object -First 1

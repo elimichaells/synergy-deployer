@@ -165,7 +165,7 @@ export async function POST(request: Request) {
         [stagingSlug]
       )
 
-      if (existingStaging.length === 0) {
+      if (body?.createStaging === true && existingStaging.length === 0) {
         const folderName = path.basename(candidate.rootPath)
         await query(
           `insert into projects
@@ -183,35 +183,6 @@ export async function POST(request: Request) {
           ]
         )
       }
-    }
-
-    // Also create staging for any existing production projects that don't have one
-    const { rows: orphanedProds } = await query<{ id: string; name: string; slug: string; repo_url: string | null; default_branch: string; project_type: string; root_path: string; pm2_name: string }>(
-      `select p.id, p.name, p.slug, p.repo_url, p.default_branch, p.project_type, p.root_path, p.pm2_name
-       from projects p
-       where p.environment = 'production'
-         and not exists (select 1 from projects s where s.production_id = p.id and s.environment = 'staging')`
-    )
-
-    for (const prod of orphanedProds) {
-      const folderName = path.basename(prod.root_path)
-      const stagingSlug = `${prod.slug}-staging`
-      await query(
-        `insert into projects
-          (name, slug, repo_url, default_branch, project_type, root_path, pm2_name, environment, production_id)
-         values ($1,$2,$3,$4,$5,$6,$7,'staging',$8)
-         on conflict (slug) do nothing`,
-        [
-          `${prod.name} (Staging)`,
-          stagingSlug,
-          prod.repo_url,
-          prod.default_branch,
-          prod.project_type,
-          path.join(stagingBase, folderName),
-          `staging-${prod.pm2_name}`,
-          prod.id,
-        ]
-      )
     }
 
     return NextResponse.json({ created })

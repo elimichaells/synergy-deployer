@@ -8,6 +8,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$env:PSModulePath = (Join-Path $PSHOME 'Modules') + ';' + $env:PSModulePath
 $ProgressPreference = 'SilentlyContinue'
 $root = Split-Path -Parent $PSScriptRoot
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $root 'packages' }
@@ -62,6 +63,7 @@ try {
     $package = Get-ChildItem -LiteralPath $payloadDirectory -Filter '*.zip' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if (-not $package) { throw 'The Manager application package was not created' }
     $packageManifest = Get-Item -LiteralPath ($package.FullName + '.sha256.json') -ErrorAction Stop
+    $packageMetadata = Get-Content -LiteralPath $packageManifest.FullName -Raw | ConvertFrom-Json
     Copy-Item -LiteralPath $package.FullName -Destination $generatedPackageAsset -Force
     Copy-Item -LiteralPath $packageManifest.FullName -Destination $generatedManifestAsset -Force
 
@@ -106,6 +108,8 @@ try {
         file=$exeName
         sha256=$hash
         version=$Version
+        sourceCommit=$packageMetadata.sourceCommit
+        sourceDirty=$packageMetadata.sourceDirty
         architecture='win-x64'
         package=$package.Name
         packageSha256=(Get-FileHash -LiteralPath $package.FullName -Algorithm SHA256).Hash

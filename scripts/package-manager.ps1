@@ -2,6 +2,8 @@
 param([string]$OutputDirectory, [string]$Version)
 
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell can inherit a PowerShell 7-only module search path.
+$env:PSModulePath = (Join-Path $PSHOME 'Modules') + ';' + $env:PSModulePath
 $root = Split-Path -Parent $PSScriptRoot
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $root 'packages' }
 if (-not $Version) { $Version = (Get-Content (Join-Path $root 'package.json') -Raw | ConvertFrom-Json).version }
@@ -17,16 +19,24 @@ New-Item -ItemType Directory -Force -Path $staging | Out-Null
 
 Push-Location $root
 try {
+    $sourceCommit = & git rev-parse HEAD
+    if ($LASTEXITCODE -ne 0) { throw 'Packaging requires a Git source checkout' }
+    $sourceDirty = [bool](@(& git status --porcelain).Count)
+    $sourceFiles = @(& git ls-files --cached --others --exclude-standard)
+    if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate Manager source files' }
     $blocked = @('.env.local','pm2_jlist.json','pm2_list.json','pm2_fresh.json','manager_logs.txt','manager_logs_utf8.txt','build.log','_prod_deploy_log.txt','tsconfig.tsbuildinfo')
-    foreach ($relative in @(& git ls-files --cached --others --exclude-standard)) {
-        if ($blocked -contains $relative -or $relative -like 'packages/*' -or $relative -like '.next/*' -or $relative -like 'node_modules/*' -or $relative -like 'installer/ManagerSetup/Assets/*' -or $relative -like 'installer/ManagerSetup/bin/*' -or $relative -like 'installer/ManagerSetup/obj/*') { continue }
+    foreach ($relative in $sourceFiles) {
+        if ($blocked -contains $relative -or $relative -like 'packages/*' -or $relative -match '(^|/)\.next[^/]*(/|$)' -or $relative -like 'node_modules/*' -or $relative -like 'installer/ManagerSetup/Assets/*' -or $relative -like 'installer/ManagerSetup/bin/*' -or $relative -like 'installer/ManagerSetup/obj/*') { continue }
+        if ($relative -match '(^|/)\.env($|\.)' -and $relative -notmatch '\.example$') { continue }
         $source = Join-Path $root $relative
-        if (-not (Test-Path $source -PathType Leaf)) { continue }
+        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { continue }
         $target = Join-Path $staging $relative
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
-        Copy-Item $source $target
+        Copy-Item -LiteralPath $source -Destination $target
     }
     Copy-Item (Join-Path $root 'installer\manager-install.example.json') (Join-Path $staging 'manager-install.json')
+    @{version=$Version;sourceCommit=$sourceCommit;sourceDirty=$sourceDirty} |
+        ConvertTo-Json | Set-Content -LiteralPath (Join-Path $staging 'release-source.json') -Encoding UTF8
     @'
 Manager Windows Server Package
 
@@ -50,7 +60,7 @@ required. Prefer MANAGER_INSTALL_* environment variables for passwords.
 
 Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $archive -CompressionLevel Optimal
 $hash = (Get-FileHash $archive -Algorithm SHA256).Hash
-@{file=[IO.Path]::GetFileName($archive);sha256=$hash;version=$Version;createdAt=(Get-Date).ToUniversalTime().ToString('o')} |
+@{file=[IO.Path]::GetFileName($archive);sha256=$hash;version=$Version;sourceCommit=$sourceCommit;sourceDirty=$sourceDirty;createdAt=(Get-Date).ToUniversalTime().ToString('o')} |
     ConvertTo-Json | Set-Content ($archive + '.sha256.json') -Encoding UTF8
 Remove-Item -LiteralPath $resolvedStaging -Recurse -Force
 Write-Host ('Package: ' + $archive) -ForegroundColor Green

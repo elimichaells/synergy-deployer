@@ -3,11 +3,13 @@ import { query } from '@/lib/db'
 import { getSessionFromCookie } from '@/lib/auth'
 import { requireRole } from '@/lib/rbac'
 import { jsonError } from '@/lib/api'
+import { ensureDeploymentSchema } from '@/lib/deployment-schema'
 
 export async function GET(request: Request) {
   try {
     const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator', 'viewer'])
+    await ensureDeploymentSchema()
 
     const url = new URL(request.url)
     const projectId = url.searchParams.get('project_id')
@@ -15,7 +17,7 @@ export async function GET(request: Request) {
     const limit = parseInt(url.searchParams.get('limit') || '50', 10)
 
     let sql = `select d.id, d.project_id, d.user_id, d.status, d.branch, d.commit_sha, d.started_at, d.finished_at,
-              d.trigger, left(d.log, 2000) as log,
+              d.trigger,d.phase,d.security_status,(p.active_deployment_id=d.id) as is_active,left(d.log, 2000) as log,
               p.name as project_name, u.name as user_name
        from deployments d
        join projects p on p.id = d.project_id

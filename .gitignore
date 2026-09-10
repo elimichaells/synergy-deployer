@@ -4,9 +4,15 @@
 
 node_modules/
 .next/
+.next.*/
 out/
 dist/
 build/
+packages/
+installer/ManagerSetup/bin/
+installer/ManagerSetup/obj/
+installer/ManagerSetup/Assets/manager-package.zip
+installer/ManagerSetup/Assets/manager-package.sha256.json
 
 *.log
 manager_logs*.txt

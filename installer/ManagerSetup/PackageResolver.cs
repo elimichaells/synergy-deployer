@@ -1,6 +1,7 @@
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Reflection;
 using System.Security.Cryptography;
@@ -159,10 +160,7 @@ internal static class PackageResolver
             ? $"https://api.github.com/repos/{repository}/releases/latest"
             : $"https://api.github.com/repos/{repository}/releases/tags/{Uri.EscapeDataString(options.ReleaseTag.Trim())}";
         using var releaseResponse = await client.GetAsync(releasePath, cancellationToken);
-        if (!releaseResponse.IsSuccessStatusCode)
-        {
-            throw new HttpRequestException($"GitHub could not resolve that release ({(int)releaseResponse.StatusCode} {releaseResponse.ReasonPhrase}).");
-        }
+        EnsureReleaseAvailable(releaseResponse, repository, options.ReleaseTag);
         await using var releaseStream = await releaseResponse.Content.ReadAsStreamAsync(cancellationToken);
         var release = await JsonSerializer.DeserializeAsync<GitHubRelease>(releaseStream, JsonOptions, cancellationToken)
             ?? throw new InvalidDataException("GitHub returned an invalid release response.");
@@ -199,6 +197,17 @@ internal static class PackageResolver
             if (File.Exists(partial)) File.Delete(partial);
         }
         return (destination, manifest);
+    }
+
+    internal static void EnsureReleaseAvailable(HttpResponseMessage response, string repository, string tag)
+    {
+        if (response.IsSuccessStatusCode) return;
+        var message = response.StatusCode == HttpStatusCode.NotFound
+            ? $"GitHub could not find an accessible release '{tag}' in {repository} (404 Not Found). "
+                + "The repository may have no published release, the tag may not exist, or a private repository may require a token with access. "
+                + "Choose 'Use embedded package' to install the verified version included in this setup file, or go Back to correct the repository, tag, or token."
+            : $"GitHub could not resolve that release ({(int)response.StatusCode} {response.ReasonPhrase}). Check repository access and try again.";
+        throw new HttpRequestException(message, null, response.StatusCode);
     }
 
     private static HttpClient CreateGitHubClient(string token)
