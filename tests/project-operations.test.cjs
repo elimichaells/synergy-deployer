@@ -79,7 +79,7 @@ test('viewer role cannot execute console commands or mutate setup', async () => 
     '@/lib/db': { query: () => { throw new Error('Database access forbidden'); } },
     '@/lib/project-operation': {},
   };
-  const consoleApi = load('app/api/sites/[id]/console/route.ts', { ...common, '@/lib/exec': {}, '@/lib/project-console': {}, '@/lib/runtimes': {}, '@/lib/project-databases': {}, '@/lib/data-services': {} });
+  const consoleApi = load('app/api/sites/[id]/console/route.ts', { ...common, '@/lib/exec': {}, '@/lib/project-console': {}, '@/lib/project-console-git': {}, '@/lib/runtimes': {}, '@/lib/project-databases': {}, '@/lib/data-services': {} });
   const setupApi = load('app/api/sites/[id]/setup/route.ts', { ...common, '@/lib/project-setup': {}, '@/lib/project-setup-policy': {} });
   for (const api of [consoleApi, setupApi]) {
     const response = await api.POST(new Request('http://localhost/api/test', { method: 'POST', body: '{}' }), { params: Promise.resolve({ id: 'fixture' }) });

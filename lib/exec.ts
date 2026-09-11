@@ -8,6 +8,34 @@ export interface CommandResult {
 interface CommandControl {
   signal?: AbortSignal
   heartbeatMs?: number
+  redact?: string[]
+}
+
+export type Command = string | { file: string; args: string[] }
+
+/** Retain partial secrets across chunks so neither output nor the stream leaks them. */
+export function secretRedactor(secrets: string[], write: (text: string) => void) {
+  const values = [...new Set(secrets.filter(Boolean))].sort((a, b) => b.length - a.length)
+  let pending = ''
+  return {
+    write(text: string) {
+      if (!values.length) { write(text); return }
+      pending += text
+      let safe = ''
+      while (pending) {
+        const match = values.find(value => pending.startsWith(value))
+        if (match) { safe += '[redacted]'; pending = pending.slice(match.length) }
+        else if (values.some(value => value.startsWith(pending))) break
+        else { safe += pending[0]; pending = pending.slice(1) }
+      }
+      if (safe) write(safe)
+    },
+    end() {
+      // A truncated credential is still sensitive.
+      if (pending) write('[redacted]')
+      pending = ''
+    },
+  }
 }
 
 /** Kill a process tree on Windows using taskkill, falls back to SIGKILL */
@@ -25,7 +53,7 @@ export function killProcessTree(pid: number) {
 }
 
 export function runCommand(
-  command: string,
+  command: Command,
   cwd?: string,
   timeoutMs = 300_000,
   onData?: (data: string) => void,
@@ -53,9 +81,9 @@ export function runCommand(
     for (const key of ['SystemRoot', 'WINDIR', 'ComSpec', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA', 'PM2_HOME']) {
       if (process.env[key]) systemEnv[key] = process.env[key]
     }
-    const child = spawn(command, {
+    const child = spawn(typeof command === 'string' ? command : command.file, typeof command === 'string' ? [] : command.args, {
       cwd,
-      shell: true,
+      shell: typeof command === 'string',
       windowsHide: true,
       env: {
         ...(inheritProcessEnv ? process.env : systemEnv),
@@ -64,7 +92,7 @@ export function runCommand(
         PATH: managedPath,
         // Prevent git credential manager from opening GUI prompts in non-interactive PM2
         GIT_TERMINAL_PROMPT: '0',
-        // Use GITHUB_TOKEN via deploy.ts withGithubToken() instead of credential manager
+        // Authentication must be supplied by the caller; a server cannot prompt.
         GCM_INTERACTIVE: 'never',
         // Completely disable askpass helpers (prevents Windows GCM from prompting)
         GIT_ASKPASS: 'echo',
@@ -83,8 +111,12 @@ export function runCommand(
       output += message
       onData?.(message)
     }
+    const stdout = secretRedactor(control.redact || [], emit)
+    const stderr = secretRedactor(control.redact || [], emit)
     const finish = (code: number) => {
       if (settled) return
+      stdout.end()
+      stderr.end()
       settled = true
       clearTimeout(timer)
       if (heartbeat) clearInterval(heartbeat)
@@ -108,15 +140,15 @@ export function runCommand(
     if (control.signal?.aborted) cancel()
 
     child.stdout.on('data', (data) => {
-      emit(data.toString())
+      stdout.write(data.toString())
     })
 
     child.stderr.on('data', (data) => {
-      emit(data.toString())
+      stderr.write(data.toString())
     })
 
     child.on('error', (error) => {
-      emit(`\n[error] ${error.message}\n`)
+      stderr.write(`\n[error] ${error.message}\n`)
       finish(1)
     })
 

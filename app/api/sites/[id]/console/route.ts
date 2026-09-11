@@ -12,11 +12,12 @@ import { projectRuntimeEnvironment } from '@/lib/runtimes'
 import { getProjectDatabaseEnv } from '@/lib/project-databases'
 import { getProjectDataServiceEnv } from '@/lib/data-services'
 import { acquireProjectOperation } from '@/lib/project-operation'
+import { prepareConsoleGit, consoleGitFailureHint } from '@/lib/project-console-git'
 
 export const dynamic = 'force-dynamic'
 type Context = { params: Promise<{ id: string }> }
 async function project(id: string) {
-  const { rows } = await query('select id,root_path,project_type,runtime_versions,port from projects where id=$1', [id])
+  const { rows } = await query('select id,root_path,project_type,runtime_versions,port,repo_url,github_connection_id from projects where id=$1', [id])
   if (!rows[0]) throw new ApiError('Application not found', 404)
   return rows[0]
 }
@@ -61,7 +62,8 @@ export async function POST(request: Request, context: Context) {
       return new Response(`Directory changed to ${workingDirectory}\n`, { headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'X-Console-Cwd': encodeURIComponent(workingDirectory) } })
     }
     release = await acquireProjectOperation(id)
-    const env = { ...await readProjectEnvironment(app.root_path, app.project_type), ...await getProjectDatabaseEnv(id), ...await getProjectDataServiceEnv(id), ...projectRuntimeEnvironment(app.runtime_versions), PORT: String(app.port), APP_PORT: String(app.port), FORCE_COLOR: '0', NO_COLOR: '1', NODE_ENV: 'development' }
+    const git = await prepareConsoleGit(command, { root_path: app.root_path, repo_url: app.repo_url, github_connection_id: app.github_connection_id })
+    const env = git ? git.env : { ...await readProjectEnvironment(app.root_path, app.project_type), ...await getProjectDatabaseEnv(id), ...await getProjectDataServiceEnv(id), ...projectRuntimeEnvironment(app.runtime_versions), PORT: String(app.port), APP_PORT: String(app.port), FORCE_COLOR: '0', NO_COLOR: '1', NODE_ENV: 'development' }
     await query(`insert into audit_logs(user_id,action,resource,details) values($1,'project.console',$2,$3)`, [user?.id, `project:${id}`, JSON.stringify({ executable: command.split(/\s+/)[0] })])
     const abort = new AbortController()
     const onAbort = () => abort.abort()
@@ -73,8 +75,12 @@ export async function POST(request: Request, context: Context) {
     const stream = new ReadableStream({
       start(controller) {
         const write = (text: string) => { try { controller.enqueue(encoder.encode(text)) } catch { /* Client disconnected. */ } }
-        void runCommand(prepareConsoleCommand(command), workingDirectory, 900000, write, env, false, { signal: abort.signal, heartbeatMs: 30000 })
-          .then(result => write(`\n[exit] Command finished with code ${result.code}\n`))
+        if (git?.authenticated) write('[git] Using the application’s saved GitHub connection\n')
+        void runCommand(git?.command || prepareConsoleCommand(command), workingDirectory, 900000, write, env, false, { signal: abort.signal, heartbeatMs: 30000, redact: git?.secrets })
+          .then(result => {
+            if (git && result.code !== 0) write(consoleGitFailureHint(result.output))
+            write(`\n[exit] Command finished with code ${result.code}\n`)
+          })
           .catch(() => write('\n[error] Could not run command\n'))
           .finally(async () => {
             request.signal.removeEventListener('abort', onAbort)
