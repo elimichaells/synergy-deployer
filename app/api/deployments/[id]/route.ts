@@ -11,7 +11,7 @@ export async function GET(_: Request, context: { params: Promise<{ id: string }>
 
     const { rows } = await query(
       `select d.id, d.project_id, d.user_id, d.status, d.branch, d.commit_sha, d.started_at, d.finished_at,
-              d.trigger, d.log, p.name as project_name, u.name as user_name
+              d.trigger, d.phase, d.security_status, d.log, p.name as project_name, u.name as user_name
        from deployments d
        join projects p on p.id = d.project_id
        left join users u on u.id = d.user_id

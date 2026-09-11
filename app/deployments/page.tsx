@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
+import { watchDeployment } from '@/lib/deployment-watch'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { AppShell } from '@/components/layout/app-shell'
@@ -56,7 +57,7 @@ export default function DeploymentsPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
-  const streamRef = useRef<EventSource | null>(null)
+  const streamRef = useRef<{ close(): void } | null>(null)
 
   const loadDeployments = useCallback(async (silent = false) => {
     if (!silent) setError(null)
@@ -91,42 +92,18 @@ export default function DeploymentsPage() {
 
   useEffect(() => () => streamRef.current?.close(), [])
 
-  const handleSelect = async (deployment: Deployment) => {
+  const handleSelect = (deployment: Deployment) => {
     streamRef.current?.close()
     streamRef.current = null
     setSelected(deployment)
     setLoadingLog(true)
     setLog('')
-    try {
-      const res = await fetch(`/api/deployments/${deployment.id}`)
-      if (!res.ok) return
-      const data = await res.json() as Deployment
-      setSelected(data)
+    streamRef.current = watchDeployment<Deployment>(deployment.id, data => {
+      setSelected(current => current?.id === data.id ? data : current)
       setLog(data.log || '')
-
-      if (data.status === 'running') {
-        const stream = new EventSource(`/api/deployments/${data.id}/stream`)
-        streamRef.current = stream
-        stream.onmessage = (event) => {
-          const update = JSON.parse(event.data) as { log?: string; status?: Deployment['status'] }
-          if (update.log !== undefined) setLog(update.log)
-          if (update.status && update.status !== 'running') {
-            setSelected((current) => current?.id === data.id ? { ...current, status: update.status! } : current)
-            setDeployments((current) => current.map((item) => item.id === data.id ? { ...item, status: update.status! } : item))
-            stream.close()
-            streamRef.current = null
-            void loadDeployments(true)
-          }
-        }
-        stream.onerror = () => {
-          stream.close()
-          streamRef.current = null
-          void loadDeployments(true)
-        }
-      }
-    } finally {
       setLoadingLog(false)
-    }
+      setDeployments(current => current.map(item => item.id === data.id ? { ...item, ...data } : item))
+    }, () => setLoadingLog(false))
   }
 
   const closeDetails = () => {
@@ -272,7 +249,7 @@ export default function DeploymentsPage() {
                       <span className="truncate text-sm font-semibold">{deployment.project_name}</span>
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 pl-4 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1"><GitBranch className="h-3 w-3" />{deployment.branch || 'main'}</span>
+                      <span className="flex items-center gap-1"><GitBranch className="h-3 w-3" />{deployment.branch || '—'}</span>
                       <span className="font-mono">{deployment.commit_sha?.slice(0, 7) || 'HEAD'}</span>
                       {deployment.trigger && <span className="capitalize">{deployment.trigger}</span>}
                     </div>
@@ -392,7 +369,7 @@ export default function DeploymentsPage() {
                   <div className="flex items-center gap-3 text-xs text-muted-foreground min-w-0">
                     <div className="flex items-center gap-1.5 text-foreground/80 font-medium bg-secondary/50 px-2 py-0.5 rounded">
                       <GitBranch className="h-3 w-3 opacity-70" />
-                      <span className="truncate max-w-[100px]">{deploy.branch || 'main'}</span>
+                      <span className="truncate max-w-[100px]">{deploy.branch || '—'}</span>
                     </div>
                     <span className="font-mono opacity-50">{deploy.commit_sha?.slice(0, 7) || 'HEAD'}</span>
                   </div>
@@ -437,7 +414,7 @@ export default function DeploymentsPage() {
                 </div>
                 <SheetTitle className="text-xl">{selected.project_name}</SheetTitle>
                 <SheetDescription className="flex items-center gap-4 text-xs mt-2">
-                  <span className="flex items-center gap-1.5"><GitBranch className="h-3.5 w-3.5" /> {selected.branch || 'main'}</span>
+                  <span className="flex items-center gap-1.5"><GitBranch className="h-3.5 w-3.5" /> {selected.branch || '—'}</span>
                   <span className="flex items-center gap-1.5"><GitCommit className="h-3.5 w-3.5" /> {selected.commit_sha?.slice(0, 7)}</span>
                   <span className="flex items-center gap-1.5"><Calendar className="h-3.5 w-3.5" /> {selected.finished_at ? new Date(selected.finished_at).toLocaleString() : formatElapsed(selected.started_at)}</span>
                 </SheetDescription>

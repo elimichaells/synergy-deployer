@@ -12,6 +12,28 @@ test('reuse is limited to frozen local installs without source-dependent hooks o
   assert.equal(cacheEligible('npm ci', { workspaces: ['web'] }, '{}'), false)
   assert.equal(cacheEligible('npm ci', {}, '{"packages":{"lib":{"resolved":"file:../lib"}}}'), false)
   assert.equal(cacheEligible('npm ci', {}, 'x'.repeat(MAX_DEPENDENCY_SNAPSHOT_LOCK_BYTES + 1)), false)
+  for (const name of ['next', '@angular/core', 'nuxt', '@sveltejs/kit', 'astro', 'vite']) {
+    assert.equal(cacheEligible('npm ci', { dependencies: { [name]: '1' } }, '{}'), false)
+    assert.equal(cacheEligible('npm ci', { devDependencies: { [name]: '1' } }, '{}'), false)
+  }
+})
+
+test('a frontend below the lockfile size limit bypasses even an existing dependency snapshot', async t => {
+  const base = await mkdtemp(path.join(os.tmpdir(), 'manager-frontend-cache-test-'))
+  t.after(async () => { assert.ok(base.startsWith(path.resolve(os.tmpdir()) + path.sep)); await rm(base, { recursive: true, force: true }) })
+  const root = path.join(base, 'candidate'), cacheRoot = path.join(base, 'cache')
+  await mkdir(root); await mkdir(cacheRoot)
+  await writeFile(path.join(root, 'package.json'), JSON.stringify({ dependencies: { next: '16.1.5' } }))
+  await writeFile(path.join(root, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3, packages: {} }))
+  await writeFile(path.join(cacheRoot, 'existing-marker'), 'preserve')
+  const messages: string[] = []; let installs = 0
+  const result = await installWithDependencyCache({ root, cacheRoot, command: 'npm ci --include=dev', env: {},
+    append: text => { messages.push(text) }, checkCancelled: () => {},
+    inspect: async () => { throw new Error('Frontend must not inspect or hash a snapshot') },
+    execute: async command => { installs++; assert.match(command, /--prefer-offline/); return { code: 0, output: '' } } })
+  assert.equal(result.code, 0); assert.equal(installs, 1)
+  assert.match(messages.join(''), /frontend toolchain/)
+  assert.equal(await readFile(path.join(cacheRoot, 'existing-marker'), 'utf8'), 'preserve')
 })
 
 test('large dependency trees use npm native cache without creating or reading a node_modules snapshot', async t => {

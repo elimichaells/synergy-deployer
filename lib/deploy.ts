@@ -337,8 +337,8 @@ async function createDeployment(project: DeployProject, options: DeployOptions) 
   const release = await acquireProjectOperation(project.id)
   try {
     const { rows } = await query<{ id: string }>(
-      "INSERT INTO deployments (project_id,user_id,status,trigger,started_at,phase) VALUES ($1,$2,'running',$3,now(),'prepare') RETURNING id",
-      [project.id, options.userId || null, options.trigger])
+      "INSERT INTO deployments (project_id,user_id,status,trigger,started_at,phase,branch) VALUES ($1,$2,'running',$3,now(),'prepare',$4) RETURNING id",
+      [project.id, options.userId || null, options.trigger, project.default_branch || 'main'])
     return rows[0].id
   } finally { await release() }
 }
@@ -383,8 +383,11 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
     }
   })().finally(() => { flushing = undefined })
   const append = async (chunk: string) => { log += redact(chunk); await flush() }
+  let lastStage = { phase: 'prepare', startedAt: Date.now() }
   const stage = async (phase: string) => {
     check()
+    await append(`[timing] ${lastStage.phase}: ${Math.round((Date.now() - lastStage.startedAt) / 1000)}s\n`)
+    lastStage = { phase, startedAt: Date.now() }
     await query('UPDATE deployments SET phase=$1 WHERE id=$2', [phase, deploymentId])
     await append('[stage] ' + phase + '\n')
   }
@@ -465,6 +468,8 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
         if (merged.code) { await git('git merge --abort'); throw new Error('Promotion merge conflict; resolve the branches before retrying') }
       }
     }
+    const sha = (await git('git rev-parse HEAD')).output.trim()
+    await query('UPDATE deployments SET commit_sha=$1,branch=$2 WHERE id=$3', [sha, branch, deploymentId])
     const candidateProject = { ...project, root_path: root }
     await prepareDeploymentProject(candidateProject, append)
     Object.assign(project, { project_type: candidateProject.project_type, install_cmd: candidateProject.install_cmd,
@@ -481,6 +486,17 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
       runDeploymentCommand(command, cwd, env, chunk => { void append(chunk).catch(() => {}) }, check)
     const inspect = (command: string) => runDeploymentCommand(command, root, { ...projectEnv, NODE_ENV: 'development' },
       () => {}, check, 0)
+    // Reject vulnerable committed inputs before installation or builds. The
+    // final candidate is audited again because scripts can change dependencies.
+    if (existsSync(path.join(root, 'package.json')) && (existsSync(path.join(root, 'package-lock.json')) || existsSync(path.join(root, 'npm-shrinkwrap.json')))) {
+      await stage('security')
+      await append('[security] Checking committed dependencies before installation\n')
+      const audit = await inspect('npm audit --json --package-lock-only --omit=dev --audit-level=high')
+      const findings = formatAuditFindings(audit.output)
+      if (findings) await append(findings)
+      assertAuditPassed(audit, 'production dependencies')
+      await append('[security] Committed dependency audit passed; final candidate will be checked again\n')
+    }
     const prepared = async (command: string) => {
       const run = (cmd: string) => runPreparedDeploymentCommand(cmd, root,
         value => execute(value, { ...projectEnv, NODE_ENV: 'development' }), append, check)
@@ -539,8 +555,6 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
     if (initialFileEnv !== JSON.stringify(loadProjectEnvFile(project.root_path, project.project_type))) throw new Error('Application environment changed during build; retry with the current configuration')
     if (initialFileEnv !== '{}' && initialFileEnv !== JSON.stringify(loadProjectEnvFile(root, project.project_type))) throw new Error('Deployment commands changed private environment files. Apply environment changes in Manager before rebuilding')
     if (options.mergeBranch) await loggedGit(`git push "${repoUrl}" "${branch}"`)
-    const sha = (await git('git rev-parse HEAD')).output.trim()
-    await query('UPDATE deployments SET commit_sha=$1,branch=$2 WHERE id=$3', [sha, branch, deploymentId])
 
     // Prove that the built candidate can actually boot and answer HTTP before
     // changing the live directory or stopping the current process.

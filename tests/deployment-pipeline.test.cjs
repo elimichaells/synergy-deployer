@@ -38,7 +38,7 @@ async function pipeline(t, failure, cacheHit = false) {
   await fs.writeFile(path.join(candidate, '.env'), 'APPLICATION_MARKER=fixture');
   await fs.writeFile(path.join(candidate, 'package.json'), '{}');
   await fs.writeFile(path.join(candidate, 'package-lock.json'), '{}');
-  const calls = []; let status = 'online'; let seq = 0; let previewName;
+  const calls = []; let status = 'online'; let seq = 0; let previewName; let audits = 0;
   const project = { id: 'fixture-project', name: 'Fixture', root_path: root, project_type: 'angular', repo_url: 'https://github.com/example/fixture',
     default_branch: 'main', install_cmd: null, build_cmd: 'npm run build', start_cmd: null, pm2_name: 'fixture-app', port: 3217 };
   const query = async (sql, values) => {
@@ -75,7 +75,11 @@ async function pipeline(t, failure, cacheHit = false) {
     '@/lib/deployment-health': { waitForDeploymentHealth: async () => { const previousChecks = calls.filter(call => call.kind === 'health').length; calls.push({ kind: 'health' }); return { healthy: failure !== 'health' || previousChecks > 0, reason: 'fixture health failed' }; } },
     '@/lib/deployment-command': { runDeploymentCommand: async (cmd, cwd, env) => {
       calls.push({ kind: 'build-command', cmd, cwd, env });
-      if (cmd.startsWith('npm audit')) return { code: failure === 'audit' ? 1 : 0, output: JSON.stringify({ vulnerabilities: failure === 'audit' ? { 'fixture-package': { severity: 'high', range: '<2.0.0', via: [{ title: 'Fixture vulnerability', url: 'https://github.com/advisories/GHSA-fixture' }], fixAvailable: true } } : {}, metadata: { vulnerabilities: { low: 0, moderate: 0, high: failure === 'audit' ? 1 : 0, critical: 0 } } }) };
+      if (cmd.startsWith('npm audit')) {
+        audits++;
+        const blocked = failure === 'audit' || (failure === 'final-audit' && audits === 2);
+        return { code: blocked ? 1 : 0, output: JSON.stringify({ vulnerabilities: blocked ? { 'fixture-package': { severity: 'high', range: '<2.0.0', via: [{ title: 'Fixture vulnerability', url: 'https://github.com/advisories/GHSA-fixture' }], fixAvailable: true } } : {}, metadata: { vulnerabilities: { low: 0, moderate: 0, high: blocked ? 1 : 0, critical: 0 } } }) };
+      }
       return { code: (failure === 'install' && cmd.startsWith('npm ci')) || (failure === 'build' && cmd === 'npm run build') ? 1 : 0, output: '' };
     } },
     '@/lib/deployment-go': {}, '@/lib/deployment-git': { assertCleanDeploymentCheckout: async () => {}, syncDeploymentCheckout: async () => {} },
@@ -109,7 +113,7 @@ async function pipeline(t, failure, cacheHit = false) {
   return { calls, result, root, candidate };
 }
 
-for (const failure of ['install', 'build', 'audit']) test(failure + ' failure never stops or replaces the current application', async t => {
+for (const failure of ['install', 'build', 'audit', 'final-audit']) test(failure + ' failure never stops or replaces the current application', async t => {
   const { calls, result } = await pipeline(t, failure);
   assert.equal(result.status, 'failed');
   assert.equal(calls.some(call => call.kind === 'activate'), false);
@@ -123,11 +127,26 @@ for (const failure of ['install', 'build', 'audit']) test(failure + ' failure ne
   }
 });
 
+test('known vulnerabilities fail before installation or building, with branch and commit already recorded', async t => {
+  const { calls, result } = await pipeline(t, 'audit');
+  assert.equal(result.status, 'failed');
+  assert.ok(!calls.some(call => call.kind === 'install' || call.kind === 'cache-hit'));
+  assert.ok(!calls.some(call => call.kind === 'build-command' && call.cmd === 'npm run build'));
+  const admission = calls.find(call => call.kind === 'query' && call.sql.includes('INSERT INTO deployments'));
+  assert.equal(admission.values[3], 'main');
+  const commitIndex = calls.findIndex(call => call.kind === 'query' && call.sql.includes('SET commit_sha'));
+  const auditIndex = calls.findIndex(call => call.kind === 'build-command' && call.cmd.startsWith('npm audit'));
+  assert.ok(commitIndex >= 0 && commitIndex < auditIndex);
+});
+
 test('cached deployments still audit, build separately, then activate on the assigned port', async t => {
   const { calls, result, candidate, root } = await pipeline(t, undefined, true);
   assert.equal(result.status, 'success');
   assert.equal(calls.some(call => call.kind === 'terminal-recovery'), false);
   const auditIndex = calls.findIndex(call => call.kind === 'build-command' && call.cmd.startsWith('npm audit'));
+  const audits = calls.map((call, index) => call.kind === 'build-command' && call.cmd.startsWith('npm audit') ? index : -1).filter(index => index >= 0);
+  const buildIndex = calls.findIndex(call => call.kind === 'build-command' && call.cmd === 'npm run build');
+  assert.equal(audits.length, 2); assert.ok(audits[0] < buildIndex && audits[1] > buildIndex);
   const activateIndex = calls.findIndex(call => call.kind === 'activate');
   assert.ok(auditIndex > 0 && activateIndex > auditIndex);
   assert.ok(calls[auditIndex].cmd.includes('--omit=dev'));

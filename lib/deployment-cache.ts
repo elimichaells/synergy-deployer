@@ -12,8 +12,14 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 // where they are useful, and let larger frontends use npm's native cache.
 export const MAX_DEPENDENCY_SNAPSHOT_LOCK_BYTES = 256 * 1024
 
+function hasFrontendToolchain(manifest: Record<string, unknown>) {
+  const packages = { ...(manifest.dependencies as object), ...(manifest.devDependencies as object) }
+  // Native compilers can make the installed tree huge despite a small lockfile.
+  return ['next', '@angular/core', 'nuxt', '@sveltejs/kit', 'astro', 'vite'].some(name => name in packages)
+}
+
 export function cacheEligible(command: string, manifest: Record<string, unknown>, lock: string) {
-  if (localNpmInstall(command) !== 'ci' || manifest.workspaces || Buffer.byteLength(lock, 'utf8') > MAX_DEPENDENCY_SNAPSHOT_LOCK_BYTES) return false
+  if (localNpmInstall(command) !== 'ci' || manifest.workspaces || hasFrontendToolchain(manifest) || Buffer.byteLength(lock, 'utf8') > MAX_DEPENDENCY_SNAPSHOT_LOCK_BYTES) return false
   const scripts = manifest.scripts as Record<string, string> | undefined
   if (['preinstall', 'install', 'postinstall', 'prepare', 'prepublish', 'preprepare', 'postprepare'].some(name => scripts?.[name])) return false
   // Workspace/file dependencies and root lifecycle hooks can depend on source outside the lockfile.
@@ -70,7 +76,9 @@ export async function installWithDependencyCache(options: {
   const lock = await maybeRead(path.join(root, 'npm-shrinkwrap.json')) ?? await maybeRead(path.join(root, 'package-lock.json'))
   const installCommand = localNpmInstall(command) ? `${command} --prefer-offline --no-audit --no-fund` : command
   if (!manifest || !lock || !cacheEligible(command, JSON.parse(manifest), lock)) {
-    const reason = lock && Buffer.byteLength(lock, 'utf8') > MAX_DEPENDENCY_SNAPSHOT_LOCK_BYTES
+    const reason = manifest && hasFrontendToolchain(JSON.parse(manifest))
+      ? 'frontend toolchain; using npm’s local package cache without copying and hashing node_modules snapshots'
+      : lock && Buffer.byteLength(lock, 'utf8') > MAX_DEPENDENCY_SNAPSHOT_LOCK_BYTES
       ? 'large dependency tree; using npm ci with the local npm package cache instead of copying node_modules'
       : 'no reusable frozen dependency snapshot for these settings'
     await append(`[dependencies] Clean install; ${reason}\n`)
@@ -95,6 +103,7 @@ export async function installWithDependencyCache(options: {
       if (receipt.key !== key || receipt.digest !== await dependencyTreeDigest(cached, checkCancelled)) throw new Error('Cache integrity mismatch')
       checkCancelled()
       // Candidate-local copy only. Builds never mutate a shared or live dependency tree.
+      await append('[dependencies] Restoring and verifying the dependency snapshot\n')
       if (await maybeExists(dependencies)) throw new Error('Candidate dependencies already exist')
       await cp(cached, dependencies, { recursive: true, dereference: false, verbatimSymlinks: true })
       if (receipt.digest !== await dependencyTreeDigest(dependencies, checkCancelled)) throw new Error('Restored dependency tree failed verification')
@@ -117,6 +126,7 @@ export async function installWithDependencyCache(options: {
   await mkdir(cacheRoot, { recursive: true })
   const temporary = path.join(cacheRoot, '.pending-' + randomUUID())
   try {
+    await append('[dependencies] Saving and verifying the dependency snapshot\n')
     await mkdir(temporary)
     const snapshot = path.join(temporary, 'node_modules')
     await cp(dependencies, snapshot, { recursive: true, dereference: false, verbatimSymlinks: true })

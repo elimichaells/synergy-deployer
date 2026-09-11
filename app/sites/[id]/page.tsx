@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
+import { watchDeployment } from '@/lib/deployment-watch'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import {
   Plus,
@@ -76,6 +77,7 @@ interface GitHubConnectionOption {
 }
 
 interface Deployment {
+  log?: string | null
   is_active?: boolean
   phase?: string
   security_status?: string
@@ -182,7 +184,7 @@ export default function SitePage() {
   const [deploymentLog, setDeploymentLog] = useState('')
   const [loadingDeploymentLog, setLoadingDeploymentLog] = useState(false)
   const deployLogRef = useRef<HTMLDivElement>(null)
-  const deployStreamRef = useRef<EventSource | null>(null)
+  const deployStreamRef = useRef<{ close(): void } | null>(null)
   const [editing, setEditing] = useState(false)
   const [savingProject, setSavingProject] = useState(false)
   const [savingAutoDeploy, setSavingAutoDeploy] = useState(false)
@@ -712,56 +714,18 @@ export default function SitePage() {
     }
   }, [])
 
-  const handleSelectDeployment = useCallback(async (deployment: Deployment) => {
+  const handleSelectDeployment = useCallback((deployment: Deployment) => {
     closeDeployStream()
     setSelectedDeployment(deployment)
     setDeploymentLog('')
     setLoadingDeploymentLog(true)
 
-    if (deployment.status === 'running') {
-      // Stream live logs via SSE
-      const es = new EventSource(`/api/deployments/${deployment.id}/stream`)
-      deployStreamRef.current = es
-      const depId = deployment.id
-      es.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data)
-          setDeploymentLog(data.log || '')
-          setLoadingDeploymentLog(false)
-          if (data.status && data.status !== 'running') {
-            es.close()
-            deployStreamRef.current = null
-            // Update the selected deployment status in-place
-            setSelectedDeployment((prev) =>
-              prev?.id === depId ? { ...prev, status: data.status } : prev
-            )
-            // Update the deployment in the list so badge updates immediately
-            setDeployments((prev) =>
-              prev.map((d) => d.id === depId ? { ...d, status: data.status } : d)
-            )
-          }
-        } catch {
-          // ignore parse errors
-        }
-      }
-      es.onerror = () => {
-        es.close()
-        deployStreamRef.current = null
-        setLoadingDeploymentLog(false)
-      }
-    } else {
-      // One-shot fetch for completed deployments
-      try {
-        const res = await fetch(`/api/deployments/${deployment.id}`)
-        if (!res.ok) return
-        const data = await res.json()
-        setDeploymentLog(data.log || '')
-      } catch {
-        // ignore
-      } finally {
-        setLoadingDeploymentLog(false)
-      }
-    }
+    deployStreamRef.current = watchDeployment<Deployment>(deployment.id, data => {
+      setDeploymentLog(data.log || '')
+      setLoadingDeploymentLog(false)
+      setSelectedDeployment(current => current?.id === data.id ? data : current)
+      setDeployments(current => current.map(item => item.id === data.id ? { ...item, ...data } : item))
+    }, () => setLoadingDeploymentLog(false))
   }, [closeDeployStream])
 
   // Cleanup stream on unmount
@@ -1419,7 +1383,7 @@ export default function SitePage() {
 
                 {/* Selected Deployment Detail Overlay/Section could go here, or remain modal-like logic */}
                 {/* Sheet for Deployment Details */}
-                <Sheet open={!!selectedDeployment} onOpenChange={(open) => !open && setSelectedDeployment(null)}>
+                <Sheet open={!!selectedDeployment} onOpenChange={(open) => { if (!open) { closeDeployStream(); setSelectedDeployment(null) } }}>
                   <SheetContent side="right" className="w-[85vw] sm:w-[50vw] sm:max-w-none bg-background/95 backdrop-blur-2xl border-l border-white/[0.08] text-foreground p-0 flex flex-col shadow-2xl">
                     <SheetHeader className="px-6 py-5 border-b border-white/[0.08] bg-black/30">
                       <div className="flex items-center justify-between pr-8">
@@ -1450,7 +1414,7 @@ export default function SitePage() {
                         </div>
                         <div className="space-y-1">
                           <span className="text-muted-foreground font-medium uppercase tracking-wider text-[10px]">Branch</span>
-                          <div className="font-mono text-foreground">{selectedDeployment?.branch || 'main'}</div>
+                          <div className="font-mono text-foreground">{selectedDeployment?.branch || '—'}</div>
                         </div>
                         <div className="space-y-1">
                           <span className="text-muted-foreground font-medium uppercase tracking-wider text-[10px]">Started</span>
@@ -1458,7 +1422,7 @@ export default function SitePage() {
                         </div>
                         <div className="space-y-1">
                           <span className="text-muted-foreground font-medium uppercase tracking-wider text-[10px]">Finished</span>
-                          <div className="text-foreground">{selectedDeployment?.finished_at ? new Date(selectedDeployment?.finished_at).toLocaleString() : 'Running...'}</div>
+                          <div className="text-foreground">{selectedDeployment?.finished_at ? new Date(selectedDeployment?.finished_at).toLocaleString() : ['running', 'queued'].includes(selectedDeployment?.status || '') ? 'Running...' : '—'}</div>
                         </div>
                       </div>
 

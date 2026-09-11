@@ -22,6 +22,14 @@ test('real Windows terminal lock: closes only the fixture holding the directory,
     const shell = spawn(path.join(process.env.SystemRoot, 'System32', 'cmd.exe'), ['/d', '/q'], { cwd, windowsHide: true, stdio: 'pipe' });
     shells.push(shell);
     await new Promise((resolve, reject) => { shell.once('spawn', resolve); shell.once('error', reject); });
+    // A spawned cmd.exe has not necessarily acquired its current-directory
+    // handle yet. Wait for it to process a command before asserting the lock.
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Fixture shell did not become ready')), 5000);
+      const ready = chunk => { if (chunk.toString().includes('MANAGER_FIXTURE_READY')) { clearTimeout(timeout); shell.stdout.off('data', ready); resolve(); } };
+      shell.stdout.on('data', ready);
+      shell.stdin.write('echo MANAGER_FIXTURE_READY\r\n');
+    });
     return shell;
   };
   try {
