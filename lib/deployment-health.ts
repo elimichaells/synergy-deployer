@@ -48,7 +48,9 @@ export async function waitForDeploymentHealth(
       // Probe only the headers, without following redirects outside the application.
       await response.body?.cancel()
       options.checkCancelled?.()
-      if (dependencies.now() < deadline && (response.ok || response.status === 404 || response.status === 302)) {
+      // Frameworks use temporary/permanent redirects for login and HTTPS routing.
+      const redirects = [301, 302, 303, 307, 308]
+      if (dependencies.now() < deadline && (response.ok || response.status === 404 || redirects.includes(response.status))) {
         return { healthy: true }
       }
       lastFailure = `HTTP ${response.status}`
