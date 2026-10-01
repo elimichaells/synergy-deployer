@@ -29,7 +29,7 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
 
   const entries = useMemo<Entry[]>(() => {
     const pages = [...navItems, ...infrastructureItems].map(item => ({ id: `page-${item.href}`, label: item.label, hint: item.description, href: item.href, icon: <item.icon className="h-4 w-4" />, group: 'Navigate' }))
-    const actions = [{ id: 'new-app', label: 'New project', hint: 'Import a repository', href: '/sites/new', icon: <Plus className="h-4 w-4" />, group: 'Actions' }]
+    const actions = [{ id: 'new-app', label: 'New app', hint: 'Import a repository', href: '/sites/new', icon: <Plus className="h-4 w-4" />, group: 'Actions' }]
     const groups = (stacks || []).map(project => ({ id: `project-${project.id}`, label: project.name, hint: `${project.apps.filter(app => app.environment === 'production').length} apps`, href: `/projects/${project.id}`, icon: <Layers className="h-4 w-4" />, group: 'Projects' }))
     const apps = (projects || []).map(project => ({ id: `app-${project.id}`, label: project.name, hint: project.environment || 'application', href: `/sites/${project.id}`, icon: <FrameworkLogo type={project.project_type} className="h-4 w-4" />, group: 'Applications' }))
     const q = query.trim().toLowerCase()

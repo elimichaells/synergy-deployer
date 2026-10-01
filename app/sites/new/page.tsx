@@ -107,7 +107,7 @@ export default function NewSitePage() {
 
   if (configuring) {
     return (
-      <AppShell title="Configure your application" subtitle="A few details, then Synergy clones, detects and sets it up." back={{ href: '/sites', label: 'Applications' }}>
+      <AppShell title="Configure your app" subtitle="A few details, then Synergy clones, detects and sets it up." back={{ href: '/projects', label: 'Projects' }}>
         <div className="mx-auto max-w-3xl">
           <button type="button" onClick={() => setConfiguring(null)} className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" />Choose a different repository</button>
           <form onSubmit={create} className="overflow-hidden rounded-xl border border-border bg-card">
@@ -137,7 +137,7 @@ export default function NewSitePage() {
               </fieldset>
 
               <fieldset className="space-y-3">
-                <legend className="mb-1 text-sm font-medium">Project</legend>
+                <legend className="mb-1 text-sm font-medium">Which project is this app part of?</legend>
                 <p className="text-xs text-muted-foreground">A project groups the apps that make up one product (frontend, backend API, workers) so they can share databases and a domain.</p>
                 <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Project">
                   <ChoiceCard selected={form.stack === 'new'} onSelect={() => setForm({ ...form, stack: 'new', componentRole: 'application' })} icon={<Plus className="h-4 w-4" />} title="New project" description="Start a project with this app. Add a backend or database to it later." />
@@ -187,7 +187,7 @@ export default function NewSitePage() {
   }
 
   return (
-    <AppShell title="Let's ship something new" subtitle="Import a Git repository. Synergy builds it, checks its health and serves it from this server." back={{ href: '/sites', label: 'Applications' }}>
+    <AppShell title="Add a new app" subtitle="Import a Git repository. Synergy builds it, checks its health and serves it from this server." back={{ href: '/projects', label: 'Projects' }}>
       {error && <div role="alert" className="notice-error">{error}</div>}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(300px,1fr)]">
         <section className="overflow-hidden rounded-xl border border-border bg-card" aria-label="Import Git repository">

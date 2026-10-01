@@ -99,7 +99,7 @@ export default function Dashboard() {
       user={{ name: user?.name, role: user?.role }}
       actions={<>
         <Button variant="outline" size="sm" onClick={() => void refresh()}><RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', loading && 'animate-spin')} />Refresh</Button>
-        <Button asChild size="sm"><Link href="/sites/new"><Plus className="mr-1.5 h-4 w-4" />New project</Link></Button>
+        <Button asChild size="sm"><Link href="/sites/new"><Plus className="mr-1.5 h-4 w-4" />New app</Link></Button>
       </>}
     >
       {error && <div role="alert" className="notice-error">{error}</div>}

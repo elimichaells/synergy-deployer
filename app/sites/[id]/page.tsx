@@ -434,7 +434,7 @@ export default function SitePage() {
       const res = await fetch(`/api/sites/${siteId}`, { method: 'DELETE' })
       const body = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(body.error || 'Application could not be removed')
-      router.push('/sites')
+      router.push('/projects?view=apps')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Application could not be removed')
       setDeleting(false)
@@ -713,7 +713,7 @@ export default function SitePage() {
 
   if (loading) {
     return (
-      <AppShell title="Loading application…" back={{ href: '/sites', label: 'Applications' }}>
+      <AppShell title="Loading application…" back={{ href: '/projects?view=apps', label: 'Projects' }}>
         <div className="space-y-4">
           <div className="h-72 animate-pulse rounded-xl border border-border bg-card" />
           <div className="h-48 animate-pulse rounded-xl border border-border bg-card" />
@@ -724,7 +724,7 @@ export default function SitePage() {
 
   if (!project) {
     return (
-      <AppShell title="Application not found" back={{ href: '/sites', label: 'Applications' }}>
+      <AppShell title="Application not found" back={{ href: '/projects?view=apps', label: 'Projects' }}>
         <div className="rounded-xl border border-dashed border-border py-16 text-center text-sm text-muted-foreground">{error || 'This application does not exist or was removed.'}</div>
       </AppShell>
     )
@@ -747,13 +747,21 @@ export default function SitePage() {
   const sameAsProduction = !!deployments[0]?.commit_sha && deployments[0].commit_sha === productionDeployment?.commit_sha
   const inputClass = 'control-input'
 
+  const runtimeSwitch = (
+    <div className="mb-4 flex h-8 w-fit items-center rounded-md border border-border p-0.5" role="group" aria-label="Runtime view">
+      {(['logs', 'console'] as const).map(value => (
+        <button key={value} type="button" onClick={() => changeTab(value)} aria-pressed={activeTab === value} className={cn('h-full rounded-[5px] px-3 text-xs', activeTab === value ? 'bg-white/[0.09] text-foreground' : 'text-muted-foreground hover:text-foreground')}>{value === 'logs' ? 'Logs' : 'Console'}</button>
+      ))}
+    </div>
+  )
+
   const tabs = (
     <TabsList className="scrollbar-none h-auto min-h-0 w-full justify-start gap-0 overflow-x-auto border-0 bg-transparent p-0">
-      {(showSetupTab ? ['setup'] : []).concat(['overview', 'deployments', 'storage', 'domains', 'environment', 'logs', 'console', 'settings']).map(value => (
-        <TabsTrigger key={value} value={value} className="group relative min-h-0 rounded-none border-0 px-1 pb-3 pt-1 text-[13px] font-normal text-muted-foreground data-[state=active]:text-foreground">
+      {(showSetupTab ? ['setup'] : []).concat(['overview', 'deployments', 'storage', 'domains', 'environment', 'logs', 'settings']).map(value => (
+        <TabsTrigger key={value} value={value === 'logs' && activeTab === 'console' ? 'console' : value} className="group relative min-h-0 rounded-none border-0 px-1 pb-3 pt-1 text-[13px] font-normal text-muted-foreground data-[state=active]:text-foreground">
           <span className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 transition-colors group-hover:bg-white/[0.06]">
             {value === 'setup' && <span className="h-1.5 w-1.5 rounded-full spectrum-bar" />}
-            {{ setup: 'Setup', overview: 'Overview', deployments: 'Deployments', storage: 'Storage', domains: 'Domains', environment: 'Environment', logs: 'Logs', console: 'Console', settings: 'Settings' }[value]}
+            {{ setup: 'Setup', overview: 'Overview', deployments: 'Deployments', storage: 'Storage', domains: 'Domains', environment: 'Environment', logs: 'Runtime', settings: 'Settings' }[value]}
           </span>
           <span className="absolute inset-x-2 bottom-0 hidden h-[2px] rounded-full bg-foreground group-data-[state=active]:block" aria-hidden="true" />
         </TabsTrigger>
@@ -961,6 +969,7 @@ export default function SitePage() {
         </TabsContent>
 
         <TabsContent value="logs" className="mt-0">
+          {runtimeSwitch}
           <Section
             title="Runtime logs"
             description={<>Live output from the running process{logsPath && <> · <span className="font-mono text-xs">{logsPath}</span></>}</>}
@@ -978,6 +987,7 @@ export default function SitePage() {
         </TabsContent>
 
         <TabsContent value="console" className="mt-0 space-y-4">
+          {runtimeSwitch}
           <Section title="Console" description={<>Run commands inside <span className="break-all font-mono text-xs">{project.root_path}</span> with this app&apos;s runtime versions and environment.</>}>
             {(consoleCommands.length > 0 || Object.keys(npmScripts).length > 0) && (
               <div className="mb-4 flex flex-wrap gap-2">

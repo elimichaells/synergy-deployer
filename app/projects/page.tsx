@@ -9,6 +9,7 @@ import { FrameworkAvatar } from '@/components/synergy/framework-logo'
 import { StatusDot, type DeployStatus } from '@/components/synergy/status'
 import { roleLabels } from '@/components/app/section'
 import { roleIcons } from '@/components/app/stack-panel'
+import { AppsView } from '@/components/projects/apps-view'
 import { relativeTime } from '@/lib/deployment-stages'
 import { cn } from '@/lib/utils'
 
@@ -20,6 +21,8 @@ export default function ProjectsPage() {
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
   const [now, setNow] = useState(() => Date.now())
+  const [view, setView] = useState<'projects' | 'apps'>('projects')
+  const [appsSummary, setAppsSummary] = useState('Loading…')
 
   const load = async () => {
     setError('')
@@ -32,6 +35,13 @@ export default function ProjectsPage() {
     } catch (err) { setError((err as Error).message); setProjects(current => current || []) }
   }
   useEffect(() => { void load() }, [])
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('view') === 'apps') setView('apps')
+  }, [])
+  const changeView = (next: 'projects' | 'apps') => {
+    setView(next)
+    window.history.replaceState(null, '', next === 'apps' ? '?view=apps' : '/projects')
+  }
 
   const visible = useMemo(() => (projects || []).filter(project => {
     const q = search.trim().toLowerCase()
@@ -43,21 +53,24 @@ export default function ProjectsPage() {
   return (
     <AppShell
       title="Projects"
-      subtitle={projects ? `${projects.length} projects · ${appCount} apps` : 'Everything you ship, grouped by product.'}
+      subtitle={view === 'apps' ? appsSummary : projects ? `${projects.length} projects · ${appCount} apps` : 'Everything you ship, grouped by product.'}
       actions={<>
-        <Button variant="outline" size="sm" onClick={() => void load()}><RefreshCw className="mr-1.5 h-3.5 w-3.5" />Refresh</Button>
-        <Button asChild size="sm"><Link href="/sites/new"><Plus className="mr-1.5 h-4 w-4" />New project</Link></Button>
+        {view === 'projects' && <Button variant="outline" size="sm" onClick={() => void load()}><RefreshCw className="mr-1.5 h-3.5 w-3.5" />Refresh</Button>}
+        <Button asChild size="sm"><Link href="/sites/new"><Plus className="mr-1.5 h-4 w-4" />New app</Link></Button>
       </>}
     >
       {error && <div role="alert" className="notice-error">{error}</div>}
+      <div className="mb-5 flex h-9 w-fit items-center rounded-md border border-border p-0.5" role="group" aria-label="View">
+        {([['projects', 'Projects', LayoutGrid], ['apps', 'Apps', List]] as const).map(([value, label, Icon]) => (
+          <button key={value} type="button" onClick={() => changeView(value)} aria-pressed={view === value} className={cn('flex h-full items-center gap-1.5 rounded-[5px] px-3 text-[13px]', view === value ? 'bg-white/[0.09]' : 'text-muted-foreground hover:text-foreground')}><Icon className="h-3.5 w-3.5" />{label}</button>
+        ))}
+      </div>
+
+      {view === 'apps' ? <AppsView onSummary={setAppsSummary} /> : <>
       <div className="mb-6 flex flex-wrap items-center gap-2">
         <div className="relative min-w-[220px] flex-1">
           <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
           <input aria-label="Search projects" className="control-input pl-9" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search projects, apps or domains…" />
-        </div>
-        <div className="flex h-9 items-center rounded-md border border-border p-0.5" role="group" aria-label="View">
-          <span className="flex h-full items-center gap-1.5 rounded-[5px] bg-white/[0.09] px-3 text-[13px]"><LayoutGrid className="h-3.5 w-3.5" />Projects</span>
-          <Link href="/sites" className="flex h-full items-center gap-1.5 rounded-[5px] px-3 text-[13px] text-muted-foreground hover:text-foreground"><List className="h-3.5 w-3.5" />All apps</Link>
         </div>
       </div>
 
@@ -66,9 +79,9 @@ export default function ProjectsPage() {
       ) : visible.length === 0 ? (
         <div className="flex flex-col items-center rounded-xl border border-dashed border-border px-6 py-20 text-center">
           <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-full border border-border"><Boxes className="h-5 w-5 text-muted-foreground" /></span>
-          <h2 className="text-base font-medium">{projects.length ? 'No matching projects' : 'Create your first project'}</h2>
+          <h2 className="text-base font-medium">{projects.length ? 'No matching projects' : 'Add your first app'}</h2>
           <p className="mt-1 max-w-sm text-sm text-muted-foreground">{projects.length ? 'Try a different search.' : 'Import a repository. Add its backend, database and domain to the same project as you go.'}</p>
-          {!projects.length && <Button asChild size="sm" className="mt-5"><Link href="/sites/new"><Plus className="mr-1.5 h-4 w-4" />New project</Link></Button>}
+          {!projects.length && <Button asChild size="sm" className="mt-5"><Link href="/sites/new"><Plus className="mr-1.5 h-4 w-4" />New app</Link></Button>}
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -113,6 +126,7 @@ export default function ProjectsPage() {
           })}
         </div>
       )}
+      </>}
     </AppShell>
   )
 }

@@ -132,7 +132,7 @@ export default function DeploymentsPage() {
             <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-full border border-border"><Rocket className="h-5 w-5 text-muted-foreground" /></span>
             <p className="text-sm font-medium">{deployments.length ? 'No deployments match these filters' : 'No deployments yet'}</p>
             <p className="mt-1 text-sm text-muted-foreground">{deployments.length ? 'Try a different search or status.' : 'Deploy an application to see its pipeline here.'}</p>
-            {!deployments.length && <Button asChild size="sm" className="mt-5"><Link href="/sites">Go to applications</Link></Button>}
+            {!deployments.length && <Button asChild size="sm" className="mt-5"><Link href="/projects">Go to projects</Link></Button>}
           </div>
         ) : (
           <div className="divide-y divide-border">
