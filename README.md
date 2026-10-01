@@ -126,6 +126,18 @@ verifies the new login, backs up and rewrites the apps' env files, and restarts
 each app with a health check. If any app does not come back healthy, the env
 files, ownership and user are all put back.
 
+### Build output is not a local edit (2.8.2)
+
+A deployment's own install or build can rewrite committed files (`npm install`
+rewrites `package-lock.json`; some builds regenerate committed bundles), which
+used to make every later deployment stop with "Local source changes detected".
+Each deployment now records the committed files its commands changed. The next
+one resets exactly those files in the candidate and lets the build regenerate
+them. For releases older than the record, a file counts only if it was last
+written during the last successful deployment, or is a lockfile that changed
+without its `package.json`; a copy is kept in the release folder. Real edits,
+renames and staged files still stop the deployment.
+
 ### Warm builds (2.8.1)
 
 Each deployment now starts its build from a copy of the current release's
