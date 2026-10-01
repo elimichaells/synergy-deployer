@@ -126,6 +126,14 @@ verifies the new login, backs up and rewrites the apps' env files, and restarts
 each app with a health check. If any app does not come back healthy, the env
 files, ownership and user are all put back.
 
+### Line endings are not a local edit (2.8.3)
+
+A file whose working copy has Windows line endings while the commit has Unix
+ones can look clean in the live checkout (Git trusts cached file times) and
+modified in the freshly copied candidate. The candidate is now inspected again
+after the copy, and a file that differs from the commit only in line endings
+is reset there, with a copy kept, instead of stopping the deployment.
+
 ### Build output is not a local edit (2.8.2)
 
 A deployment's own install or build can rewrite committed files (`npm install`
