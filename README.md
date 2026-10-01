@@ -126,6 +126,15 @@ verifies the new login, backs up and rewrites the apps' env files, and restarts
 each app with a health check. If any app does not come back healthy, the env
 files, ownership and user are all put back.
 
+### Fixes and installer options (2.4.1)
+
+Deployments no longer fail with "bad object" when a checkout holds local-only
+Git refs (such as `refs/codex/*`): they are not copied into release candidates.
+The installer can add Python and Redis (Memurai, loopback only, development
+licence). Settings gains member management (add, role, enable/disable), password
+change, and removes folder fields that had no effect; sessions now honour a
+member's current role and status.
+
 Upgrade an existing server by rebuilding its checkout in place (`npm run
 build`, then `pm2 restart manager`). The setup executable is for new servers:
 it generates new secrets and would make existing encrypted credentials
