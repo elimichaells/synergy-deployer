@@ -229,6 +229,7 @@
                                     <CheckBox x:Name="GoCheckBox" IsChecked="True" Content="Go" />
                                     <CheckBox x:Name="PhpCheckBox" IsChecked="True" Content="PHP" />
                                     <CheckBox x:Name="ComposerCheckBox" IsChecked="True" Content="Composer" />
+                                    <CheckBox x:Name="PythonCheckBox" IsChecked="True" Content="Python" />
                                 </StackPanel>
                             </Grid>
                             <Border Height="1" Background="{StaticResource BorderBrush}" Margin="0,22,0,24" />
@@ -239,6 +240,7 @@
                                 <CheckBox x:Name="MySqlCheckBox" Content="MySQL" Checked="DatabaseEngine_Checked" />
                                 <CheckBox x:Name="MariaDbCheckBox" Content="MariaDB" Checked="DatabaseEngine_Checked" />
                                 <CheckBox x:Name="MongoDbCheckBox" Content="MongoDB" />
+                                <CheckBox x:Name="RedisCheckBox" Content="Redis (Memurai, dev licence)" ToolTip="Installs Memurai Developer, a Redis-compatible Windows service on loopback only. Its free licence is for development and testing." />
                                 <CheckBox x:Name="SqlServerCheckBox" Content="SQL Server Express" />
                             </UniformGrid>
                         </StackPanel>

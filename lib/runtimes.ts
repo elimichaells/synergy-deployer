@@ -4,7 +4,7 @@ import { db, query } from '@/lib/db'
 import { runCommand } from '@/lib/exec'
 import { ApiError } from '@/lib/api'
 
-export type RuntimeId = 'git' | 'node' | 'go' | 'angular' | 'php' | 'composer' | 'postgresql' | 'caddy' | 'sling' | 'mysql' | 'mariadb' | 'sqlserver' | 'mongodb' | 'redis' | 'phpmyadmin'
+export type RuntimeId = 'git' | 'node' | 'go' | 'python' | 'angular' | 'php' | 'composer' | 'postgresql' | 'caddy' | 'sling' | 'mysql' | 'mariadb' | 'sqlserver' | 'mongodb' | 'redis' | 'phpmyadmin'
 export type VersionedRuntimeId = 'node' | 'php' | 'go'
 export type RuntimeJobAction = 'install' | 'update' | 'configure' | 'install-version'
 type RuntimeJobStatus = 'queued' | 'running' | 'success' | 'failed' | 'interrupted'
@@ -38,6 +38,7 @@ const definitions: RuntimeDefinition[] = [
   { id: 'git', name: 'Git', purpose: 'Repository checkout and deployment', command: 'git', versionCommand: 'git --version', packageName: 'git', installCommand: 'choco install git -y', updateCommand: 'choco upgrade git -y' },
   { id: 'node', name: 'Node.js', purpose: 'Host default for Next.js, Angular, and Node applications', command: 'node', versionCommand: 'node --version', packageName: 'nodejs-lts', installCommand: 'choco install nodejs-lts -y', updateCommand: 'choco upgrade nodejs-lts -y' },
   { id: 'go', name: 'Go', purpose: 'Host default for compiling Go services', command: 'go', versionCommand: 'go version', packageName: 'golang', installCommand: 'choco install golang -y', updateCommand: 'choco upgrade golang -y', candidates: ['C:\\Program Files\\Go\\bin\\go.exe'] },
+  { id: 'python', name: 'Python', purpose: 'Host default for Python scripts, workers and services', command: 'py', versionCommand: 'py --version', packageName: 'python', installCommand: 'choco install python -y', updateCommand: 'choco upgrade python -y', candidates: ['C:\\Windows\\py.exe'] },
   { id: 'angular', name: 'Angular CLI', purpose: 'Host convenience CLI; project-local Angular remains preferred', command: 'ng', versionCommand: 'ng version', installCommand: 'cmd /c npm.cmd install -g @angular/cli', updateCommand: 'cmd /c npm.cmd install -g @angular/cli@latest', candidates: [process.env.APPDATA ? `${process.env.APPDATA}\\npm\\ng.cmd` : ''] },
   { id: 'php', name: 'PHP', purpose: 'Host default for Laravel and PHP applications', command: 'php', versionCommand: 'php --version', packageName: 'php', installCommand: 'choco install php -y', updateCommand: 'choco upgrade php -y' },
   { id: 'composer', name: 'Composer', purpose: 'PHP dependency management', command: 'composer', versionCommand: 'composer --version', packageName: 'composer', installCommand: 'choco install composer -y', updateCommand: 'choco upgrade composer -y' },
@@ -49,7 +50,7 @@ const definitions: RuntimeDefinition[] = [
   { id: 'mariadb', name: 'MariaDB', purpose: 'Project database engine with secured phpMyAdmin access', command: 'mariadb', versionCommand: 'mariadb --version', packageName: 'mariadb', installCommand: 'choco install mariadb -y', updateCommand: 'choco upgrade mariadb -y' },
   { id: 'sqlserver', name: 'SQL Server tools', purpose: 'SQL Server project database administration', command: 'sqlcmd', versionCommand: 'sqlcmd -?', packageName: 'sql-server-express', installCommand: 'choco install sql-server-express -y', updateCommand: 'choco upgrade sql-server-express -y' },
   { id: 'mongodb', name: 'MongoDB', purpose: 'Optional document database engine', command: 'mongod', versionCommand: 'mongod --version', packageName: 'mongodb', installCommand: 'choco install mongodb -y', updateCommand: 'choco upgrade mongodb -y' },
-  { id: 'redis', name: 'Redis', purpose: 'Register a remote or supported Windows-compatible Redis service', command: 'redis-server', versionCommand: 'redis-server --version', installCommand: null, updateCommand: null },
+  { id: 'redis', name: 'Redis (Memurai)', purpose: 'Redis-compatible cache and queue server; its free licence is for development and testing', command: 'memurai-cli', versionCommand: 'memurai-cli --version', packageName: 'memurai-developer', installCommand: 'choco install memurai-developer -y', updateCommand: 'choco upgrade memurai-developer -y', candidates: ['C:\\Program Files\\Memurai\\memurai-cli.exe'] },
 ]
 
 const versionedRuntimeIds: VersionedRuntimeId[] = ['node', 'php', 'go']

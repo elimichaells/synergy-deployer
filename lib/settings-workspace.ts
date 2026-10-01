@@ -3,7 +3,7 @@ export const SETTINGS_SECTIONS = [
   { id: 'access', group: 'Workspace', label: 'Team & access', description: 'Everyone who can sign in to Synergy, and their roles.' },
   { id: 'integrations', group: 'Workspace', label: 'Git & integrations', description: 'GitHub accounts Synergy deploys from, and other connected services.' },
   { id: 'notifications', group: 'Workspace', label: 'Notifications', description: 'Where Synergy sends a message after each deployment.' },
-  { id: 'general', group: 'Server', label: 'Server folders', description: 'Where apps, logs and the web server live on this machine.' },
+  { id: 'general', group: 'Server', label: 'App folders', description: 'Where Synergy puts the code of apps you add from now on.' },
   { id: 'backups', group: 'Server', label: 'Backups', description: 'Where PostgreSQL backups are stored and how long they are kept.' },
 ] as const
 
@@ -12,14 +12,14 @@ export const MOVED_SETTINGS_SECTIONS: Record<string, string> = { runtimes: '/inf
 
 export type SettingsSection = typeof SETTINGS_SECTIONS[number]['id']
 export const EDITABLE_SETTINGS = {
-  PRODUCTION_PATH: '', STAGING_PATH: '', LOGS_PATH: '', CADDY_PATH: '',
+  PRODUCTION_PATH: '', STAGING_PATH: '',
   NOTIFY_WEBHOOK_URL: '', BACKUP_DIR: '', BACKUP_ENABLED: 'false',
   BACKUP_RETENTION_DAYS: '14', PG_BIN_PATH: '',
 }
 export type SettingsForm = typeof EDITABLE_SETTINGS
 export type SettingsField = keyof SettingsForm
 export const SECTION_FIELDS: Record<SettingsSection, SettingsField[]> = {
-  general: ['PRODUCTION_PATH', 'STAGING_PATH', 'LOGS_PATH', 'CADDY_PATH'],
+  general: ['PRODUCTION_PATH', 'STAGING_PATH'],
   account: [], integrations: [], notifications: ['NOTIFY_WEBHOOK_URL'],
   backups: ['BACKUP_DIR', 'BACKUP_ENABLED', 'BACKUP_RETENTION_DAYS', 'PG_BIN_PATH'], access: [],
 }
@@ -57,7 +57,7 @@ export function validateSettingsSection(section: SettingsSection, form: Settings
 }
 
 export function runtimeCategory(id: string) {
-  if (['node', 'php', 'go', 'angular', 'composer'].includes(id)) return 'languages'
+  if (['node', 'php', 'go', 'python', 'angular', 'composer'].includes(id)) return 'languages'
   if (['postgresql', 'mysql', 'mariadb', 'sqlserver', 'mongodb', 'redis'].includes(id)) return 'databases'
   return 'tools'
 }

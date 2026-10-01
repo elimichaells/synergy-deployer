@@ -1,6 +1,7 @@
 import bcrypt from 'bcrypt'
 import jwt from 'jsonwebtoken'
 import { cookies } from 'next/headers'
+import { query } from '@/lib/db'
 
 export type Role = 'admin' | 'operator' | 'viewer'
 
@@ -63,13 +64,34 @@ export async function clearSessionCookie() {
   })
 }
 
+// A signed token lasts 7 days, so the account's current role and status are checked
+// (briefly cached) to make demotions and disabled accounts take effect straight away.
+const liveAccounts = new Map<string, { role: Role; status: string; at: number }>()
+const LIVE_ACCOUNT_TTL_MS = 10_000
+
+export function forgetLiveAccount(id: string) { liveAccounts.delete(id) }
+
+async function liveAccount(id: string) {
+  const cached = liveAccounts.get(id)
+  if (cached && Date.now() - cached.at < LIVE_ACCOUNT_TTL_MS) return cached
+  const row = (await query<{ role: Role; status: string }>('select role, status from users where id = $1', [id])).rows[0]
+  if (!row) return null
+  const entry = { role: row.role, status: row.status, at: Date.now() }
+  liveAccounts.set(id, entry)
+  return entry
+}
+
 export async function getSessionFromCookie() {
   const store = await cookies()
   const token = store.get(COOKIE_NAME)?.value
   if (!token) return null
+  let session: SessionUser
   try {
-    return verifySession(token)
+    session = verifySession(token)
   } catch {
     return null
   }
+  const account = await liveAccount(session.id)
+  if (!account || account.status !== 'active') return null
+  return { ...session, role: account.role }
 }

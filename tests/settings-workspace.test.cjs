@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EDITABLE_SETTINGS, SETTINGS_SECTIONS, MOVED_SETTINGS_SECTIONS, settingsSection, settingsForm, settingsChanges, validateSettingsSection, runtimeCategory } = require('../lib/settings-workspace.ts');
-const initial = { ...EDITABLE_SETTINGS, PRODUCTION_PATH: 'C:\\apps\\production', STAGING_PATH: 'C:\\apps\\staging', LOGS_PATH: 'C:\\logs', CADDY_PATH: 'C:\\caddy', BACKUP_DIR: 'C:\\backups', PG_BIN_PATH: 'C:\\postgres\\bin' };
+const initial = { ...EDITABLE_SETTINGS, PRODUCTION_PATH: 'C:\\apps\\production', STAGING_PATH: 'C:\\apps\\staging', BACKUP_DIR: 'C:\\backups', PG_BIN_PATH: 'C:\\postgres\\bin' };
 
 test('settings sections have stable deep links and unknown sections fall back safely', () => {
   assert.equal(SETTINGS_SECTIONS.length, 6);
@@ -29,7 +29,7 @@ test('saving one settings section only sends changed keys from that section', ()
 });
 test('settings validation handles paths, retention and notification endpoints without blocking other sections', () => {
   assert.equal(validateSettingsSection('general', initial), null);
-  assert.match(validateSettingsSection('general', { ...initial, LOGS_PATH: ' ' }), /directory/);
+  assert.match(validateSettingsSection('general', { ...initial, STAGING_PATH: ' ' }), /directory/);
   for (const value of ['0', '-2', '1.5', 'NaN', '3651']) assert.match(validateSettingsSection('backups', { ...initial, BACKUP_RETENTION_DAYS: value }), /whole number/);
   for (const value of ['', 'https://example.test/notify', 'http://127.0.0.1:8000/notify']) assert.equal(validateSettingsSection('notifications', { ...initial, NOTIFY_WEBHOOK_URL: value }), null);
   for (const value of ['invalid', 'javascript:alert(1)', 'https://name:password@example.test/notify']) assert.ok(validateSettingsSection('notifications', { ...initial, NOTIFY_WEBHOOK_URL: value }));

@@ -287,11 +287,13 @@ public partial class MainWindow : Window
         if (GoCheckBox.IsChecked == true) runtimes.Add("go");
         if (PhpCheckBox.IsChecked == true) runtimes.Add("php");
         if (ComposerCheckBox.IsChecked == true) runtimes.Add("composer");
+        if (PythonCheckBox.IsChecked == true) runtimes.Add("python");
         var engines = new List<string>();
         if (MySqlCheckBox.IsChecked == true) engines.Add("mysql");
         if (MariaDbCheckBox.IsChecked == true) engines.Add("mariadb");
         if (MongoDbCheckBox.IsChecked == true) engines.Add("mongodb");
         if (SqlServerCheckBox.IsChecked == true) engines.Add("sqlserver");
+        if (RedisCheckBox.IsChecked == true) engines.Add("redis");
 
         return new InstallOptions
         {

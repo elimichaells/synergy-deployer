@@ -3,7 +3,7 @@ import test from 'node:test'
 import { mkdtemp, mkdir, writeFile, readFile, readlink, lstat, rm, symlink } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { DeploymentRelease, retainedPaths } from '../lib/deployment-release'
+import { DeploymentRelease, isForeignGitRef, retainedPaths } from '../lib/deployment-release'
 
 async function fixture(t: any, laravel = false, trackedAssets = false, activationMode?: 'directory' | 'contents') {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'manager-release-test-'))
@@ -141,4 +141,13 @@ test('explicitly Git-tracked Laravel assets remain source files instead of disap
   const { release } = await fixture(t, true, true)
   assert.equal(await readFile(path.join(release.candidate, 'public/build/manifest.json'), 'utf8'), 'old assets')
   assert.equal(await readFile(path.join(release.candidate, 'bootstrap/cache/.gitignore'), 'utf8'), '*\n!.gitignore\n')
+})
+
+test('candidate copies skip local-only Git refs but keep branches, remotes and tags', () => {
+  assert.equal(isForeignGitRef('.git/refs/codex/turn-diffs/checkpoints/a/b/1/c'), true)
+  assert.equal(isForeignGitRef('.git/logs/refs/codex/turn-diffs/x'), true)
+  assert.equal(isForeignGitRef('.git/refs/stash'), true)
+  for (const kept of ['.git/refs/heads/staging', '.git/refs/remotes/origin/staging', '.git/refs/tags/v1', '.git/logs/refs/heads/staging', '.git/refs', '.git/HEAD', 'src/refs/codex/file.ts']) {
+    assert.equal(isForeignGitRef(kept), false, kept)
+  }
 })

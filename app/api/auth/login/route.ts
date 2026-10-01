@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     role: 'admin' | 'operator' | 'viewer'
     status: string
   }>(
-    'select id, email, name, password_hash, role, status from users where email = $1 limit 1',
+    'select id, email, name, password_hash, role, status from users where lower(email) = lower($1) limit 1',
     [body.email]
   )
 

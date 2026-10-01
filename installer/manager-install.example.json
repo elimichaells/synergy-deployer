@@ -23,7 +23,7 @@
   "AppDbConnectionName": "Managed application PostgreSQL",
   "InstallPgweb": true,
   "InstallLatestNpm": true,
-  "OptionalRuntimes": ["go", "php", "composer"],
+  "OptionalRuntimes": ["go", "php", "composer", "python"],
   "OptionalDatabaseEngines": [],
   "PostgreSqlPackage": "postgresql18"
 }

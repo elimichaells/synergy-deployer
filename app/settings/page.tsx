@@ -38,14 +38,40 @@ const roleDescriptions: Record<string, string> = {
   viewer: 'See projects, deployments and logs, without changing anything.',
 }
 
+function ChangePassword() {
+  const [current, setCurrent] = useState('')
+  const [next, setNext] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [notice, setNotice] = useState<Notice | null>(null)
+  const submit = async (event: FormEvent) => {
+    event.preventDefault(); setBusy(true); setNotice(null)
+    try {
+      const response = await fetch('/api/auth/password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current, next }) })
+      const body = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(body.error || 'Could not change the password')
+      setCurrent(''); setNext(''); setNotice({ kind: 'success', text: 'Password changed. Use it the next time you sign in.' })
+    } catch (error) { setNotice({ kind: 'error', text: (error as Error).message }) } finally { setBusy(false) }
+  }
+  return <form onSubmit={submit} className="space-y-3">
+    <h3 className="text-sm font-semibold">Change password</h3>
+    <div className="grid max-w-xl gap-3 sm:grid-cols-2">
+      <input aria-label="Current password" type="password" autoComplete="current-password" className="control-input" placeholder="Current password" value={current} onChange={event => setCurrent(event.target.value)} required />
+      <input aria-label="New password" type="password" autoComplete="new-password" minLength={12} className="control-input" placeholder="New password (12+ characters)" value={next} onChange={event => setNext(event.target.value)} required />
+    </div>
+    {notice && <p role={notice.kind === 'error' ? 'alert' : 'status'} className={`text-sm ${notice.kind === 'error' ? 'text-red-400' : 'text-emerald-400'}`}>{notice.text}</p>}
+    <Button type="submit" variant="outline" disabled={busy || !current || next.length < 12}>{busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <LockKeyhole className="mr-2 h-4 w-4" />}Update password</Button>
+  </form>
+}
+
 function YourAccount({ user }: { user: SessionUser | null }) {
   const router = useRouter()
-  return <div className="space-y-6">
+  return <div className="space-y-8">
     <dl className="summary-list">
       <div><dt>Name</dt><dd className="break-words">{user?.name || '-'}</dd></div>
       <div><dt>Email</dt><dd className="break-all">{user?.email || '-'}</dd></div>
       <div><dt>Role</dt><dd><Badge variant="outline">{roleNames[user?.role || ''] || '-'}</Badge><p className="mt-2 text-xs text-muted-foreground">{roleDescriptions[user?.role || ''] || ''}</p></dd></div>
     </dl>
+    <ChangePassword />
     <Button variant="outline" onClick={async () => { await fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined); router.push('/login') }}><LogOut className="mr-2 h-4 w-4" />Sign out</Button>
   </div>
 }
@@ -69,17 +95,49 @@ function AccountAccess({ user }: { user: SessionUser | null }) {
   }, [user?.role])
   useEffect(() => { void load() }, [load])
   const shown = users.filter(item => `${item.name} ${item.email} ${item.role}`.toLowerCase().includes(search.toLowerCase()))
+  const [adding, setAdding] = useState(false)
+  const [draft, setDraft] = useState({ name: '', email: '', password: '', role: 'operator' })
+  const [saving, setSaving] = useState('')
+  const call = async (key: string, url: string, method: string, body: unknown) => {
+    setSaving(key); setError('')
+    try {
+      const response = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(result.error || 'The change could not be saved')
+      await load(); return true
+    } catch (caught) { setError((caught as Error).message); return false } finally { setSaving('') }
+  }
+  const addMember = async (event: FormEvent) => {
+    event.preventDefault()
+    if (await call('add', '/api/users', 'POST', draft)) { setDraft({ name: '', email: '', password: '', role: 'operator' }); setAdding(false) }
+  }
   return <div className="space-y-8">
     <div><h3 className="mb-3 text-sm font-semibold">Roles</h3><dl className="summary-list">{Object.entries(roleDescriptions).map(([key, text]) => <div key={key}><dt>{roleNames[key]}</dt><dd className="text-muted-foreground">{text}</dd></div>)}</dl></div>
     {user?.role !== 'admin' && <p className="text-sm text-muted-foreground">Only administrators can see and manage the team.</p>}
     {user?.role === 'admin' && <div>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h3 className="text-sm font-semibold">Manager users <span className="ml-1 font-normal text-muted-foreground">{users.length}</span></h3><Button variant="ghost" size="icon" title="Refresh users" aria-label="Refresh users" disabled={loading} onClick={() => void load()}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></Button></div>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h3 className="text-sm font-semibold">Manager users <span className="ml-1 font-normal text-muted-foreground">{users.length}</span></h3><div className="flex items-center gap-2"><Button variant="outline" size="sm" onClick={() => setAdding(value => !value)}><Users className="mr-2 h-4 w-4" />Add member</Button><Button variant="ghost" size="icon" title="Refresh users" aria-label="Refresh users" disabled={loading} onClick={() => void load()}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></Button></div></div>
+      {adding && <form onSubmit={addMember} className="mb-5 space-y-3 rounded-lg border border-border p-4">
+        <p className="text-xs text-muted-foreground">Share the password with them privately. They can change it after signing in, under Your account.</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <input aria-label="Name" className="control-input" placeholder="Name" value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} required />
+          <input aria-label="Email" type="email" className="control-input" placeholder="Email" value={draft.email} onChange={event => setDraft({ ...draft, email: event.target.value })} required />
+          <input aria-label="Temporary password" type="password" autoComplete="new-password" minLength={12} className="control-input" placeholder="Temporary password (12+ characters)" value={draft.password} onChange={event => setDraft({ ...draft, password: event.target.value })} required />
+          <select aria-label="Role" className="control-input" value={draft.role} onChange={event => setDraft({ ...draft, role: event.target.value })}>{Object.entries(roleNames).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
+        </div>
+        <div className="flex gap-2"><Button type="submit" size="sm" disabled={saving === 'add'}>{saving === 'add' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Create account</Button><Button type="button" variant="ghost" size="sm" onClick={() => setAdding(false)}>Cancel</Button></div>
+      </form>}
       <div className="relative mb-4 max-w-sm"><Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><input aria-label="Search users" className="control-input pl-9" placeholder="Search name, email, or role" value={search} onChange={event => setSearch(event.target.value)} /></div>
       {error && <p role="alert" className="notice-error">{error}</p>}
       {loading ? <p role="status" className="py-8 text-sm text-muted-foreground">Loading users...</p> : <div className="divide-y divide-border border-y border-border">
         {shown.map(item => <div key={item.id} className="grid min-w-0 gap-2 py-4 sm:grid-cols-[minmax(0,1fr)_auto]">
           <div className="min-w-0"><p className="break-words text-sm font-medium">{item.name}{item.id === user.id && <span className="ml-2 text-xs font-normal text-muted-foreground">You</span>}</p><p className="mt-1 break-all text-xs text-muted-foreground">{item.email}</p></div>
-          <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{roleNames[item.role] || item.role}</Badge><span className={`text-xs capitalize ${item.status === 'active' ? 'text-emerald-400' : 'text-muted-foreground'}`}>{item.status}</span></div>
+          <div className="flex flex-wrap items-center gap-2">
+            {item.id === user.id
+              ? <Badge variant="outline">{roleNames[item.role] || item.role}</Badge>
+              : <select aria-label={`Role for ${item.name}`} className="control-input h-8 py-0 text-xs" value={item.role} disabled={!!saving} onChange={event => void call(item.id, `/api/users/${item.id}`, 'PATCH', { role: event.target.value })}>{Object.entries(roleNames).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>}
+            <span className={`text-xs capitalize ${item.status === 'active' ? 'text-emerald-400' : 'text-muted-foreground'}`}>{item.status}</span>
+            {item.id !== user.id && <Button variant="ghost" size="sm" disabled={!!saving} onClick={() => void call(item.id, `/api/users/${item.id}`, 'PATCH', { status: item.status === 'active' ? 'disabled' : 'active' })}>{item.status === 'active' ? 'Disable' : 'Enable'}</Button>}
+          </div>
         </div>)}
         {!shown.length && <p className="py-8 text-sm text-muted-foreground">{search ? 'No matching users.' : 'No users found.'}</p>}
       </div>}
@@ -200,11 +258,10 @@ function SettingsWorkspace() {
         {notices[section] && <p role={notices[section]?.kind === 'error' ? 'alert' : 'status'} className={`mb-5 flex items-start gap-2 break-words text-sm ${notices[section]?.kind === 'error' ? 'text-red-400' : 'text-emerald-400'}`}>{notices[section]?.kind === 'success' && <Check className="mt-0.5 h-4 w-4 shrink-0" />}{notices[section]?.text}</p>}
         {loading && !loaded ? <div role="status" className="flex items-center gap-2 py-12 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading settings...</div> : <>
           {section === 'general' && <form onSubmit={formSubmit}>
-            <FieldRow label="Production directory" hint="New production application checkouts.">{input('PRODUCTION_PATH', 'Production directory', 'C:\\web\\production')}</FieldRow>
-            <FieldRow label="Staging directory" hint="Optional staging application checkouts.">{input('STAGING_PATH', 'Staging directory', 'C:\\web\\staging')}</FieldRow>
-            <FieldRow label="Logs directory" hint="Manager deployment logs.">{input('LOGS_PATH', 'Logs directory', 'C:\\web\\logs')}</FieldRow>
-            <FieldRow label="Caddy directory" hint="Edge proxy installation.">{input('CADDY_PATH', 'Caddy directory', 'C:\\web')}</FieldRow>
-            <div className="mb-6 mt-6"><ManagementLink href="/services" icon={Server} label="Processes" detail="Running processes and the Caddy web server, in Infrastructure" /></div>
+            <p className="mb-2 rounded-lg border border-border bg-white/[0.02] p-3 text-xs leading-5 text-muted-foreground">These folders are used when you add a new app. Apps that already exist stay where they are, so changing a folder never moves or breaks a running app.</p>
+            <FieldRow label="Production apps" hint="Where the code of each new production app is stored.">{input('PRODUCTION_PATH', 'Production directory', 'C:\\web\\production')}</FieldRow>
+            <FieldRow label="Staging apps" hint="Where the code of each new staging app is stored.">{input('STAGING_PATH', 'Staging directory', 'C:\\web\\staging')}</FieldRow>
+            <div className="mb-6 mt-6"><ManagementLink href="/services" icon={Server} label="Processes and the web server" detail="Running apps and Caddy, in Infrastructure" /></div>
             {saveControls}
           </form>}
           {section === 'account' && <YourAccount user={user} />}
@@ -218,11 +275,11 @@ function SettingsWorkspace() {
             {saveControls}
           </form>}
           {section === 'backups' && <form onSubmit={formSubmit}>
-            <FieldRow label="Nightly fallback" hint="All PostgreSQL databases; 03:00-05:00 server time when no individual database schedules exist."><div className="flex items-center justify-between gap-4"><label htmlFor="nightly-backups" className="text-sm">Automatic backups</label><Switch id="nightly-backups" checked={draft.BACKUP_ENABLED === 'true'} onCheckedChange={checked => edit('BACKUP_ENABLED', checked ? 'true' : 'false')} disabled={!isAdmin || !loaded || !!saving} /></div></FieldRow>
+            <FieldRow label="Nightly fallback" hint="Backs up every PostgreSQL database between 03:00 and 05:00 server time, for databases with no schedule of their own."><div className="flex items-center justify-between gap-4"><label htmlFor="nightly-backups" className="text-sm">Automatic backups</label><Switch id="nightly-backups" checked={draft.BACKUP_ENABLED === 'true'} onCheckedChange={checked => edit('BACKUP_ENABLED', checked ? 'true' : 'false')} disabled={!isAdmin || !loaded || !!saving} /></div></FieldRow>
             <FieldRow label="Backup directory" hint="PostgreSQL backup destination.">{input('BACKUP_DIR', 'Backup directory', 'C:\\web\\backups\\postgres')}</FieldRow>
             <FieldRow label="Retention" hint="Backup files kept before cleanup."><div className="flex items-center gap-3"><input aria-label="Backup retention days" type="number" min={1} max={3650} step={1} required className="control-input max-w-28" value={draft.BACKUP_RETENTION_DAYS} onChange={event => edit('BACKUP_RETENTION_DAYS', event.target.value)} disabled={!isAdmin || !loaded || !!saving} /><span className="text-sm text-muted-foreground">days</span></div></FieldRow>
             <FieldRow label="PostgreSQL tools" hint="Directory containing pg_dump and pg_restore.">{input('PG_BIN_PATH', 'PostgreSQL tools directory')}</FieldRow>
-            <div className="mb-6 mt-6"><ManagementLink href="/database" icon={HardDrive} label="PostgreSQL backup schedules" detail="Individual database schedules and restore points" /><ManagementLink href="/data-services" icon={Database} label="App database backups" detail="Per-database schedules for every project, in Database servers" /></div>
+            <div className="mb-6 mt-6"><ManagementLink href="/storage" icon={HardDrive} label="Back up or restore one database" detail="Each database in Storage has its own backups, schedule and restore" /></div>
             {saveControls}
           </form>}
           {(section === 'access' || visited.includes('access')) && <div hidden={section !== 'access'}><AccountAccess user={user} /></div>}

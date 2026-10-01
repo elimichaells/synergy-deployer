@@ -226,7 +226,7 @@ $appDbClusterExists = Test-Path -LiteralPath (Join-Path $appDbDataDirectory 'PG_
 if ($installApplicationPostgres -and -not $appDbClusterExists -and -not $appDbAdminPassword -and -not $Plan) { $appDbAdminPassword = New-Secret 32 }
 $installPgweb = Get-BoolSetting 'InstallPgweb' $true
 $installLatestNpm = Get-BoolSetting 'InstallLatestNpm' $true
-$optionalRuntimes = @(Get-ListSetting 'OptionalRuntimes' @('go','php','composer'))
+$optionalRuntimes = @(Get-ListSetting 'OptionalRuntimes' @('go','php','composer','python'))
 $optionalEngines = @(Get-ListSetting 'OptionalDatabaseEngines' @())
 $installPhpMyAdmin = @($optionalEngines | Where-Object { $_ -in @('mysql','mariadb') }).Count -gt 0
 $postgresPackage = [string](Get-Setting 'PostgreSqlPackage' 'postgresql18')
@@ -294,6 +294,7 @@ if ($installApplicationPostgres) { Initialize-ApplicationPostgres }
 if ($optionalRuntimes -contains 'go') { Ensure-Package 'go.exe' 'golang' }
 if (($optionalRuntimes -contains 'php') -or $installPhpMyAdmin) { Ensure-Package 'php.exe' 'php' }
 if ($optionalRuntimes -contains 'composer') { Ensure-Package 'composer.exe' 'composer' }
+if ($optionalRuntimes -contains 'python') { Ensure-Package 'py.exe' 'python' }
 if ($optionalEngines -contains 'mysql') {
     if (-not (Get-DatabaseService 'mysql') -and -not (Find-MySqlServerExecutable)) {
         Invoke-Native 'choco.exe' @('install','mysql','-y','--no-progress') 'Install MySQL server files'
@@ -310,7 +311,20 @@ if ($optionalEngines -contains 'mariadb') {
 }
 if ($optionalEngines -contains 'mongodb') { Ensure-Package 'mongod.exe' 'mongodb' }
 if ($optionalEngines -contains 'sqlserver') { Ensure-Package 'sqlcmd.exe' 'sql-server-express' }
-if ($optionalEngines -contains 'redis') { Add-Result 'Redis' 'warn' 'Register a remote Redis or a supported Windows-compatible distribution after installation' }
+if ($optionalEngines -contains 'redis') {
+    # Redis has no maintained native Windows build; Memurai is the Redis-compatible Windows service.
+    if (-not (Get-Service -Name 'Memurai' -ErrorAction SilentlyContinue)) {
+        Invoke-Native 'choco.exe' @('install','memurai-developer','-y','--no-progress') 'Install Memurai (Redis-compatible server)'
+    }
+    $memurai = Get-Service -Name 'Memurai' -ErrorAction SilentlyContinue
+    if (-not $memurai) { throw 'Memurai was installed but its Windows service was not found.' }
+    if ($memurai.Status -ne 'Running') { Start-Service -Name 'Memurai'; $memurai.WaitForStatus('Running','00:00:30') }
+    Start-Sleep -Seconds 2
+    $exposed = @(Get-NetTCPConnection -LocalPort 6379 -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalAddress -notin @('127.0.0.1','::1') })
+    if ($exposed.Count) { throw 'Redis is listening on a network address. Restrict Memurai to 127.0.0.1 in memurai.conf before continuing.' }
+    Add-Result 'Redis' 'pass' 'Memurai (Redis-compatible) is running and reachable on loopback port 6379 only'
+    Add-Result 'Redis licence' 'warn' 'Memurai Developer is licensed for development and testing. Production workloads need a Memurai licence or an external Redis.'
+}
 if (-not (Test-Command 'pm2.cmd')) { Invoke-Native 'npm.cmd' @('install','--global','pm2') 'Install PM2' }
 
 Write-Step 'Preparing directories and application files'

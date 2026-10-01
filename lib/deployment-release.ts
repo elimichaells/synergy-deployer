@@ -24,6 +24,18 @@ export function retainedPaths(paths: string[]) {
     .filter((value, index, all) => !all.slice(0, index).some(parent => value.startsWith(parent + '/')))
 }
 
+/**
+ * Local-only refs that tools such as Codex or IDEs leave in a checkout (for example
+ * refs/codex/turn-diffs/...) never exist on the remote. Their deeply nested names can exceed the
+ * Windows path limit once copied into a release directory, which leaves a ref Git cannot read and
+ * fails every fetch with "bad object refs/...". Candidates only need branches, remotes and tags.
+ */
+export function isForeignGitRef(relative: string) {
+  const parts = relative.replace(/\\/g, '/').split('/')
+  const refs = parts[0] === '.git' && parts[1] === 'logs' ? parts.slice(2) : parts[0] === '.git' ? parts.slice(1) : []
+  return refs[0] === 'refs' && refs.length > 1 && !['heads', 'remotes', 'tags'].includes(refs[1])
+}
+
 export async function sourceFingerprint(root: string, execute: Execute) {
   if (!await exists(path.join(root, '.git'))) return ''
   const result = await execute('git ls-files -z', root)
@@ -250,6 +262,7 @@ export class DeploymentRelease {
           const relative = path.relative(this.root, source).replace(/\\/g, '/')
           if (!relative) return true
           if (artifacts.has(relative.split('/')[0]) || relative.startsWith('.manager-')) return false
+          if (isForeignGitRef(relative)) return false
           if (trackedFiles.some(file => file === relative || file.startsWith(relative + '/'))) return true
           if (this.generatedPath(relative) && relative !== 'bootstrap/cache') return false
           return !this.persistent.some(value => !value.startsWith('.env') && (relative === value || relative.startsWith(value + '/')))
