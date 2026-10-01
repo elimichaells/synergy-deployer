@@ -126,6 +126,15 @@ verifies the new login, backs up and rewrites the apps' env files, and restarts
 each app with a health check. If any app does not come back healthy, the env
 files, ownership and user are all put back.
 
+### One list, clearer names (2.7.0)
+
+**Projects** now holds both lists with an in-page Projects / Apps toggle; the
+old `/sites` address redirects to the Apps view. Every entry point says **New
+app**, and the flow asks which project the app belongs to. On an app's page,
+Logs and Console share one **Runtime** tab (with a Logs / Console switch), so
+the app has seven tabs instead of eight; existing `?tab=logs` and
+`?tab=console` links still work.
+
 ### Servers and connections in Storage (2.6.0)
 
 **Storage** now has Databases, **Servers** and **Migrations** tabs. Servers
