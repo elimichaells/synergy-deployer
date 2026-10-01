@@ -38,7 +38,7 @@ async function pipeline(t, failure, cacheHit = false) {
   await fs.writeFile(path.join(candidate, '.env'), 'APPLICATION_MARKER=fixture');
   await fs.writeFile(path.join(candidate, 'package.json'), '{}');
   await fs.writeFile(path.join(candidate, 'package-lock.json'), '{}');
-  const calls = []; let status = 'online'; let seq = 0; let previewName; let audits = 0;
+  const calls = []; let status = 'online'; let seq = 0; let previewName; let audits = 0; let builds = 0;
   const project = { id: 'fixture-project', name: 'Fixture', root_path: root, project_type: 'angular', repo_url: 'https://github.com/example/fixture',
     default_branch: 'main', install_cmd: null, build_cmd: 'npm run build', start_cmd: null, pm2_name: 'fixture-app', port: 3217 };
   const query = async (sql, values) => {
@@ -80,7 +80,7 @@ async function pipeline(t, failure, cacheHit = false) {
         const blocked = failure === 'audit' || (failure === 'final-audit' && audits === 2);
         return { code: blocked ? 1 : 0, output: JSON.stringify({ vulnerabilities: blocked ? { 'fixture-package': { severity: 'high', range: '<2.0.0', via: [{ title: 'Fixture vulnerability', url: 'https://github.com/advisories/GHSA-fixture' }], fixAvailable: true } } : {}, metadata: { vulnerabilities: { low: 0, moderate: 0, high: blocked ? 1 : 0, critical: 0 } } }) };
       }
-      return { code: (failure === 'install' && cmd.startsWith('npm ci')) || (failure === 'build' && cmd === 'npm run build') ? 1 : 0, output: '' };
+      return { code: (failure === 'install' && cmd.startsWith('npm ci')) || (failure === 'build' && cmd === 'npm run build') || (failure === 'build-once' && cmd === 'npm run build' && builds++ === 0) ? 1 : 0, output: '' };
     } },
     '@/lib/deployment-go': {}, '@/lib/deployment-git': { assertCleanDeploymentCheckout: async () => {}, syncDeploymentCheckout: async () => {} },
     '@/lib/deployment-preparation': prep,
@@ -101,6 +101,10 @@ async function pipeline(t, failure, cacheHit = false) {
     '@/lib/deployment-cache': { loadAuditExceptions: () => [], assertAuditPassed: cache.assertAuditPassed, formatAuditFindings: cache.formatAuditFindings, installWithDependencyCache: async options => {
       calls.push({ kind: cacheHit ? 'cache-hit' : 'install' }); return cacheHit ? { code: 0, output: '' } : options.execute(options.command);
     } },
+    '@/lib/deployment-build-cache': {
+      seedBuildCache: async () => failure === 'build-once' || failure === 'build' ? [path.join(candidate, '.next/cache')] : [],
+      discardSeededCaches: async seeded => { calls.push({ kind: 'discard-build-cache', seeded }); },
+    },
     '@/lib/deployment-capacity': { withInstallationSlot: async work => { calls.push({ kind: 'capacity' }); return work(); } },
     '@/lib/deployment-schema': { ensureDeploymentSchema: async () => {} },
     '@/lib/ports': { allocateTemporaryPort: async () => 43217 },
@@ -125,6 +129,25 @@ for (const failure of ['install', 'build', 'audit', 'final-audit']) test(failure
     assert.match(result.log, /https:\/\/github.com\/advisories\/GHSA-fixture/);
     assert.match(result.log, /Compatible update available/);
   }
+});
+
+test('a build that fails with the reused build cache is retried once from scratch, then activates', async t => {
+  const { calls, result, candidate } = await pipeline(t, 'build-once');
+  assert.equal(result.status, 'success');
+  assert.equal(calls.filter(call => call.kind === 'build-command' && call.cmd === 'npm run build').length, 2);
+  const discard = calls.findIndex(call => call.kind === 'discard-build-cache');
+  const builds = calls.map((call, index) => call.kind === 'build-command' && call.cmd === 'npm run build' ? index : -1).filter(index => index >= 0);
+  assert.ok(builds[0] < discard && discard < builds[1]);
+  assert.deepEqual(calls[discard].seeded, [path.join(candidate, '.next/cache')]);
+  assert.match(result.log, /retrying once from scratch/);
+  assert.ok(calls.some(call => call.kind === 'activate'));
+});
+
+test('a build that fails again without the cache still fails and never replaces the live app', async t => {
+  const { calls, result } = await pipeline(t, 'build');
+  assert.equal(result.status, 'failed');
+  assert.equal(calls.filter(call => call.kind === 'build-command' && call.cmd === 'npm run build').length, 2);
+  assert.equal(calls.some(call => call.kind === 'activate'), false);
 });
 
 test('known vulnerabilities fail before installation or building, with branch and commit already recorded', async t => {

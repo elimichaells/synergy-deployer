@@ -6,6 +6,7 @@ import { rm, writeFile } from 'fs/promises'
 import path from 'path'
 import { DeploymentRelease, sourceFingerprint } from '@/lib/deployment-release'
 import { withInstallationSlot } from '@/lib/deployment-capacity'
+import { discardSeededCaches, seedBuildCache } from '@/lib/deployment-build-cache'
 import { installWithDependencyCache, assertAuditPassed, formatAuditFindings, loadAuditExceptions } from '@/lib/deployment-cache'
 import { ensureDeploymentSchema } from '@/lib/deployment-schema'
 import { beginReleaseActivation } from '@/lib/deployment-activation'
@@ -566,7 +567,17 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
       }
       await stage('build')
       const build = await getBuildCommand(candidateProject, command => execute(command), append)
-      if (build && (await execute(build)).code) throw new Error('Build failed')
+      if (build) {
+        // Start from the current release's framework build cache; it is many times faster than a cold build.
+        const seeded = await seedBuildCache(project.root_path, root, append)
+        let built = await execute(build)
+        if (built.code && seeded.length) {
+          await append('[build] Build failed with the reused cache; retrying once from scratch\n')
+          await discardSeededCaches(seeded)
+          built = await execute(build)
+        }
+        if (built.code) throw new Error('Build failed')
+      }
     }
     // Every final candidate is audited, including cache hits and custom deployment scripts.
     await stage('security')
