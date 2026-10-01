@@ -126,6 +126,20 @@ verifies the new login, backs up and rewrites the apps' env files, and restarts
 each app with a health check. If any app does not come back healthy, the env
 files, ownership and user are all put back.
 
+### Servers and connections in Storage (2.6.0)
+
+**Storage** now has Databases, **Servers** and **Migrations** tabs. Servers
+lists each database server once (exposure, health, test and remove) and every
+database it holds, including databases no app tracks: browse their data, run
+SQL, manage backups, create a database (with its own owner login, password
+shown once) or drop one that nothing uses. Dropping needs the name typed, and
+protected, tracked or configured-for-an-app databases are refused. Databases
+scheduled by the older control-server backup system now show and edit those
+schedules in Storage, so they are no longer reported as unbacked-up.
+**Settings > Connections** lists GitHub, Cloudflare and database servers
+together. The former Database servers and PostgreSQL explorer pages redirect
+into Storage, and the old drop-database API was removed.
+
 ### One page per database (2.5.0)
 
 Each database in **Storage** now has Overview, **Data**, **SQL**, Backups,
