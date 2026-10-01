@@ -24,3 +24,6 @@ tsconfig.tsbuildinfo
 
 query
 start
+
+# Manager-owned temporary security policy
+/security-exceptions.json

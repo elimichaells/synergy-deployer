@@ -52,6 +52,30 @@ Application repositories should also audit with `--include=dev --audit-level=hig
 
 Audit findings can change without source changes. See [npm audit](https://docs.npmjs.com/cli/v11/commands/npm-audit/).
 
+### Temporary advisory exceptions
+
+Manager administrators can create `security-exceptions.json` in Manager's working directory, or set `MANAGER_SECURITY_EXCEPTIONS_FILE` in Manager's own environment to an absolute file path and restart Manager. Protect this file with administrator-only write access. Never place it in an application's checkout. The default file is Git-ignored. An absent file means no exceptions; malformed configuration blocks deployment.
+
+The file contains an array. Each entry requires the exact Manager project/environment ID, affected package, GHSA advisory, a review reason, and an expiration timestamp in UTC:
+
+```json
+[
+  {
+    "projectId": "replace-with-exact-manager-project-id",
+    "package": "sharp",
+    "advisory": "GHSA-rgj7-g3m4-5g8c",
+    "reason": "Describe reviewed exposure, mitigation, and dependency update plan",
+    "expiresAt": "2026-10-02T00:00:00Z"
+  }
+]
+```
+
+This is an example, not an enabled exception. Review the complete candidate audit before adding entries. Parent findings are resolved to underlying advisories; every advisory in the dependency path must be covered. New advisories, other projects (including staging), expired exceptions, unresolved dependency paths, registry failures, and invalid reports still block release. Both pre-install and final audits reload the policy and check expiration. Logs record each accepted advisory, reason, expiration and original high/critical counts. The gate's `passed` status means policy approval; consult the log to distinguish approval with exceptions from a clean audit.
+
+Remove entries or replace the file contents with `[]` to revoke exceptions for subsequent checks. Expiration does not stop or repair an already running application. Upgrade dependencies, test, commit the lockfile, and redeploy to remove the exposure.
+
+For every application repository, add the audit command to pull-request CI and a daily scheduled workflow, followed by its clean-install build and meaningful tests. Dependency update automation should open reviewed pull requests rather than force major upgrades during deployment. These repository checks must be configured in each application's own CI; Manager's release gate remains the final check.
+
 Deployment history reports the current phase, security failures, and an explicit active-release marker. A failed build does not replace that marker.
 
 ## Staging And Related Applications

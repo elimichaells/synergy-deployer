@@ -6,7 +6,7 @@ import { rm, writeFile } from 'fs/promises'
 import path from 'path'
 import { DeploymentRelease, sourceFingerprint } from '@/lib/deployment-release'
 import { withInstallationSlot } from '@/lib/deployment-capacity'
-import { installWithDependencyCache, assertAuditPassed, formatAuditFindings } from '@/lib/deployment-cache'
+import { installWithDependencyCache, assertAuditPassed, formatAuditFindings, loadAuditExceptions } from '@/lib/deployment-cache'
 import { ensureDeploymentSchema } from '@/lib/deployment-schema'
 import { beginReleaseActivation } from '@/lib/deployment-activation'
 import { captureProjectProcesses, stopProjectProcesses } from '@/lib/deployment-processes'
@@ -515,6 +515,15 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
       runDeploymentCommand(command, cwd, env, chunk => { void append(chunk).catch(() => {}) }, check)
     const inspect = (command: string) => runDeploymentCommand(command, root, { ...projectEnv, NODE_ENV: 'development' },
       () => {}, check, 0)
+    const checkAudit = async (audit: { code: number; output: string }) => {
+      const accepted: string[] = []
+      const counts = assertAuditPassed(audit, 'production dependencies', { projectId: project.id,
+        exceptions: loadAuditExceptions(), accepted: entry => accepted.push(
+          `[security] EXCEPTION: ${entry.package} ${entry.advisory}; expires ${entry.expiresAt}; reason: ${entry.reason}\n`) })
+      for (const message of accepted) await append(message)
+      if (accepted.length) await append(`[security] Accepted findings: ${counts.exceptedHigh} high, ${counts.exceptedCritical} critical; vulnerable dependencies remain present\n`)
+      return counts
+    }
     // Reject vulnerable committed inputs before installation or builds. The
     // final candidate is audited again because scripts can change dependencies.
     if (existsSync(path.join(root, 'package.json')) && (existsSync(path.join(root, 'package-lock.json')) || existsSync(path.join(root, 'npm-shrinkwrap.json')))) {
@@ -523,7 +532,7 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
       const audit = await inspect('npm audit --json --package-lock-only --omit=dev --audit-level=high')
       const findings = formatAuditFindings(audit.output)
       if (findings) await append(findings)
-      assertAuditPassed(audit, 'production dependencies')
+      await checkAudit(audit)
       await append('[security] Committed dependency audit passed; final candidate will be checked again\n')
     }
     const prepared = async (command: string) => {
@@ -568,8 +577,8 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
       const audit = await inspect('npm audit --json --package-lock-only --omit=dev --audit-level=high')
       const findings = formatAuditFindings(audit.output)
       if (findings) await append(findings)
-      const counts = assertAuditPassed(audit, 'production dependencies')
-      await append(`[security] Production dependency audit passed: ${counts.low} low, ${counts.moderate} moderate, 0 high, 0 critical\n`)
+      const counts = await checkAudit(audit)
+      await append(`[security] Production dependency audit ${counts.exceptedHigh || counts.exceptedCritical ? 'approved with exceptions' : 'passed'}: ${counts.low} low, ${counts.moderate} moderate, 0 unaccepted high/critical\n`)
       await query("UPDATE deployments SET security_status='passed' WHERE id=$1", [deploymentId])
     } else {
       await query("UPDATE deployments SET security_status='not_applicable' WHERE id=$1", [deploymentId])

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'crypto'
-import { createReadStream } from 'fs'
+import { createReadStream, readFileSync } from 'fs'
 import { cp, lstat, mkdir, readFile, readdir, readlink, realpath, rename, rm, writeFile } from 'fs/promises'
 import path from 'path'
 import { localNpmInstall } from './deployment-preparation'
@@ -188,7 +188,29 @@ export function formatAuditFindings(output: string): string {
   return lines.length ? lines.join('\n') + '\n' : ''
 }
 
-export function assertAuditPassed(result: { code: number; output: string }, scope = 'dependencies') {
+export type AuditException = { projectId: string; package: string; advisory: string; reason: string; expiresAt: string }
+
+// Manager-owned configuration only; never read a candidate's exception file or environment.
+const exceptionFile = path.resolve(process.env.MANAGER_SECURITY_EXCEPTIONS_FILE || path.join(process.cwd(), 'security-exceptions.json'))
+export function loadAuditExceptions(): AuditException[] {
+  let value
+  try { value = JSON.parse(readFileSync(exceptionFile, 'utf8')) } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw new Error('Invalid Manager security exception configuration; release blocked')
+  }
+  if (!Array.isArray(value) || value.some(entry => !entry ||
+    !['projectId', 'package', 'reason'].every(key => typeof entry[key] === 'string' && entry[key].trim() && !/[\u0000-\u001f\u007f]/.test(entry[key])) ||
+    !/^GHSA-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}$/.test(entry.advisory) ||
+    typeof entry.expiresAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(entry.expiresAt) ||
+    !Number.isFinite(Date.parse(entry.expiresAt)))) {
+    throw new Error('Invalid Manager security exception configuration; release blocked')
+  }
+  return value
+}
+
+export function assertAuditPassed(result: { code: number; output: string }, scope = 'dependencies', options?: {
+  projectId: string; exceptions: AuditException[]; now?: number; accepted?: (entry: AuditException) => void
+}) {
   let report
   try { report = JSON.parse(result.output) } catch { throw new Error('Security audit returned an invalid report; release blocked') }
   const counts = report?.metadata?.vulnerabilities
@@ -196,6 +218,35 @@ export function assertAuditPassed(result: { code: number; output: string }, scop
     throw new Error('Security audit was unavailable; release blocked')
   }
   if (counts.high || counts.critical || result.code !== 0) {
+    // Resolve inherited findings recursively. Missing nodes, cycles, unknown advisory
+    // formats, inconsistent counts and non-audit command errors cannot be exempted.
+    const nodes = report.vulnerabilities
+    const entries = nodes && typeof nodes === 'object' && !Array.isArray(nodes) ? Object.entries(nodes) : []
+    const blockers = entries.filter(([, value]) => value && typeof value === 'object' && ['high', 'critical'].includes((value as { severity: string }).severity))
+    const accepted = new Set<AuditException>()
+    const covered = (name: string, trail = new Set<string>()): boolean => {
+      const node = nodes?.[name]
+      if (!node || trail.has(name) || !Array.isArray(node.via) || !node.via.length) return false
+      const next = new Set(trail).add(name)
+      return node.via.every((via: unknown) => {
+        if (typeof via === 'string') return covered(via, next)
+        if (!via || typeof via !== 'object') return false
+        const url = (via as { url?: string }).url
+        const id = typeof url === 'string' ? /^https:\/\/github\.com\/advisories\/(GHSA-[a-z0-9-]+)$/.exec(url)?.[1] : undefined
+        const exception = options?.exceptions.find(entry => entry.projectId === options.projectId && entry.package === name &&
+          entry.advisory === id && entry.reason.trim() && Date.parse(entry.expiresAt) > (options.now ?? Date.now()))
+        if (!exception) return false
+        accepted.add(exception)
+        return true
+      })
+    }
+    if (options && result.code === 1 && blockers.length > 0 &&
+      blockers.filter(([, value]) => (value as { severity: string }).severity === 'high').length === counts.high &&
+      blockers.filter(([, value]) => (value as { severity: string }).severity === 'critical').length === counts.critical &&
+      blockers.every(([name]) => covered(name))) {
+      for (const entry of accepted) options.accepted?.(entry)
+      return { ...counts, high: 0, critical: 0, exceptedHigh: counts.high, exceptedCritical: counts.critical } as Record<string, number>
+    }
     throw new Error(`Security gate blocked release: ${counts.high} high and ${counts.critical} critical vulnerabilities in ${scope}. Review npm audit and update dependencies`)
   }
   return counts as Record<string, number>

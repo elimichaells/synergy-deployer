@@ -98,7 +98,7 @@ async function pipeline(t, failure, cacheHit = false) {
       async rollback() { calls.push({ kind: 'rollback' }); }
       async complete() { calls.push({ kind: 'complete' }); }
     } },
-    '@/lib/deployment-cache': { assertAuditPassed: cache.assertAuditPassed, formatAuditFindings: cache.formatAuditFindings, installWithDependencyCache: async options => {
+    '@/lib/deployment-cache': { loadAuditExceptions: () => [], assertAuditPassed: cache.assertAuditPassed, formatAuditFindings: cache.formatAuditFindings, installWithDependencyCache: async options => {
       calls.push({ kind: cacheHit ? 'cache-hit' : 'install' }); return cacheHit ? { code: 0, output: '' } : options.execute(options.command);
     } },
     '@/lib/deployment-capacity': { withInstallationSlot: async work => { calls.push({ kind: 'capacity' }); return work(); } },

@@ -110,6 +110,34 @@ test('security gate fails closed for critical findings, registry failure, malfor
   for (const output of ['offline', '{}', '{"error":{"code":"ENETUNREACH"}}']) assert.throws(() => assertAuditPassed({ code: 0, output }), /blocked/)
 })
 
+test('exceptions cover exact advisories and inherited findings only for their application before expiry', () => {
+  const advisory = 'GHSA-rgj7-g3m4-5g8c'
+  const exception = { projectId: 'app-one', package: 'sharp', advisory, reason: 'Reviewed image input restrictions', expiresAt: '2026-10-02T00:00:00Z' }
+  const nodes = {
+    parent: { severity: 'high', via: ['sharp'] },
+    sharp: { severity: 'critical', via: [{ url: `https://github.com/advisories/${advisory}` }] },
+  }
+  const report = (vulnerabilities: unknown = nodes) => ({ code: 1, output: JSON.stringify({ vulnerabilities, metadata: { vulnerabilities: { low: 0, moderate: 0, high: 1, critical: 1 } } }) })
+  const options = { projectId: 'app-one', exceptions: [exception], now: Date.parse('2026-10-01T00:00:00Z') }
+  const accepted: string[] = []
+  const counts = assertAuditPassed(report(), 'production', { ...options, accepted: entry => accepted.push(entry.advisory) })
+  assert.equal(counts.exceptedCritical, 1)
+  assert.deepEqual(accepted, [advisory])
+  for (const changed of [
+    { ...options, projectId: 'app-two' },
+    { ...options, now: Date.parse(exception.expiresAt) },
+    { ...options, exceptions: [{ ...exception, package: 'parent' }] },
+    { ...options, exceptions: [{ ...exception, advisory: 'GHSA-vcvr-r3jv-pc5j' }] },
+  ]) assert.throws(() => assertAuditPassed(report(), 'production', changed), /blocked/)
+  assert.throws(() => assertAuditPassed({ ...report(), code: 2 }, 'production', options), /blocked/)
+  for (const via of [[], ['missing'], ['parent'], [{ url: 'https://example.com/advisory' }],
+    [...nodes.sharp.via, { url: 'https://github.com/advisories/GHSA-vcvr-r3jv-pc5j' }]]) {
+    assert.throws(() => assertAuditPassed(report({ ...nodes, sharp: { ...nodes.sharp, via } }), 'production', options), /blocked/)
+  }
+  assert.throws(() => assertAuditPassed(report({ sharp: nodes.sharp }), 'production', options), /blocked/)
+  assert.throws(() => assertAuditPassed({ code: 1, output: 'offline' }, 'production', options), /blocked/)
+})
+
 test('audit details explain inherited findings, advisory links and major upgrades without trusting log control text', () => {
   const output = formatAuditFindings(JSON.stringify({ vulnerabilities: {
     '@angular/core': { severity: 'high', range: '<20.0.0', via: [
