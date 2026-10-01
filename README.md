@@ -117,6 +117,15 @@ and never receives new databases. **Infrastructure > Database servers** shows
 each server's network exposure and can limit PostgreSQL to local connections
 (applied on the service's next restart).
 
+### Dedicated database users (2.4.0)
+
+A PostgreSQL database whose apps sign in as a superuser can be switched to its
+own limited `<database>_app` user from its Storage page. Synergy creates the
+user, transfers ownership of the database and its objects in one transaction,
+verifies the new login, backs up and rewrites the apps' env files, and restarts
+each app with a health check. If any app does not come back healthy, the env
+files, ownership and user are all put back.
+
 Upgrade an existing server by rebuilding its checkout in place (`npm run
 build`, then `pm2 restart manager`). The setup executable is for new servers:
 it generates new secrets and would make existing encrypted credentials
