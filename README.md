@@ -126,6 +126,19 @@ verifies the new login, backs up and rewrites the apps' env files, and restarts
 each app with a health check. If any app does not come back healthy, the env
 files, ownership and user are all put back.
 
+### One page per database (2.5.0)
+
+Each database in **Storage** now has Overview, **Data**, **SQL**, Backups,
+Connection and Settings tabs. Data and SQL work on any PostgreSQL server
+Synergy administers (including the apps server), not only the control server;
+SQL is read-only unless writes are switched on, and writes are audited. Backup
+schedules (frequency, time, retention) are edited on the Backups tab, and **Add
+database** starts by choosing the app it is for. **Infrastructure > Unlinked
+databases** (the former PostgreSQL explorer) remains only for databases no app
+uses. Each app header and each app row on a project page also has an
+**Auto-deploy** switch. Idle database connections that a server drops no longer
+crash the manager.
+
 ### Fixes and installer options (2.4.1)
 
 Deployments no longer fail with "bad object" when a checkout holds local-only
