@@ -11,6 +11,7 @@ import { DataRemovalAction } from '@/components/data-removal-action'
 import { Section } from '@/components/app/section'
 import { ProviderLogo, providerMeta, type Provider } from '@/components/app/providers'
 import { Flag, serverRoleLabel } from '@/components/storage/bits'
+import { DedicatedUserSheet } from '@/components/storage/dedicated-user-sheet'
 import { relativeTime } from '@/lib/deployment-stages'
 import { formatBytes } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -38,6 +39,7 @@ export default function DatabasePage() {
   const [busy, setBusy] = useState<string | null>(null)
   const [revealed, setRevealed] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [dedicatedOpen, setDedicatedOpen] = useState(false)
   const [now, setNow] = useState(() => Date.now())
 
   const load = useCallback(async () => {
@@ -104,7 +106,7 @@ export default function DatabasePage() {
   const role = serverRoleLabel[database.serverRole]
   const recommendations: { title: string; body: string; action?: React.ReactNode }[] = []
   if (database.serverRole === 'system') recommendations.push({ title: 'Move it off Synergy\'s own server', body: 'This database lives on the same PostgreSQL server as Synergy\'s control database. A problem in one affects the other. Create a database for the app on the apps server, copy the data across, then switch the app over.', action: <Button asChild size="sm" variant="outline"><Link href={`/sites/${owner.projectId}?tab=storage`}>Open the app&apos;s storage</Link></Button> })
-  if (database.warnings.some(warning => warning.includes('superuser'))) recommendations.push({ title: 'Stop using a superuser account', body: 'The app signs in as a superuser, which can read and change every database on the server, including Synergy\'s, and run commands on the machine. A database created by Synergy gets its own limited user automatically; moving the data there fixes this.' })
+  if (database.warnings.some(warning => warning.includes('superuser'))) recommendations.push({ title: 'Stop using a superuser account', body: 'The app signs in as a superuser, which can read and change every database on the server, including Synergy\'s, and run commands on the machine. Give it a user that can only reach this database; the data stays where it is.', action: <Button size="sm" onClick={() => setDedicatedOpen(true)} disabled={!access.isAdmin}><ShieldCheck className="mr-1.5 h-3.5 w-3.5" />Give it a dedicated user</Button> })
   if (database.warnings.some(warning => warning.includes('Staging'))) recommendations.push({ title: 'Give staging its own database', body: 'Testing on staging currently changes production data. Add a separate database to the staging app and copy production data into it when you need realistic data.' })
   if (!database.backup && isPostgres && database.serverRole !== 'external') recommendations.push({ title: 'Turn on backups', body: 'Nothing is backing this database up yet.', action: <Button size="sm" onClick={() => void enableBackups()} disabled={!access.isAdmin || busy !== null}>{busy === 'schedule' ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />}Turn on daily backups</Button> })
 
@@ -258,6 +260,7 @@ export default function DatabasePage() {
           </Section>
         </TabsContent>
       </AppShell>
+      <DedicatedUserSheet serviceId={database.id} open={dedicatedOpen} onOpenChange={setDedicatedOpen} onDone={() => { setRevealed(null); void load().catch(() => undefined) }} />
     </Tabs>
   )
 }

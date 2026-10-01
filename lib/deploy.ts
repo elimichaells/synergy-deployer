@@ -328,6 +328,35 @@ async function getPm2ProcessStatus(name: string, timeoutMs: number): Promise<str
 }
 
 
+/**
+ * Restarts a running app with its environment rebuilt from its env files, exactly as a
+ * deployment would start it, then waits until it answers again. PM2 keeps the
+ * environment an app was started with, so a plain restart would ignore .env changes.
+ */
+export async function restartWithFreshEnvironment(projectId: string, onProgress?: (message: string) => void | Promise<void>) {
+  const { rows } = await query<DeployProject>(
+    `select id, name, repo_url, default_branch, project_type, root_path, install_cmd, build_cmd, deploy_script, start_cmd, pre_deploy_cmd, post_deploy_cmd,
+            runtime_versions, pm2_name, port, github_connection_id from projects where id=$1`, [projectId])
+  const project = rows[0]
+  if (!project) throw new Error('Application not found')
+  if (!/^[A-Za-z0-9._-]+$/.test(project.pm2_name)) throw new Error('Invalid PM2 application name')
+  const databaseEnv = { ...await getProjectDatabaseEnv(project.id), ...await getProjectDataServiceEnv(project.id) }
+  const env = getRuntimeEnv(project, project.root_path, databaseEnv)
+  if (normalizeProjectType(project.project_type) === 'laravel') {
+    // Laravel caches configuration, including database credentials.
+    await rm(path.join(project.root_path, 'bootstrap', 'cache', 'config.php'), { force: true }).catch(() => undefined)
+  }
+  const restart = await runCommand(`pm2 restart "${project.pm2_name}" --update-env`, project.root_path, 60_000, undefined, env, false)
+  if (restart.code !== 0) return { healthy: false, reason: 'PM2 could not restart the application' }
+  if (project.port) {
+    const health = await waitForDeploymentHealth(project.port, { checkProcess: timeout => getPm2ProcessStatus(project.pm2_name, timeout), onProgress })
+    return { healthy: health.healthy, reason: health.healthy ? null : health.reason || 'Health check failed' }
+  }
+  await new Promise(resolve => setTimeout(resolve, 5000))
+  const status = await getPm2ProcessStatus(project.pm2_name, 15_000)
+  return { healthy: status === 'online', reason: status === 'online' ? null : `Process is ${status || 'unknown'}` }
+}
+
 async function createDeployment(project: DeployProject, options: DeployOptions) {
   await ensureDeploymentSchema()
   if (await isDeployRunning(project.id)) return null
