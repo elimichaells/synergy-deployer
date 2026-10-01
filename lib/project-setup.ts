@@ -22,7 +22,7 @@ export function ensureProjectSetupSchema() {
 
 export async function getProjectSetup(id: string) {
   await ensureProjectSetupSchema()
-  const { rows } = await query(`select p.id,p.name,p.root_path,p.repo_url,p.default_branch,p.project_type,p.port,p.url,
+  const { rows } = await query(`select p.id,p.name,p.root_path,p.repo_url,p.default_branch,p.project_type,p.port,p.url,p.environment,
     p.runtime_versions,p.build_cmd,p.start_cmd,p.deploy_script,p.github_connection_id,
     s.step,s.decisions,s.completed_at from projects p left join project_setup s on s.project_id=p.id where p.id=$1`, [id])
   if (!rows[0]) throw new ApiError('Application not found', 404)

@@ -4,13 +4,15 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import {
-  ArrowUpRight, Boxes, ExternalLink, GitBranch, LayoutGrid, List, MoreHorizontal, Pin, Plus, RefreshCw, Rocket, Search, Zap,
+  ArrowRight, ArrowUpRight, Boxes, ExternalLink, GitBranch, Layers, LayoutGrid, List, MoreHorizontal, Pin, Plus, RefreshCw, Rocket, Search, Zap,
 } from 'lucide-react'
 import { AppShell } from '@/components/layout/app-shell'
 import { Button } from '@/components/ui/button'
 import { FrameworkAvatar } from '@/components/synergy/framework-logo'
 import { PipelineMini } from '@/components/synergy/pipeline'
 import { StatusDot, statusMeta, type DeployStatus } from '@/components/synergy/status'
+import { roleLabels } from '@/components/app/section'
+import { roleIcons } from '@/components/app/stack-panel'
 import { relativeTime, stagesFromPhase } from '@/lib/deployment-stages'
 import { cn } from '@/lib/utils'
 
@@ -355,7 +357,7 @@ export default function ProjectsPage() {
           <div className="mt-3 flex flex-wrap items-center gap-1.5">
             <span className={cn('rounded-full border px-2 py-px text-[11px] font-medium', project.environment === 'production' ? 'border-sky-400/25 text-sky-300' : 'border-amber-300/25 text-amber-200')}>{project.environment === 'production' ? 'Production' : 'Staging'}</span>
             {project.auto_deploy && <span className="flex items-center gap-1 rounded-full border border-border px-2 py-px text-[11px] text-muted-foreground"><Zap className="h-3 w-3" />Auto-deploy</span>}
-            {project.application_group_name && <span className="truncate rounded-full border border-border px-2 py-px text-[11px] text-muted-foreground">{project.application_group_name}</span>}
+            {project.application_group_name && <span className="flex min-w-0 items-center gap-1 truncate rounded-full border border-syn-violet/30 bg-syn-violet/10 px-2 py-px text-[11px] text-violet-200"><Layers className="h-3 w-3 shrink-0" />{roleLabels[project.component_role || 'application']} · {project.application_group_name}</span>}
             <span className={cn('ml-auto flex items-center gap-1.5 text-[11px]', project.is_active ? 'text-muted-foreground' : 'text-muted-foreground/60')}>
               <span className={cn('h-1.5 w-1.5 rounded-full', project.is_active ? 'bg-status-ready' : 'bg-white/25')} />{project.is_active ? 'Online' : 'Offline'}
             </span>
@@ -384,6 +386,54 @@ export default function ProjectsPage() {
       </div>
     )
   }
+
+  // Stacks: production members of each application group, ordered frontend → backend → services.
+  const stacks = useMemo(() => {
+    const order = ['frontend', 'application', 'backend', 'service']
+    const groups = new Map<string, Project[]>()
+    for (const project of projects) {
+      if (!project.application_group_name || project.environment !== 'production') continue
+      groups.set(project.application_group_name, [...(groups.get(project.application_group_name) || []), project])
+    }
+    return [...groups.entries()].map(([name, members]) => ({ name, members: members.sort((a, b) => order.indexOf(a.component_role || 'application') - order.indexOf(b.component_role || 'application')) }))
+      .filter(stack => !searchQuery || stack.name.toLowerCase().includes(searchQuery.toLowerCase()) || stack.members.some(member => member.name.toLowerCase().includes(searchQuery.toLowerCase())))
+  }, [projects, searchQuery])
+
+  const renderStacks = () => stacks.length > 0 && environmentFilter !== 'staging' && environmentFilter !== 'draft' && (
+    <section className="mb-8">
+      <h2 className="mb-3 flex items-center gap-2 text-sm font-medium text-muted-foreground"><Layers className="h-3.5 w-3.5" />Stacks<span className="text-xs text-muted-foreground/60">{stacks.length}</span></h2>
+      <div className="grid gap-4 lg:grid-cols-2">
+        {stacks.map(stack => (
+          <div key={stack.name} className="syn-tile overflow-hidden">
+            <div className="flex items-center gap-2 border-b border-border px-5 py-3">
+              <span className="flex h-6 w-6 items-center justify-center rounded-md bg-syn-violet/15"><Layers className="h-3.5 w-3.5 text-syn-violet" /></span>
+              <h3 className="truncate text-sm font-semibold">{stack.name}</h3>
+              <span className="ml-auto text-xs text-muted-foreground">{stack.members.length} apps</span>
+            </div>
+            <div className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center">
+              {stack.members.map((member, index) => {
+                const RoleIcon = roleIcons[member.component_role || 'application'] || Boxes
+                const { latest } = projectState(member)
+                return (
+                  <div key={member.id} className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center">
+                    {index > 0 && <ArrowRight className="mx-auto h-3.5 w-3.5 shrink-0 rotate-90 text-muted-foreground sm:mx-0 sm:rotate-0" />}
+                    <Link href={`/sites/${member.id}`} className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg border border-border px-3 py-2.5 transition-colors hover:border-white/25 hover:bg-white/[0.02]">
+                      <FrameworkAvatar type={member.project_type} size="sm" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[13px] font-medium">{member.name}</span>
+                        <span className="flex items-center gap-1 truncate text-[11px] text-muted-foreground"><RoleIcon className="h-3 w-3 shrink-0" />{roleLabels[member.component_role || 'application']}</span>
+                      </span>
+                      {latest ? <StatusDot status={latest.status} className="scale-75" /> : member.setup_required ? <span className="text-[10px] text-amber-200">Setup</span> : null}
+                    </Link>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
 
   const renderGroup = (title: string, items: Project[]) => items.length > 0 && (
     <section className="mb-8">
@@ -436,6 +486,7 @@ export default function ProjectsPage() {
         </div>
       ) : (
         <>
+          {renderStacks()}
           {renderGroup('Pinned', pinnedProjects)}
           {renderGroup(pinnedProjects.length ? 'All applications' : 'Applications', otherProjects)}
         </>

@@ -13,7 +13,7 @@ function initials(name?: string) {
   return (name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]?.toUpperCase()).join('') || '?'
 }
 
-export function AppShell({ children, title, subtitle, user, actions, back, headerExtra }: {
+export function AppShell({ children, title, subtitle, user, actions, back, headerExtra, tabs }: {
   children: ReactNode
   title: string
   subtitle?: ReactNode
@@ -23,6 +23,8 @@ export function AppShell({ children, title, subtitle, user, actions, back, heade
   back?: { href: string; label: string }
   /** Rendered under the title row inside the page header band. */
   headerExtra?: ReactNode
+  /** Section tabs rendered flush with the bottom edge of the page header. */
+  tabs?: ReactNode
 }) {
   const pathname = usePathname()
   const router = useRouter()
@@ -130,7 +132,7 @@ export function AppShell({ children, title, subtitle, user, actions, back, heade
 
       <section className="relative overflow-hidden border-b border-border">
         <div className="syn-canvas pointer-events-none absolute inset-0" aria-hidden="true" />
-        <div className="relative mx-auto flex max-w-[1240px] flex-wrap items-end gap-x-6 gap-y-4 px-4 py-7 sm:px-6 sm:py-9">
+        <div className={`relative mx-auto flex max-w-[1240px] flex-wrap items-end gap-x-6 gap-y-4 px-4 pt-7 sm:px-6 sm:pt-9 ${tabs ? 'pb-0' : 'pb-7 sm:pb-9'}`}>
           <div className="w-full min-w-0 sm:w-auto sm:flex-1">
             {back && <Link href={back.href} className="mb-3 inline-flex items-center gap-1 text-[13px] text-muted-foreground transition-colors hover:text-foreground"><ChevronLeft className="h-3.5 w-3.5" />{back.label}</Link>}
             <h1 className="truncate text-[26px] font-semibold leading-tight tracking-[-0.03em] sm:text-[32px]">{title}</h1>
@@ -138,6 +140,7 @@ export function AppShell({ children, title, subtitle, user, actions, back, heade
           </div>
           {actions && <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">{actions}</div>}
           {headerExtra && <div className="w-full">{headerExtra}</div>}
+          {tabs && <div className="-mx-2 w-[calc(100%+16px)] pt-2 sm:-mx-3 sm:w-[calc(100%+24px)]">{tabs}</div>}
         </div>
       </section>
 

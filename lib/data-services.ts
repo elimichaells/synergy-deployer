@@ -508,10 +508,14 @@ export async function listProjectDataServices(projectId?: string) {
   await ensureDataMigrationSchema()
   const params = projectId ? [projectId] : []
   const where = projectId ? 'where pds.project_id=$1' : ''
-  const { rows } = await query<ProjectDataService & DataServiceRemovalFacts>(
+  const { rows } = await query<ProjectDataService & DataServiceRemovalFacts & { shared_count: number; shared_with: string[] | null }>(
     `select pds.id,pds.project_id,p.name as project_name,p.environment,pds.connection_id,
             dc.name as connection_name,dc.provider,dc.host,dc.port,dc.tls_enabled,
             pds.name,pds.database_name,pds.username,pds.env_prefix,pds.application_primary,pds.options,pds.created_at,pds.updated_at,
+            sp.name as shared_from_project_name,
+            (select count(*)::int from project_data_services c where c.options->>'sharedFrom'=pds.id::text) as shared_count,
+            (select array_agg(cp.name order by cp.name) from project_data_services c join projects cp on cp.id=c.project_id
+              where c.options->>'sharedFrom'=pds.id::text) as shared_with,
             exists(select 1 from deployments d where d.project_id=pds.project_id and d.status in ('queued','running')) as deployment_active,
             bs.last_status as backup_status,
             (select count(*)::int from data_migration_jobs m where m.source_service_id=pds.id or m.target_service_id=pds.id) as migration_count,
@@ -520,13 +524,77 @@ export async function listProjectDataServices(projectId?: string) {
        join projects p on p.id=pds.project_id
        join data_connections dc on dc.id=pds.connection_id
        left join data_service_backup_schedules bs on bs.service_id=pds.id
+       left join projects sp on sp.id::text=pds.options->>'sharedFromProjectId'
        ${where} order by p.name,p.environment,pds.name`,
     params
   )
-  return rows.map((service) => ({ ...service, removal_blocked_reason: dataServiceRemovalReason(service) }))
+  return rows.map((service) => ({ ...service, removal_blocked_reason: sharedRemovalReason(service.shared_with) || dataServiceRemovalReason(service) }))
+}
+
+function sharedRemovalReason(sharedWith: string[] | null) {
+  return sharedWith?.length ? `Shared with ${sharedWith.join(', ')}. Remove it from ${sharedWith.length === 1 ? 'that application' : 'those applications'} first.` : null
+}
+
+/** Databases owned by other applications in the same stack and environment, which this application may use too. */
+export async function listShareableDataServices(projectId: string) {
+  await ensureDataServicesSchema()
+  const { ensureApplicationGroupsSchema } = await import('@/lib/application-groups')
+  await ensureApplicationGroupsSchema()
+  const { rows } = await query<{ id: string; name: string; database_name: string; project_id: string; project_name: string; component_role: string; provider: DataProvider; connection_name: string; already_shared: boolean }>(
+    `select pds.id,pds.name,pds.database_name,pds.project_id,p.name as project_name,p.component_role,dc.provider,dc.name as connection_name,
+            exists(select 1 from project_data_services mine where mine.project_id=me.id and mine.options->>'sharedFrom'=pds.id::text) as already_shared
+       from projects me
+       join projects p on p.application_group_id=me.application_group_id and p.environment=me.environment and p.id<>me.id
+       join project_data_services pds on pds.project_id=p.id
+       join data_connections dc on dc.id=pds.connection_id
+      where me.id=$1 and me.application_group_id is not null and coalesce(pds.options->>'ownership','manager')<>'shared'
+      order by p.name,pds.name`,
+    [projectId]
+  )
+  return rows
+}
+
+/**
+ * Lets an application use a database owned by another member of its stack. The
+ * consumer receives its own service row (and environment variables) pointing at
+ * the same database; credentials stay owned and rotated by the source application.
+ */
+export async function shareProjectDataService(projectId: string, input: Record<string, unknown>, createdBy?: string | null) {
+  await ensureDataServicesSchema()
+  const sourceServiceId = requiredText(input.sourceServiceId, 'Shared database')
+  const { rows } = await query<{ target_type: string; target_group: string | null; target_env: string; source_project_id: string; source_group: string | null; source_env: string;
+    connection_id: string; name: string; database_name: string; username: string | null; password_ciphertext: string | null; env_prefix: string; options: Record<string, unknown> }>(
+    `select t.project_type as target_type,t.application_group_id as target_group,t.environment as target_env,
+            s.id as source_project_id,s.application_group_id as source_group,s.environment as source_env,
+            pds.connection_id,pds.name,pds.database_name,pds.username,pds.password_ciphertext,pds.env_prefix,pds.options
+       from project_data_services pds join projects s on s.id=pds.project_id, projects t
+      where pds.id=$1 and t.id=$2`, [sourceServiceId, projectId])
+  const source = rows[0]
+  if (!source) throw new ApiError('Shared database or application not found', 404)
+  if (source.target_type === 'angular') throw new ApiError('Browser applications must access databases through a backend API', 400)
+  if (source.source_project_id === projectId) throw new ApiError('This application already owns that database', 400)
+  if (!source.target_group || source.target_group !== source.source_group) throw new ApiError('Only applications in the same stack can share a database', 400)
+  if (source.target_env !== source.source_env) throw new ApiError('Production and staging applications cannot share a database', 400)
+  if (source.options?.ownership === 'shared') throw new ApiError('Share the database from the application that owns it', 400)
+  const name = safeName(typeof input.name === 'string' && input.name.trim() ? input.name : source.name, 40)
+  try {
+    const { rows: inserted } = await query<{ id: string }>(
+      `insert into project_data_services
+        (project_id,connection_id,name,database_name,username,password_ciphertext,env_prefix,options,created_by)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id`,
+      [projectId, source.connection_id, name, source.database_name, source.username, source.password_ciphertext,
+        envPrefix(String(input.envPrefix || source.env_prefix)), { ownership: 'shared', sharedFrom: sourceServiceId, sharedFromProjectId: source.source_project_id }, createdBy || null]
+    )
+    if (input.applicationPrimary === true) await setProjectDataServiceApplicationPrimary(projectId, inserted[0].id, true)
+    return (await listProjectDataServices(projectId)).find((item) => item.id === inserted[0].id)
+  } catch (error) {
+    if ((error as { code?: string }).code === '23505') throw new ApiError('This application already has a service with that name or environment prefix', 409)
+    throw error
+  }
 }
 
 export async function provisionProjectDataService(projectId: string, input: Record<string, unknown>, createdBy?: string | null) {
+  if (input.mode === 'shared') return shareProjectDataService(projectId, input, createdBy)
   await ensureDataServicesSchema()
   const { rows } = await query<{ slug: string; environment: string; project_type: string }>('select slug,environment,project_type from projects where id=$1', [projectId])
   const project = rows[0]
@@ -610,6 +678,10 @@ export async function detachProjectDataService(projectId: string, serviceId: str
       const { rows } = await client.query<{ application_primary: boolean }>(
         'select application_primary from project_data_services where id=$1 and project_id=$2 for update', [serviceId, projectId])
       if (!rows[0]) throw new ApiError('Project data service not found', 404)
+      const consumers = await client.query<{ name: string }>(
+        `select p.name from project_data_services c join projects p on p.id=c.project_id where c.options->>'sharedFrom'=$1 order by p.name`, [serviceId])
+      const sharedReason = sharedRemovalReason(consumers.rows.map(row => row.name))
+      if (sharedReason) throw new ApiError(sharedReason, 409)
       const backup = await client.query<{ last_status: string }>('select last_status from data_service_backup_schedules where service_id=$1 for update', [serviceId])
       const migrations = await client.query<{ migration_count: number; migration_active: boolean }>(
         `select count(*)::int as migration_count,coalesce(bool_or(status in ('queued','running','validating')),false) as migration_active
@@ -693,12 +765,14 @@ export async function rotateProjectDataServicePassword(projectId: string, servic
   const service = rows[0]
   if (!service) throw new ApiError('Project data service not found', 404)
   if (service.options?.ownership === 'external') throw new ApiError('Manager cannot rotate credentials owned by an external database', 409)
+  if (service.options?.ownership === 'shared') throw new ApiError('Rotate this password from the application that owns the database; every stack application using it is updated', 409)
   const connection = await getSecretConnection(service.connection_id)
   const previousPassword = service.password_ciphertext ? decryptSecret(service.password_ciphertext) : ''
   await setProjectServicePassword(connection, service, password)
   try {
     await testProjectServiceCredential(connection, service.database_name, service.username, password)
-    await query('update project_data_services set password_ciphertext=$1,updated_at=now() where id=$2', [encryptSecret(password), service.id])
+    // Stack applications sharing this database receive the rotated credential too.
+    await query(`update project_data_services set password_ciphertext=$1,updated_at=now() where id=$2 or options->>'sharedFrom'=$2::text`, [encryptSecret(password), service.id])
   } catch (error) {
     if (previousPassword) await setProjectServicePassword(connection, service, previousPassword).catch(() => undefined)
     throw error

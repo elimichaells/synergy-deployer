@@ -85,9 +85,35 @@ function renderProxyRoute(route: CaddyProxyRoute) {
     return lines.join('\n')
 }
 
-function renderCaddyBlock(domain: string, port: number) {
+export interface StackDomainRoute { path_prefix: string; port: number; strip_prefix: boolean }
+
+/** Path routes from this domain to other stack applications, e.g. /api -> backend. */
+async function stackDomainRoutes(domain: string): Promise<StackDomainRoute[]> {
+    try {
+        const { query } = await import('./db')
+        const { rows } = await query<StackDomainRoute>(
+            `select r.path_prefix,r.strip_prefix,p.port from project_domain_routes r
+               join project_domains d on d.id=r.domain_id join projects p on p.id=r.project_id
+              where d.hostname=$1 and p.port is not null`, [domain])
+        return rows
+    } catch (error) {
+        // Hosts that never created the routes table have no stack routes yet.
+        if ((error as { code?: string }).code === '42P01') return []
+        throw error
+    }
+}
+
+export function renderCaddyBlock(domain: string, port: number, stackRoutes: StackDomainRoute[] = []) {
     const logFile = `C:\\Caddy\\logs\\${domain.replace(/\./g, '-')}-error.log`
-    const routes = appProxyRoutes(domain)
+    const stack = [...stackRoutes]
+        .sort((a, b) => b.path_prefix.length - a.path_prefix.length || a.path_prefix.localeCompare(b.path_prefix))
+        .map((route, index): CaddyProxyRoute => ({
+            matcher: `stack${index}`,
+            paths: [route.path_prefix, `${route.path_prefix}/*`],
+            port: route.port,
+            stripPrefix: route.strip_prefix ? route.path_prefix : undefined,
+        }))
+    const routes = [...appProxyRoutes(domain), ...stack]
     const proxyBlock = routes.length
         ? `${routes.map(renderProxyRoute).join('\n\n')}
 
@@ -168,7 +194,7 @@ async function applyCaddyUpdate(domain: string, port: number) {
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid application port')
     let content = await readFile(CADDYFILE_PATH, 'utf8')
     const sanitizedDomain = sanitizeDomain(domain)
-    content = replaceCaddyBlock(content, sanitizedDomain, renderCaddyBlock(sanitizedDomain, port))
+    content = replaceCaddyBlock(content, sanitizedDomain, renderCaddyBlock(sanitizedDomain, port, await stackDomainRoutes(sanitizedDomain)))
 
     await validateCaddyContent(content)
     await writeFile(CADDYFILE_PATH, content, 'utf8')
@@ -189,7 +215,7 @@ export async function updateCaddyDomainsStrict(domains: string[], port: number) 
     const sanitized = [...new Set(domains.map(sanitizeDomain))]
     if (!sanitized.length) return { domains: [], validation: '', reload: '' }
     let content = await readFile(CADDYFILE_PATH, 'utf8')
-    for (const domain of sanitized) content = replaceCaddyBlock(content, domain, renderCaddyBlock(domain, port))
+    for (const domain of sanitized) content = replaceCaddyBlock(content, domain, renderCaddyBlock(domain, port, await stackDomainRoutes(domain)))
     await validateCaddyContent(content)
     await writeFile(CADDYFILE_PATH, content, 'utf8')
     const validation = await runCommand(`"${CADDY_EXE}" validate --config "${CADDYFILE_PATH}" --adapter caddyfile`, process.cwd())

@@ -54,7 +54,40 @@ export async function relatedApplications(id: string) {
   const candidates = (await query(`select id,name,project_type,component_role from projects
     where environment='production' and id<>$1 and ($2::uuid is null or application_group_id is null or application_group_id=$2)
     order by name`, [project.production_id, project.application_group_id])).rows
-  return { ...project, members, candidates }
+  return { ...project, members, candidates, ...await stackResources(project.application_group_id) }
+}
+
+/** Databases and domains the members of a stack share with each other. */
+async function stackResources(groupId: string | null) {
+  if (!groupId) return { domains: [], sharedDatabases: [], routes: [] }
+  const { ensureDomainRoutesSchema } = await import('@/lib/domain-routes')
+  await ensureDomainRoutesSchema()
+  const { ensureDataServicesSchema } = await import('@/lib/data-services')
+  await ensureDataServicesSchema()
+  const [domains, sharedDatabases, routes] = await Promise.all([
+    query(`select d.id,d.hostname,d.project_id,d.is_primary from project_domains d join projects p on p.id=d.project_id
+      where p.application_group_id=$1 order by d.hostname`, [groupId]),
+    query(`select c.id,c.project_id,cp.name as project_name,s.project_id as owner_project_id,sp.name as owner_project_name,c.database_name,dc.provider
+      from project_data_services c join projects cp on cp.id=c.project_id
+      join project_data_services s on s.id::text=c.options->>'sharedFrom' join projects sp on sp.id=s.project_id
+      join data_connections dc on dc.id=c.connection_id
+      where cp.application_group_id=$1 order by sp.name,cp.name`, [groupId]),
+    query(`select r.id,d.hostname,r.path_prefix,r.strip_prefix,r.project_id,p.name as project_name,d.project_id as domain_project_id
+      from project_domain_routes r join project_domains d on d.id=r.domain_id join projects p on p.id=r.project_id
+      where p.application_group_id=$1 order by d.hostname,r.path_prefix`, [groupId]),
+  ])
+  return { domains: domains.rows, sharedDatabases: sharedDatabases.rows, routes: routes.rows }
+}
+
+export async function renameApplicationGroup(projectId: string, value: unknown, userId?: string) {
+  await ensureApplicationGroupsSchema()
+  const name = typeof value === 'string' ? value.trim() : ''
+  if (!name || name.length > 80) throw new ApiError('Stack name must be between 1 and 80 characters', 400)
+  const { rows } = await query<{ application_group_id: string | null }>('select application_group_id from projects where id=$1', [projectId])
+  if (!rows[0]) throw new ApiError('Application not found', 404)
+  if (!rows[0].application_group_id) throw new ApiError('This application is not part of a stack', 400)
+  await query('update application_groups set name=$1 where id=$2', [name, rows[0].application_group_id])
+  await query('insert into audit_logs (user_id,action,resource,details) values ($1,$2,$3,$4)', [userId || null, 'project.group.rename', 'project:' + projectId, { name }])
 }
 
 export async function updateApplicationGroup(id: string, body: { relatedProjectId?: unknown; role?: unknown; relatedRole?: unknown; unlink?: boolean }, userId?: string) {
@@ -66,6 +99,17 @@ export async function updateApplicationGroup(id: string, body: { relatedProjectI
     if (!rows[0]) throw new ApiError('Application not found', 404)
     const productionId = rows[0].id
     if (body.unlink) {
+      // Leaving a stack must not silently break a sibling's database or domain path.
+      const shared = await client.query<{ count: number }>(`select (
+          (case when to_regclass('project_data_services') is null then 0 else (select count(*) from project_data_services c
+            join project_data_services s on s.id::text=c.options->>'sharedFrom'
+            join projects cp on cp.id=c.project_id join projects sp on sp.id=s.project_id
+            where (cp.id=$1 or cp.production_id=$1 or sp.id=$1 or sp.production_id=$1)) end) +
+          (case when to_regclass('project_domain_routes') is null then 0 else (select count(*) from project_domain_routes r
+            join project_domains d on d.id=r.domain_id join projects rp on rp.id=r.project_id join projects dp on dp.id=d.project_id
+            where (rp.id=$1 or rp.production_id=$1 or dp.id=$1 or dp.production_id=$1)) end)
+        )::int as count`, [productionId])
+      if (shared.rows[0].count > 0) throw new ApiError('This application shares a database or domain path with its stack. Remove those first, then leave the stack.', 409)
       await client.query('update projects set application_group_id=null,updated_at=now() where id=$1 or production_id=$1', [productionId])
     } else {
       projectIdentifier(body.relatedProjectId)
