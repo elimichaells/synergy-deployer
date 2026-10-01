@@ -31,7 +31,6 @@ export default function InfrastructurePage() {
   }, [])
 
   const facts: Record<string, string | null> = summary ? {
-    '/data-services': `${summary.healthy}/${summary.servers} servers healthy · ${summary.databases} app databases`,
     '/domains': `${summary.domains} domains`,
     '/services': `${summary.online}/${summary.processes} processes online`,
   } : {}

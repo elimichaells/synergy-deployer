@@ -19,7 +19,7 @@ export function DataTab({ serviceId }: { serviceId: string }) {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    void fetch(`/api/storage/${serviceId}/data`, { cache: 'no-store' }).then(async response => {
+    void fetch(`/api/storage/${encodeURIComponent(serviceId)}/data`, { cache: 'no-store' }).then(async response => {
       const body = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(body.error || 'Could not read the tables')
       setTables(body.tables)
@@ -29,7 +29,7 @@ export function DataTab({ serviceId }: { serviceId: string }) {
   const open = useCallback(async (schema: string, name: string, page = 1) => {
     setSelected({ schema, name }); setLoading(true); setError('')
     try {
-      const response = await fetch(`/api/storage/${serviceId}/data/rows?schema=${encodeURIComponent(schema)}&table=${encodeURIComponent(name)}&page=${page}&pageSize=50`, { cache: 'no-store' })
+      const response = await fetch(`/api/storage/${encodeURIComponent(serviceId)}/data/rows?schema=${encodeURIComponent(schema)}&table=${encodeURIComponent(name)}&page=${page}&pageSize=50`, { cache: 'no-store' })
       const body = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(body.error || 'Could not read the rows')
       setRows(body)

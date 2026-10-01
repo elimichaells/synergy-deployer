@@ -10,6 +10,8 @@ import {
   type SecretConnection,
 } from '@/lib/data-services'
 import { databaseKey, hostKey, parseDatabaseEnv, uniqueDatabases, type DiscoveredDatabase } from '@/lib/database-discovery-policy'
+import { dropBlocker, parseServerDatabaseId, serverDatabaseId } from '@/lib/server-database-policy'
+import { quoteIdent, quoteLiteral, validateIdentifier } from '@/lib/db-admin'
 
 // Storage: every database apps use, whether Synergy created it, it was shared in a
 // project, or an app already pointed at it in its own .env before Synergy knew.
@@ -214,6 +216,8 @@ function serverRole(connection: { options: Record<string, unknown>; purpose: str
 export interface BackupSummary {
   scheduleId: string; frequency: string; enabled: boolean; lastStatus: string; lastFinishedAt: string | null; nextRunAt: string | null
   timeOfDay: string; timezone: string; dayOfWeek: number; dayOfMonth: number; monthOfYear: number; retentionCount: number
+  /** Set when the schedule belongs to the older control-server backup system rather than the app database one. */
+  legacy?: boolean
 }
 
 function backupSummary(row: { schedule_id: string | null; frequency: string | null; enabled: boolean | null; last_status: string | null; last_finished_at: string | null; next_run_at: string | null; time_of_day: string | null; timezone: string | null; day_of_week: number | null; day_of_month: number | null; month_of_year: number | null; retention_count: number | null }): BackupSummary {
@@ -260,6 +264,7 @@ export async function listStorage() {
   }
   const databases = [...groups.values()]
   await attachSizes(databases)
+  await attachControlBackups(databases)
   const superusers = await superuserNames(await connections())
   for (const database of databases) {
     if (database.serverRole === 'system') database.warnings.push('Shares a server with Synergy\'s own database')
@@ -269,6 +274,20 @@ export async function listStorage() {
     if (!database.backup && database.engine === 'postgresql') database.warnings.push('No backup schedule')
   }
   return databases.sort((a, b) => a.database.localeCompare(b.database))
+}
+
+/** Databases on Synergy's own server may be scheduled by the older control-server backup system. */
+async function attachControlBackups(databases: StorageDatabase[]) {
+  const targets = databases.filter(database => !database.backup && database.serverRole === 'system' && database.engine === 'postgresql')
+  if (!targets.length) return
+  try {
+    const { rows } = await query<{ id: string; database_name: string; frequency: string; enabled: boolean; last_status: string; last_finished_at: string | null; next_run_at: string | null; time_of_day: string; timezone: string; day_of_week: number; day_of_month: number; month_of_year: number; retention_count: number }>(
+      'select id,database_name,frequency,enabled,last_status,last_finished_at,next_run_at,time_of_day,timezone,day_of_week,day_of_month,month_of_year,retention_count from backup_schedules')
+    for (const database of targets) {
+      const row = rows.find(item => item.database_name === database.database)
+      if (row) database.backup = { ...backupSummary({ ...row, schedule_id: row.id }), legacy: true }
+    }
+  } catch { /* the older schedule table is optional */ }
 }
 
 async function attachSizes(databases: StorageDatabase[]) {
@@ -456,10 +475,114 @@ export async function restrictToLocalhost(connectionId: string) {
 }
 
 /** Where to connect to browse a database, using its server's admin account. PostgreSQL only. */
-export async function explorerTarget(serviceId: string) {
-  const database = await getStorageDatabase(serviceId)
-  if (database.engine !== 'postgresql') throw new ApiError('Browsing and SQL are available for PostgreSQL databases. Use the engine\'s own tool for others.', 409)
-  const connection = await getSecretConnection(database.serverId)
-  if (!connection.username) throw new ApiError('Synergy has no admin sign-in for this server, so it can\'t browse this database', 409)
-  return { database: database.database, target: { host: connection.host, port: connection.port, user: connection.username, password: connectionPassword(connection), database: database.database, ssl: connection.tls_enabled } }
+export async function explorerTarget(id: string) {
+  const untracked = parseServerDatabaseId(id)
+  let serverId: string
+  let name: string
+  if (untracked) {
+    serverId = untracked.connectionId
+    name = untracked.database
+  } else {
+    const database = await getStorageDatabase(id)
+    if (database.engine !== 'postgresql') throw new ApiError("Browsing and SQL are available for PostgreSQL databases. Use the engine's own tool for others.", 409)
+    serverId = database.serverId
+    name = database.database
+  }
+  const connection = await getSecretConnection(serverId)
+  if (connection.provider !== 'postgresql') throw new ApiError("Browsing and SQL are available for PostgreSQL databases. Use the engine's own tool for others.", 409)
+  if (!connection.username) throw new ApiError("Synergy has no admin sign-in for this server, so it can't browse this database", 409)
+  if (untracked) {
+    const exists = await adminQuery(serverId, 'select 1 from pg_database where datname = $1 and not datistemplate', [name])
+    if (!exists.length) throw new ApiError('Database not found on that server', 404)
+  }
+  return { database: name, target: { host: connection.host, port: connection.port, user: connection.username, password: connectionPassword(connection), database: name, ssl: connection.tls_enabled } }
+}
+
+export interface ServerDatabase {
+  /** The Storage id when an app tracks it; otherwise the id the Data and SQL tabs use. */
+  id: string
+  tracked: boolean
+  name: string
+  sizeBytes: number | null
+  owner: string | null
+  apps: { name: string; environment: string }[]
+  /** Apps whose environment files point at it without being linked in Storage. */
+  configuredFor: string[]
+  backup: BackupSummary | null
+  dropBlocker: string | null
+}
+
+type LegacyScheduleRow = { id: string; database_name: string; frequency: string; enabled: boolean; last_status: string; last_finished_at: string | null; next_run_at: string | null; time_of_day: string; timezone: string; day_of_week: number; day_of_month: number; month_of_year: number; retention_count: number }
+
+/** Every database on one PostgreSQL server, whether or not an app tracks it. */
+export async function listServerDatabases(serverId: string) {
+  const connection = await getSecretConnection(serverId)
+  if (connection.provider !== 'postgresql') throw new ApiError('Listing databases is available for PostgreSQL servers', 409)
+  if (!connection.username) throw new ApiError('Synergy has no admin sign-in for this server', 409)
+  const isSystemServer = connection.options?.system === true
+  const rows = await adminQuery(serverId, 'select d.datname as name, pg_database_size(d.datname)::bigint as size, pg_get_userbyid(d.datdba) as owner from pg_database d where not d.datistemplate order by d.datname')
+  const tracked = (await listStorage()).filter(database => database.serverId === serverId)
+  const configured = (await discoverDatabases()).filter(item => item.connectionId === serverId)
+  const control = process.env.DATABASE_NAME || 'server_manager'
+  const legacy = new Map<string, BackupSummary>()
+  if (isSystemServer) {
+    try {
+      const { rows: schedules } = await query<LegacyScheduleRow>(
+        'select id,database_name,frequency,enabled,last_status,last_finished_at,next_run_at,time_of_day,timezone,day_of_week,day_of_month,month_of_year,retention_count from backup_schedules')
+      for (const row of schedules) legacy.set(row.database_name, { ...backupSummary({ ...row, schedule_id: row.id }), legacy: true })
+    } catch { /* the older schedule table is optional */ }
+  }
+  const databases = rows.map((row): ServerDatabase => {
+    const name = String(row.name)
+    const match = tracked.find(database => database.database === name)
+    const configuredFor = [...new Set(configured.filter(item => item.database === name && !item.linked).map(item => item.projectName))]
+    return {
+      id: match ? match.id : serverDatabaseId(serverId, name), tracked: !!match, name, sizeBytes: Number(row.size), owner: row.owner ? String(row.owner) : null,
+      apps: match ? match.apps.map(app => ({ name: app.name, environment: app.environment })) : [], configuredFor,
+      backup: match?.backup || legacy.get(name) || null,
+      dropBlocker: dropBlocker({ name, controlDatabase: control, isSystemServer, trackedBy: match ? [...new Set(match.apps.map(app => app.name))] : [], usedBy: configuredFor }),
+    }
+  })
+  return { server: { id: serverId, name: connection.name, system: isSystemServer }, databases }
+}
+
+/** Creates an empty database (and optionally a login that owns it) on a server. The password is returned once. */
+export async function createServerDatabase(serverId: string, rawName: unknown, withOwner: boolean) {
+  const name = typeof rawName === 'string' ? rawName.trim() : ''
+  const nameError = validateIdentifier(name, 'Database name')
+  if (nameError) throw new ApiError(nameError, 400)
+  const connection = await getSecretConnection(serverId)
+  if (connection.provider !== 'postgresql' || !connection.username) throw new ApiError('Synergy can only create databases on PostgreSQL servers it can sign in to', 409)
+  if (connection.options?.system === true) throw new ApiError("Synergy's own PostgreSQL server does not take new databases. Create it on the apps server instead.", 409)
+  if ((await adminQuery(serverId, 'select 1 from pg_database where datname = $1', [name])).length) throw new ApiError(`A database named "${name}" already exists on this server`, 409)
+  if (!withOwner) {
+    await adminQuery(serverId, `create database ${quoteIdent(name)}`)
+    return { database: name }
+  }
+  const username = `${name}_user`
+  const userError = validateIdentifier(username, 'Username')
+  if (userError) throw new ApiError(userError, 400)
+  const { randomBytes } = await import('crypto')
+  const password = randomBytes(18).toString('base64url')
+  const roleExisted = (await adminQuery(serverId, 'select 1 from pg_roles where rolname = $1', [username])).length > 0
+  await adminQuery(serverId, `${roleExisted ? 'alter' : 'create'} role ${quoteIdent(username)} with login password ${quoteLiteral(password)}`)
+  try {
+    await adminQuery(serverId, `create database ${quoteIdent(name)} owner ${quoteIdent(username)}`)
+  } catch (error) {
+    if (!roleExisted) await adminQuery(serverId, `drop role if exists ${quoteIdent(username)}`).catch(() => undefined)
+    throw error
+  }
+  return { database: name, owner: { username, password } }
+}
+
+/** Drops a database nothing uses. The caller has already made the admin type its name. */
+export async function dropServerDatabase(serverId: string, name: string) {
+  const nameError = validateIdentifier(name, 'Database name')
+  if (nameError) throw new ApiError(nameError, 400)
+  const { databases } = await listServerDatabases(serverId)
+  const target = databases.find(database => database.name === name)
+  if (!target) throw new ApiError('Database not found on that server', 404)
+  if (target.dropBlocker) throw new ApiError(target.dropBlocker, 409)
+  await adminQuery(serverId, 'select pg_terminate_backend(pid) from pg_stat_activity where datname = $1 and pid <> pg_backend_pid()', [name])
+  await adminQuery(serverId, `drop database ${quoteIdent(name)}`)
 }

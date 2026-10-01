@@ -4,16 +4,14 @@ import { Boxes, Cpu, Database, Gauge, Globe2, HardDrive, Rocket, Server, Setting
 export const navItems = [
   { href: '/', label: 'Overview', icon: Gauge, description: 'Workspace health', matches: ['/'] },
   { href: '/projects', label: 'Projects', icon: Boxes, description: 'Your apps, grouped by product', matches: ['/projects', '/sites'] },
-  { href: '/storage', label: 'Storage', icon: Database, description: 'Every database your apps use', matches: ['/storage'] },
+  { href: '/storage', label: 'Storage', icon: Database, description: 'Every database your apps use', matches: ['/storage', '/data-services', '/database'] },
   { href: '/deployments', label: 'Deployments', icon: Rocket, description: 'Release history and logs', matches: ['/deployments'] },
-  { href: '/infrastructure', label: 'Infrastructure', icon: Server, description: 'Server-level services (admins)', matches: ['/infrastructure', '/data-services', '/database', '/domains', '/services', '/automation'] },
+  { href: '/infrastructure', label: 'Infrastructure', icon: Server, description: 'Server-level services (admins)', matches: ['/infrastructure', '/domains', '/services', '/automation'] },
   { href: '/settings', label: 'Settings', icon: Settings, description: 'Account, team and integrations', matches: ['/settings'] },
 ]
 
 /** Server-level areas, shown in the Infrastructure side menu. */
 export const infrastructureItems = [
-  { href: '/data-services', label: 'Database servers', icon: HardDrive, description: 'Engines, network exposure, backups and migrations' },
-  { href: '/database', label: 'Unlinked databases', icon: Database, description: 'Databases on the server that no app uses (advanced)' },
   { href: '/domains', label: 'Domains & DNS', icon: Globe2, description: 'Cloudflare accounts and every public address' },
   { href: '/services', label: 'Processes', icon: Cpu, description: 'Running processes and the Caddy web server' },
   { href: '/automation', label: 'Jobs & workers', icon: Workflow, description: 'Scheduled jobs and background workers' },

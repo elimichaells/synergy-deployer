@@ -3,12 +3,13 @@
 import { Suspense, useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ArrowUpRight, Bell, Check, Database, Eye, EyeOff, Folder, Github, Globe2, HardDrive, Loader2, LockKeyhole, LogOut, RefreshCw, Save, Search, Send, Server, Undo2, UserRound, Users, Wrench } from 'lucide-react'
+import { ArrowUpRight, Bell, Check, Database, Eye, EyeOff, Folder, Github, HardDrive, Loader2, LockKeyhole, LogOut, RefreshCw, Save, Search, Send, Server, Undo2, UserRound, Users, Wrench } from 'lucide-react'
 import { AppShell } from '@/components/layout/app-shell'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { GitHubConnections } from '@/components/settings/github-connections'
+import { OtherConnections } from '@/components/settings/other-connections'
 import { EDITABLE_SETTINGS, MOVED_SETTINGS_SECTIONS, SETTINGS_SECTIONS, SECTION_FIELDS, settingsChanges, settingsForm, settingsSection, validateSettingsSection, type SettingsField, type SettingsForm, type SettingsSection } from '@/lib/settings-workspace'
 
 interface SessionUser { id: string; email: string; name: string; role: 'admin' | 'operator' | 'viewer' }
@@ -267,7 +268,7 @@ function SettingsWorkspace() {
           {section === 'account' && <YourAccount user={user} />}
           {(section === 'integrations' || visited.includes('integrations')) && <div hidden={section !== 'integrations'} className="space-y-8">
             <GitHubConnections isAdmin={isAdmin} />
-            <div><h3 className="mb-2 text-sm font-semibold">Other connected services</h3><ManagementLink href="/domains" icon={Globe2} label="Cloudflare" detail="Accounts Synergy uses to create DNS records, in Infrastructure > Domains & DNS" /><ManagementLink href="/data-services" icon={Database} label="Database servers" detail="Engines apps get their databases from, in Infrastructure > Database servers" /></div>
+            <OtherConnections isAdmin={isAdmin} />
           </div>}
           {section === 'notifications' && <form onSubmit={formSubmit}>
             <FieldRow label="Deployment webhook" hint="Slack, Discord, or a JSON webhook endpoint."><div className="flex items-center gap-2"><input aria-label="Deployment webhook URL" className="control-input" type={showWebhook ? 'text' : 'password'} autoComplete="off" spellCheck={false} value={draft.NOTIFY_WEBHOOK_URL} onChange={event => edit('NOTIFY_WEBHOOK_URL', event.target.value)} disabled={!isAdmin || !loaded || !!saving} placeholder="https://hooks.example.com/..." /><Button type="button" variant="ghost" size="icon" className="shrink-0" onClick={() => setShowWebhook(value => !value)} title={showWebhook ? 'Hide webhook URL' : 'Show webhook URL'} aria-label={showWebhook ? 'Hide webhook URL' : 'Show webhook URL'}>{showWebhook ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</Button></div></FieldRow>

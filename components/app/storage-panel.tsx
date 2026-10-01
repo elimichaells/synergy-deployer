@@ -272,7 +272,7 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
                         <DropdownMenu.Item className={menuItem} disabled={service.application_primary || role === 'viewer' || service.options?.ownership === 'adopted'} onSelect={() => void makePrimary(service)}><Star className="h-3.5 w-3.5" />Make main database</DropdownMenu.Item>
                         <DropdownMenu.Item className={menuItem} disabled={!isAdmin || !!service.options?.ownership && service.options.ownership !== 'manager' || service.provider === 'redis'} onSelect={() => { setPasswordFor(service); setPassword({ value: '', confirm: '' }) }}><KeyRound className="h-3.5 w-3.5" />Change password</DropdownMenu.Item>
                         {['mysql', 'mariadb'].includes(service.provider) && <DropdownMenu.Item asChild className={menuItem}><a href="/mysql/" target="_blank" rel="noreferrer"><ArrowUpRight className="h-3.5 w-3.5" />Open phpMyAdmin</a></DropdownMenu.Item>}
-                        <DropdownMenu.Item asChild className={menuItem}><Link href={`/data-services?project=${projectId}`}><Database className="h-3.5 w-3.5" />Backups & advanced</Link></DropdownMenu.Item>
+                        <DropdownMenu.Item asChild className={menuItem}><Link href={`/storage/${service.id}?tab=backups`}><Database className="h-3.5 w-3.5" />Backups & details</Link></DropdownMenu.Item>
                       </DropdownMenu.Content>
                     </DropdownMenu.Portal>
                   </DropdownMenu.Root>

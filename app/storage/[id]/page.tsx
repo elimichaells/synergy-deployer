@@ -15,6 +15,7 @@ import { DedicatedUserSheet } from '@/components/storage/dedicated-user-sheet'
 import { DataTab } from '@/components/storage/data-tab'
 import { SqlTab } from '@/components/storage/sql-tab'
 import { ScheduleSheet, type ScheduleValues } from '@/components/storage/schedule-sheet'
+import { ControlBackupsPanel } from '@/components/storage/control-backups-panel'
 import { relativeTime } from '@/lib/deployment-stages'
 import { formatBytes } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -23,7 +24,7 @@ interface App { serviceId: string; projectId: string; name: string; environment:
 interface Detail {
   id: string; database: string; engine: Provider; serverId: string; serverName: string; serverRole: 'system' | 'apps' | 'external'; host: string; port: number
   sizeBytes: number | null; tableCount: number | null; ownership: string; apps: App[]; warnings: string[]
-  backup: (ScheduleValues & { scheduleId: string; lastStatus: string; lastFinishedAt: string | null; nextRunAt: string | null }) | null
+  backup: (ScheduleValues & { scheduleId: string; lastStatus: string; lastFinishedAt: string | null; nextRunAt: string | null; legacy?: boolean }) | null
   backups: { file: string; serviceId: string; sizeBytes: number; createdAt: string }[]
 }
 interface Engine { id: string; listen: string | null; localOnly: boolean | null; remoteRules: number | null; ssl: boolean | null; pendingRestart: boolean }
@@ -210,7 +211,7 @@ export default function DatabasePage() {
                   <p className="font-medium">Recommended: connect through a tunnel</p>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">Keep the database private and reach it from your computer through an encrypted tunnel instead of opening its port. With OpenSSH Server enabled on this machine:</p>
                   <code className="mt-2 block rounded-md border border-border bg-black px-3 py-2 text-xs">ssh -L 15432:127.0.0.1:{database.port} Administrator@your-server</code>
-                  <p className="mt-2 text-xs text-muted-foreground">Then connect your database tool to <span className="font-mono text-foreground">127.0.0.1:15432</span>. A private network such as Tailscale or WireGuard works the same way. Server-wide network settings are in <Link href="/data-services" className="text-foreground underline-offset-4 hover:underline">Infrastructure &gt; Database servers</Link>.</p>
+                  <p className="mt-2 text-xs text-muted-foreground">Then connect your database tool to <span className="font-mono text-foreground">127.0.0.1:15432</span>. A private network such as Tailscale or WireGuard works the same way. Server-wide network settings are in <Link href="/storage?tab=servers" className="text-foreground underline-offset-4 hover:underline">Storage &gt; Servers</Link>.</p>
                 </div>
               </div>
             )}
@@ -222,6 +223,8 @@ export default function DatabasePage() {
             <Section title="Backups" description={`Synergy backs up PostgreSQL databases. Back up ${providerMeta[database.engine]?.label} databases with the server's own tools${database.engine === 'mysql' || database.engine === 'mariadb' ? ', for example phpMyAdmin\'s Export' : ''}.`} />
           ) : database.serverRole === 'external' ? (
             <Section title="Backups" description="This database is hosted elsewhere. Use its provider's backups." />
+          ) : database.backup?.legacy ? (
+            <ControlBackupsPanel database={database.database} isAdmin={access.isAdmin} />
           ) : (
             <>
               <Section title="Schedule" description="Backups are compressed PostgreSQL dumps stored on this server."
@@ -271,7 +274,7 @@ export default function DatabasePage() {
           </Section>
         </TabsContent>
       </AppShell>
-      <ScheduleSheet serviceId={database.id} initial={database.backup} open={scheduleOpen} onOpenChange={setScheduleOpen} onSaved={() => void load().catch(() => undefined)} />
+      <ScheduleSheet target={{ kind: 'service', serviceId: database.id }} initial={database.backup} open={scheduleOpen} onOpenChange={setScheduleOpen} onSaved={() => void load().catch(() => undefined)} />
       <DedicatedUserSheet serviceId={database.id} open={dedicatedOpen} onOpenChange={setDedicatedOpen} onDone={() => { setRevealed(null); void load().catch(() => undefined) }} />
     </Tabs>
   )

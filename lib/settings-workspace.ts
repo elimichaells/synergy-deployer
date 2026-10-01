@@ -1,7 +1,7 @@
 export const SETTINGS_SECTIONS = [
   { id: 'account', group: 'Personal', label: 'Your account', description: 'Who you are signed in as and what you can do.' },
   { id: 'access', group: 'Workspace', label: 'Team & access', description: 'Everyone who can sign in to Synergy, and their roles.' },
-  { id: 'integrations', group: 'Workspace', label: 'Git & integrations', description: 'GitHub accounts Synergy deploys from, and other connected services.' },
+  { id: 'integrations', group: 'Workspace', label: 'Connections', description: 'Everything Synergy is connected to: GitHub, Cloudflare and database servers.' },
   { id: 'notifications', group: 'Workspace', label: 'Notifications', description: 'Where Synergy sends a message after each deployment.' },
   { id: 'general', group: 'Server', label: 'App folders', description: 'Where Synergy puts the code of apps you add from now on.' },
   { id: 'backups', group: 'Server', label: 'Backups', description: 'Where PostgreSQL backups are stored and how long they are kept.' },

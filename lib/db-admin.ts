@@ -64,12 +64,12 @@ function getPool(database: string, target?: ExplorerTarget): Pool {
 }
 
 /** Quote a SQL identifier (table/schema/column name) */
-function quoteIdent(name: string) {
+export function quoteIdent(name: string) {
   return `"${name.replace(/"/g, '""')}"`
 }
 
 /** Quote a SQL string literal (for statements that cannot take parameters) */
-function quoteLiteral(value: string) {
+export function quoteLiteral(value: string) {
   return `'${value.replace(/'/g, "''")}'`
 }
 

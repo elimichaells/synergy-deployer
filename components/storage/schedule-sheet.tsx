@@ -16,8 +16,11 @@ const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 
 const timezones = ['UTC', 'Africa/Accra', 'Europe/London', 'America/New_York', 'America/Los_Angeles', 'Asia/Dubai']
 export const defaultSchedule: ScheduleValues = { enabled: true, frequency: 'daily', timeOfDay: '03:00', timezone: 'UTC', dayOfWeek: 0, dayOfMonth: 1, monthOfYear: 1, retentionCount: 30 }
 
+/** Which backup system a schedule belongs to: an app's database, or a database on Synergy's own server. */
+export type ScheduleTarget = { kind: 'service'; serviceId: string } | { kind: 'control'; database: string; scheduleId?: string }
+
 /** Edit when a database is backed up and how many backups are kept. */
-export function ScheduleSheet({ serviceId, initial, open, onOpenChange, onSaved }: { serviceId: string; initial: ScheduleValues | null; open: boolean; onOpenChange: (open: boolean) => void; onSaved: () => void }) {
+export function ScheduleSheet({ target, initial, open, onOpenChange, onSaved }: { target: ScheduleTarget; initial: ScheduleValues | null; open: boolean; onOpenChange: (open: boolean) => void; onSaved: () => void }) {
   const [values, setValues] = useState<ScheduleValues>(initial || defaultSchedule)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -27,7 +30,12 @@ export function ScheduleSheet({ serviceId, initial, open, onOpenChange, onSaved 
   const save = async () => {
     setSaving(true); setError('')
     try {
-      const response = await fetch('/api/data/backups/schedules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ serviceId, ...values }) })
+      const request = target.kind === 'service'
+        ? { url: '/api/data/backups/schedules', method: 'POST', body: { serviceId: target.serviceId, ...values } }
+        : target.scheduleId
+          ? { url: `/api/db/backups/schedules/${target.scheduleId}`, method: 'PATCH', body: values }
+          : { url: '/api/db/backups/schedules', method: 'POST', body: { database: target.database, ...values } }
+      const response = await fetch(request.url, { method: request.method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request.body) })
       const body = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(body.error || 'The schedule could not be saved')
       onOpenChange(false); onSaved()

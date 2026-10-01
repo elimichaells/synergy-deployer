@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { AlertTriangle, Loader2, Lock, Network } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ProviderLogo, type Provider } from '@/components/app/providers'
@@ -21,7 +21,7 @@ const roleHelp: Record<string, string> = {
 }
 
 /** Each database server: what it's for, how exposed it is, and what lives on it. */
-export function EnginesPanel() {
+export function EnginesPanel({ renderActions }: { renderActions?: (engine: Engine) => ReactNode }) {
   const [engines, setEngines] = useState<Engine[] | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
@@ -53,8 +53,8 @@ export function EnginesPanel() {
   return (
     <section className="space-y-3">
       <div>
-        <h2 className="text-sm font-semibold">Servers at a glance</h2>
-        <p className="text-xs text-muted-foreground">What each database server is for, who can reach it, and what lives on it.</p>
+        <h2 className="text-sm font-semibold">Servers</h2>
+        <p className="text-xs text-muted-foreground">What each database server is for, who can reach it, and what lives on it. Synergy signs in to each server&apos;s admin account (stored encrypted) to check its health and to give every app its own database and user.</p>
       </div>
       {message && <p role={message.tone === 'error' ? 'alert' : 'status'} className={cn('rounded-md border px-3 py-2 text-sm', message.tone === 'error' ? 'border-red-400/25 bg-red-400/5 text-red-300' : 'border-status-ready/25 bg-status-ready/5 text-emerald-200')}>{message.text}</p>}
       <div className="grid gap-3 xl:grid-cols-2">
@@ -80,6 +80,7 @@ export function EnginesPanel() {
                 <Button size="sm" variant="outline" onClick={() => void restrict(engine)} disabled={busy !== null}>{busy === engine.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Lock className="mr-1.5 h-3.5 w-3.5" />}Restrict to this machine</Button>
               </div>
             )}
+            {renderActions?.(engine)}
           </div>
         ))}
       </div>

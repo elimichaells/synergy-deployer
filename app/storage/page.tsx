@@ -11,6 +11,8 @@ import { formatBytes } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { Flag, serverRoleLabel } from '@/components/storage/bits'
 import { AddDatabaseSheet } from '@/components/storage/add-database-sheet'
+import { ServersAndMigrations } from '@/components/storage/servers-panel'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 interface StorageApp { serviceId: string; projectId: string; name: string; environment: string; groupId: string | null; groupName: string | null; ownership: string }
 interface StorageDatabase { key: string; id: string; database: string; engine: Provider; serverName: string; serverRole: 'system' | 'apps' | 'external'; sizeBytes: number | null; apps: StorageApp[]; backup: { lastStatus: string; lastFinishedAt: string | null; enabled: boolean; frequency: string } | null; warnings: string[] }
@@ -26,6 +28,7 @@ export default function StoragePage() {
   const [busy, setBusy] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
   const [addOpen, setAddOpen] = useState(false)
+  const [tab, setTab] = useState('databases')
 
   const load = async () => {
     setError('')
@@ -37,6 +40,10 @@ export default function StoragePage() {
     } catch (err) { setError((err as Error).message); setDatabases(current => current || []) }
   }
   useEffect(() => { void load() }, [])
+  useEffect(() => {
+    const value = new URLSearchParams(window.location.search).get('tab')
+    if (value === 'servers' || value === 'migrations') setTab(value)
+  }, [])
 
   const link = async (item: Found) => {
     setBusy(item.projectId + item.source); setError(''); setNotice('')
@@ -61,15 +68,29 @@ export default function StoragePage() {
   const total = (databases || []).reduce((sum, database) => sum + (database.sizeBytes || 0), 0)
   const atRisk = (databases || []).filter(database => database.warnings.length).length
 
+  const tabs = (
+    <TabsList className="scrollbar-none h-auto min-h-0 w-full justify-start gap-0 overflow-x-auto border-0 bg-transparent p-0">
+      {[['databases', 'Databases'], ['servers', 'Servers'], ['migrations', 'Migrations']].map(([value, label]) => (
+        <TabsTrigger key={value} value={value} className="group relative min-h-0 rounded-none border-0 px-1 pb-3 pt-1 text-[13px] font-normal text-muted-foreground data-[state=active]:text-foreground">
+          <span className="rounded-md px-2.5 py-1.5 transition-colors group-hover:bg-white/[0.06]">{label}</span>
+          <span className="absolute inset-x-2 bottom-0 hidden h-[2px] rounded-full bg-foreground group-data-[state=active]:block" aria-hidden="true" />
+        </TabsTrigger>
+      ))}
+    </TabsList>
+  )
+
   return (
+    <Tabs value={tab} onValueChange={value => { setTab(value); window.history.replaceState(null, '', value === 'databases' ? '/storage' : `?tab=${value}`) }}>
     <AppShell
+      tabs={tabs}
       title="Storage"
       subtitle={databases ? `${databases.length} databases · ${formatBytes(total)}${atRisk ? ` · ${atRisk} need attention` : ''}` : 'Every database your apps use.'}
-      actions={<>
+      actions={tab === 'databases' ? <>
         <Button variant="outline" size="sm" onClick={() => void load()}><RefreshCw className="mr-1.5 h-3.5 w-3.5" />Refresh</Button>
         <Button size="sm" onClick={() => setAddOpen(true)}><Plus className="mr-1.5 h-4 w-4" />Add database</Button>
-      </>}
+      </> : undefined}
     >
+      <TabsContent value="databases" className="mt-0">
       {error && <div role="alert" className="notice-error">{error}</div>}
       {notice && <p role="status" className="mb-5 rounded-md border border-status-ready/25 bg-status-ready/5 px-4 py-3 text-sm text-emerald-200">{notice}</p>}
 
@@ -151,7 +172,11 @@ export default function StoragePage() {
         </div>
       )}
       {atRisk > 0 && <p className="mt-4 flex items-center gap-1.5 text-xs text-muted-foreground"><ShieldAlert className="h-3.5 w-3.5" />Databases marked with a warning sign have a risk worth fixing. Open one to see what and how.</p>}
+      </TabsContent>
+      <TabsContent value="servers" className="mt-0"><ServersAndMigrations view="servers" /></TabsContent>
+      <TabsContent value="migrations" className="mt-0"><ServersAndMigrations view="migrations" /></TabsContent>
       <AddDatabaseSheet open={addOpen} onOpenChange={setAddOpen} unlinked={found.length} />
     </AppShell>
+    </Tabs>
   )
 }

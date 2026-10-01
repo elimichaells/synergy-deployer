@@ -19,7 +19,7 @@ export function SqlTab({ serviceId, database }: { serviceId: string; database: s
     if (running || !sql.trim()) return
     setRunning(true); setError(''); setResult(null)
     try {
-      const response = await fetch(`/api/storage/${serviceId}/data/sql`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sql, allowWrites }) })
+      const response = await fetch(`/api/storage/${encodeURIComponent(serviceId)}/data/sql`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sql, allowWrites }) })
       const body = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(body.error || 'The query failed')
       setResult(body)
