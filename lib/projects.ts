@@ -33,7 +33,7 @@ async function ensureProjectSchemas() {
 
 const APPS = `coalesce(json_agg(json_build_object(
     'id',p.id,'name',p.name,'component_role',p.component_role,'environment',p.environment,'project_type',p.project_type,
-    'port',p.port,'url',p.url,'is_active',p.is_active,'production_id',p.production_id,'repo_url',p.repo_url,'default_branch',p.default_branch,
+    'port',p.port,'url',p.url,'is_active',p.is_active,'production_id',p.production_id,'repo_url',p.repo_url,'default_branch',p.default_branch,'auto_deploy',p.auto_deploy,
     'setup_required',(ps.project_id is not null and ps.completed_at is null),
     'deployment_status',(select d.status from deployments d where d.project_id=p.id order by d.started_at desc nulls last limit 1),
     'deployed_at',(select coalesce(d.finished_at,d.started_at) from deployments d where d.project_id=p.id order by d.started_at desc nulls last limit 1)

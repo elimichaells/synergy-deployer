@@ -773,6 +773,10 @@ export default function SitePage() {
         </span>}
         tabs={tabs}
         actions={<>
+          {canWrite && !project.setup_required && <label className="flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground" title={project.auto_deploy ? `Deploys when you push to ${project.default_branch}` : 'Pushes are ignored; deploy manually'}>
+            <Zap className={`h-3.5 w-3.5 ${project.auto_deploy ? 'text-status-ready' : ''}`} aria-hidden="true" />Auto-deploy
+            <Switch checked={project.auto_deploy} disabled={savingAutoDeploy} onCheckedChange={() => void handleToggleAutoDeploy()} aria-label="Auto-deploy" />
+          </label>}
           {primaryUrl && <Button asChild variant="outline" size="sm"><a href={primaryUrl} target="_blank" rel="noreferrer">Visit<ArrowUpRight className="ml-1.5 h-3.5 w-3.5" /></a></Button>}
           {project.environment === 'staging' && (
             <Button variant="outline" size="sm" onClick={() => void handlePromote()} disabled={!canWrite || promoting || sameAsProduction} title={sameAsProduction ? 'Production already runs this commit' : 'Merge into production and deploy it'}>

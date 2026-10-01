@@ -4,9 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { ArrowRight, ArrowUpRight, Boxes, Check, ChevronDown, CornerDownRight, Database, Github, Globe2, Layers, Link2, Loader2, Pencil, Plus, Rocket, Unlink, Workflow, X } from 'lucide-react'
+import { ArrowRight, ArrowUpRight, Boxes, Check, ChevronDown, CornerDownRight, Database, Github, Globe2, Layers, Link2, Loader2, Pencil, Plus, Rocket, Unlink, Workflow, X, Zap } from 'lucide-react'
 import { AppShell } from '@/components/layout/app-shell'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { FrameworkAvatar, FrameworkLogo } from '@/components/synergy/framework-logo'
@@ -18,7 +19,7 @@ import { ProjectServiceSheet } from '@/components/app/project-service-sheet'
 import { relativeTime } from '@/lib/deployment-stages'
 import { cn } from '@/lib/utils'
 
-interface App { id: string; name: string; component_role: string; environment: 'production' | 'staging'; project_type: string; port: number | null; url: string | null; is_active: boolean; production_id: string | null; setup_required: boolean; repo_url: string | null; default_branch: string; deployment_status: DeployStatus | null; deployed_at: string | null }
+interface App { id: string; name: string; component_role: string; environment: 'production' | 'staging'; project_type: string; port: number | null; url: string | null; is_active: boolean; production_id: string | null; setup_required: boolean; repo_url: string | null; default_branch: string; auto_deploy: boolean; deployment_status: DeployStatus | null; deployed_at: string | null }
 interface Domain { id: string; hostname: string; project_id: string; is_primary: boolean; dns_status: string; ssl_status: string }
 interface Route { id: string; domain_id: string; hostname: string; domain_project_id: string; project_id: string; path_prefix: string; strip_prefix: boolean }
 interface DatabaseRow { id: string; project_id: string; name: string; database_name: string; application_primary: boolean; options: { ownership?: string; sharedFrom?: string }; provider: Provider; connection_name: string; backup_status: string | null; backup_frequency: string | null }
@@ -90,6 +91,19 @@ export default function ProjectPage() {
       if (!response.ok) throw new Error(body.error || 'Deployment failed to start')
       if (body.deploymentId) router.push(`/deployments/${body.deploymentId}`)
     } catch (err) { setError((err as Error).message) } finally { setBusy(null) }
+  }
+
+  const setAutoDeploy = async (app: App, enabled: boolean) => {
+    setBusy(`auto-${app.id}`); setError('')
+    setProject(current => current && { ...current, apps: current.apps.map(item => item.id === app.id ? { ...item, auto_deploy: enabled } : item) })
+    try {
+      const response = await fetch(`/api/sites/${app.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ autoDeploy: enabled }) })
+      const body = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(body.error || 'Could not change automatic deploys')
+    } catch (err) {
+      setProject(current => current && { ...current, apps: current.apps.map(item => item.id === app.id ? { ...item, auto_deploy: !enabled } : item) })
+      setError((err as Error).message)
+    } finally { setBusy(null) }
   }
 
   const rename = async () => {
@@ -260,6 +274,10 @@ export default function ProjectPage() {
                     {app.setup_required ? <span className="text-amber-200">Setup incomplete</span> : app.deployment_status ? <StatusLabel status={app.deployment_status} className="text-xs" /> : 'Not deployed'}
                     {app.deployed_at && <p className="mt-0.5">{relativeTime(app.deployed_at, now)}</p>}
                   </div>
+                  {!app.setup_required && <label className="flex items-center gap-2 text-xs text-muted-foreground" title={app.auto_deploy ? `Deploys when you push to ${app.default_branch}` : 'Pushes are ignored; deploy manually'}>
+                    <Zap className={`h-3.5 w-3.5 ${app.auto_deploy ? 'text-status-ready' : ''}`} aria-hidden="true" />Auto-deploy
+                    <Switch checked={app.auto_deploy} disabled={!access.canWrite || busy !== null} onCheckedChange={checked => void setAutoDeploy(app, checked)} aria-label={`Auto-deploy ${app.name}`} />
+                  </label>}
                   <div className="flex gap-2">
                     {app.setup_required
                       ? <Button asChild size="sm" variant="outline"><Link href={`/sites/${app.id}?tab=setup`}>Finish setup</Link></Button>
