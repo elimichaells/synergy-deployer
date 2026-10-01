@@ -126,6 +126,20 @@ verifies the new login, backs up and rewrites the apps' env files, and restarts
 each app with a health check. If any app does not come back healthy, the env
 files, ownership and user are all put back.
 
+### Everything in reach, in plain words (2.8.0)
+
+A project now has the same tabs as an app, covering all of its apps:
+**Deployments**, **Environment** (the variable names in each app's `.env`,
+never the values) and **Logs & console**, plus a "What do you want to do?"
+panel, and every app lists labelled shortcuts to all of its tools. Inside an
+app the tabs have plain names (Environment, Logs & console, Databases) with a
+hover explanation each, and Overview gains an "Everything for this app" panel.
+
+Deploys also support **temporary security exceptions**: a manager-owned
+`security-exceptions.json` can accept a specific advisory for one exact project
+with a written reason and an expiry. See `docs/release-pipeline.md`. With no
+file present, nothing changes.
+
 ### One list, clearer names (2.7.0)
 
 **Projects** now holds both lists with an in-page Projects / Apps toggle; the
