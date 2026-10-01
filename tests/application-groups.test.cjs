@@ -31,12 +31,27 @@ test('group linking rejects self-links, invalid roles, staging roots and implici
   await assert.rejects(api.linkApplicationProjects({}, id1, id1, 'frontend'), error => error.status === 400);
   assert.throws(() => api.componentRole('arbitrary'), error => error.status === 400);
   for (const staging of [true, false]) {
-    const client = { query: async () => ({ rows: [
+    const client = { query: async sql => sql.includes('count(*)') ? { rows: [{ count: 1 }] } : { rows: [
       { id: id1, environment: staging ? 'staging' : 'production', application_group_id: 'one' },
       { id: id2, environment: 'production', application_group_id: 'two' },
-    ] }) };
+    ] } };
     await assert.rejects(api.linkApplicationProjects(client, id1, id2, 'frontend'), error => error.status === (staging ? 400 : 409));
   }
+});
+
+test('an application alone in its project moves into another project and leaves no empty project behind', async () => {
+  const writes = [];
+  const client = { query: async (sql, values) => {
+    if (sql.startsWith('select id,name')) return { rows: [
+      { id: id1, name: 'API', environment: 'production', component_role: 'application', application_group_id: 'solo' },
+      { id: id2, name: 'Portal', environment: 'production', component_role: 'frontend', application_group_id: groupId },
+    ] };
+    if (sql.includes('count(*)')) return { rows: [{ count: 0 }] };
+    writes.push({ sql, values }); return { rows: [] };
+  } };
+  assert.equal(await groupApi().linkApplicationProjects(client, id1, id2, 'backend'), groupId);
+  assert.deepEqual(writes.filter(row => row.sql.startsWith('update projects')).map(row => row.values[0]), [groupId, groupId]);
+  assert.ok(writes.some(row => row.sql.startsWith('delete from application_groups') && row.values[0] === 'solo'));
 });
 
 async function createProject(body, role = 'admin') {
@@ -57,7 +72,8 @@ async function createProject(body, role = 'admin') {
     '@/lib/project-pins': { ensureProjectPinsSchema: async () => {} },
     '@/lib/project-setup-policy': { validateSetupRepository() {} }, '@/lib/project-types': { PROJECT_TYPES: { next: {} } },
     '@/lib/application-groups': { ensureApplicationGroupsSchema: async () => {}, componentRole: groupApi().componentRole, projectIdentifier: groupApi().projectIdentifier,
-      linkApplicationProjects: async (...args) => { calls.push({ link: args.slice(1) }); } },
+      linkApplicationProjects: async (...args) => { calls.push({ link: args.slice(1) }); },
+      assignOwnProject: async (...args) => { calls.push({ own: args.slice(1) }); } },
   });
   const response = await api.POST(new Request('http://localhost/api/sites', { method: 'POST', body: JSON.stringify({ name: 'Fixture', repoUrl: 'https://github.com/example/fixture', projectType: 'next', defaultBranch: 'main', setupDraft: true, ...body }) }));
   return { response, calls, portOptions };
@@ -88,6 +104,9 @@ test('creation can atomically join a related application and viewers cannot crea
   const linked = await createProject({ createStaging: false, relatedProjectId: id2, componentRole: 'frontend' });
   assert.equal(linked.response.status, 201);
   assert.deepEqual(linked.calls.find(call => call.link).link, [id1, id2, 'frontend']);
+  assert.ok(!linked.calls.some(call => call.own), 'joining a project must not also create one');
+  const standalone = await createProject({ createStaging: false });
+  assert.equal(standalone.calls.find(call => call.own).own[0], id1, 'a standalone app starts its own project');
   const viewer = await createProject({ createStaging: false }, 'viewer');
   assert.equal(viewer.response.status, 403); assert.equal(viewer.calls.length, 0);
 });

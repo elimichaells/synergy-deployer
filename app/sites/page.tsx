@@ -387,54 +387,6 @@ export default function ProjectsPage() {
     )
   }
 
-  // Stacks: production members of each application group, ordered frontend → backend → services.
-  const stacks = useMemo(() => {
-    const order = ['frontend', 'application', 'backend', 'service']
-    const groups = new Map<string, Project[]>()
-    for (const project of projects) {
-      if (!project.application_group_name || project.environment !== 'production') continue
-      groups.set(project.application_group_name, [...(groups.get(project.application_group_name) || []), project])
-    }
-    return [...groups.entries()].map(([name, members]) => ({ name, members: members.sort((a, b) => order.indexOf(a.component_role || 'application') - order.indexOf(b.component_role || 'application')) }))
-      .filter(stack => !searchQuery || stack.name.toLowerCase().includes(searchQuery.toLowerCase()) || stack.members.some(member => member.name.toLowerCase().includes(searchQuery.toLowerCase())))
-  }, [projects, searchQuery])
-
-  const renderStacks = () => stacks.length > 0 && environmentFilter !== 'staging' && environmentFilter !== 'draft' && (
-    <section className="mb-8">
-      <h2 className="mb-3 flex items-center gap-2 text-sm font-medium text-muted-foreground"><Layers className="h-3.5 w-3.5" />Stacks<span className="text-xs text-muted-foreground/60">{stacks.length}</span></h2>
-      <div className="grid gap-4 lg:grid-cols-2">
-        {stacks.map(stack => (
-          <div key={stack.name} className="syn-tile overflow-hidden">
-            <div className="flex items-center gap-2 border-b border-border px-5 py-3">
-              <span className="flex h-6 w-6 items-center justify-center rounded-md bg-syn-violet/15"><Layers className="h-3.5 w-3.5 text-syn-violet" /></span>
-              <h3 className="truncate text-sm font-semibold">{stack.name}</h3>
-              <span className="ml-auto text-xs text-muted-foreground">{stack.members.length} apps</span>
-            </div>
-            <div className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center">
-              {stack.members.map((member, index) => {
-                const RoleIcon = roleIcons[member.component_role || 'application'] || Boxes
-                const { latest } = projectState(member)
-                return (
-                  <div key={member.id} className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center">
-                    {index > 0 && <ArrowRight className="mx-auto h-3.5 w-3.5 shrink-0 rotate-90 text-muted-foreground sm:mx-0 sm:rotate-0" />}
-                    <Link href={`/sites/${member.id}`} className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg border border-border px-3 py-2.5 transition-colors hover:border-white/25 hover:bg-white/[0.02]">
-                      <FrameworkAvatar type={member.project_type} size="sm" />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[13px] font-medium">{member.name}</span>
-                        <span className="flex items-center gap-1 truncate text-[11px] text-muted-foreground"><RoleIcon className="h-3 w-3 shrink-0" />{roleLabels[member.component_role || 'application']}</span>
-                      </span>
-                      {latest ? <StatusDot status={latest.status} className="scale-75" /> : member.setup_required ? <span className="text-[10px] text-amber-200">Setup</span> : null}
-                    </Link>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
-  )
-
   const renderGroup = (title: string, items: Project[]) => items.length > 0 && (
     <section className="mb-8">
       <h2 className="mb-3 flex items-center gap-2 text-sm font-medium text-muted-foreground">{title === 'Pinned' && <Pin className="h-3.5 w-3.5" />}{title}<span className="text-xs text-muted-foreground/60">{items.length}</span></h2>
@@ -446,12 +398,13 @@ export default function ProjectsPage() {
 
   return (
     <AppShell
-      title="Applications"
+      title="All apps"
+      back={{ href: '/projects', label: 'Projects' }}
       subtitle={loading ? 'Loading…' : `${counts.all} applications · ${counts.online} online${counts.building ? ` · ${counts.building} building` : ''}`}
       user={{ name: user?.name, role: user?.role }}
       actions={<>
         <Button variant="outline" size="sm" onClick={() => void handleDiscover()} disabled={!canWrite || discovering}>{discovering ? 'Importing…' : 'Import from host'}</Button>
-        <Button asChild size="sm" disabled={!canWrite}><Link href="/sites/new"><Plus className="mr-1.5 h-4 w-4" />Add New…</Link></Button>
+        <Button asChild size="sm" disabled={!canWrite}><Link href="/sites/new"><Plus className="mr-1.5 h-4 w-4" />New project</Link></Button>
       </>}
     >
       {error && <div role="alert" className="notice-error">{error}</div>}
@@ -486,7 +439,6 @@ export default function ProjectsPage() {
         </div>
       ) : (
         <>
-          {renderStacks()}
           {renderGroup('Pinned', pinnedProjects)}
           {renderGroup(pinnedProjects.length ? 'All applications' : 'Applications', otherProjects)}
         </>

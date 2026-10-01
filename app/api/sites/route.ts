@@ -9,7 +9,7 @@ import { ensureProjectSetupSchema } from '@/lib/project-setup'
 import { validateSetupRepository } from '@/lib/project-setup-policy'
 import { PROJECT_TYPES } from '@/lib/project-types'
 import path from 'path'
-import { ensureApplicationGroupsSchema, linkApplicationProjects, componentRole, projectIdentifier } from '@/lib/application-groups'
+import { ensureApplicationGroupsSchema, ensureEveryAppHasProject, linkApplicationProjects, assignOwnProject, componentRole, projectIdentifier } from '@/lib/application-groups'
 import { ensureProjectPinsSchema } from '@/lib/project-pins'
 
 function slugify(input: string) {
@@ -45,6 +45,7 @@ export async function GET() {
     requireRole(user, ['admin', 'operator', 'viewer'])
     await ensureProjectSetupSchema()
     await ensureApplicationGroupsSchema()
+    await ensureEveryAppHasProject()
     await ensureProjectPinsSchema()
 
     const { rows } = await query(
@@ -192,7 +193,9 @@ export async function POST(request: Request) {
 
         const staging = stagingRows[0]
         await client.query('update projects set component_role=$1 where id=$2 or production_id=$2', [role, production.id])
+        // Every application belongs to a project: join the chosen one, or start its own.
         if (body.relatedProjectId) await linkApplicationProjects(client, production.id, body.relatedProjectId, role)
+        else await assignOwnProject(client, production.id, { name: typeof body.projectName === 'string' && body.projectName.trim() ? body.projectName.trim().slice(0, 80) : undefined })
         if (body.setupDraft === true) {
           await client.query('insert into project_setup (project_id) values ($1)', [production.id])
           if (staging) await client.query('insert into project_setup (project_id) values ($1)', [staging.id])

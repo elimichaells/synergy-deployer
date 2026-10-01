@@ -99,7 +99,7 @@ export default function Dashboard() {
       user={{ name: user?.name, role: user?.role }}
       actions={<>
         <Button variant="outline" size="sm" onClick={() => void refresh()}><RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', loading && 'animate-spin')} />Refresh</Button>
-        <Button asChild size="sm"><Link href="/sites/new"><Plus className="mr-1.5 h-4 w-4" />New application</Link></Button>
+        <Button asChild size="sm"><Link href="/sites/new"><Plus className="mr-1.5 h-4 w-4" />New project</Link></Button>
       </>}
     >
       {error && <div role="alert" className="notice-error">{error}</div>}
@@ -178,7 +178,7 @@ export default function Dashboard() {
           <section>
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-semibold">Applications</h2>
-              <Link href="/sites" className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">View all<ArrowRight className="h-3.5 w-3.5" /></Link>
+              <Link href="/projects" className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">All projects<ArrowRight className="h-3.5 w-3.5" /></Link>
             </div>
             <div className="overflow-hidden rounded-xl border border-border bg-card">
               {loading ? <div className="h-48 animate-pulse" /> : projects.length === 0 ? (

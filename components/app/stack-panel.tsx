@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { AppWindow, ArrowRight, Boxes, Check, Database, Globe2, Layers, Link2, Loader2, Pencil, Server, Unlink, Workflow, X } from 'lucide-react'
+import { AppWindow, ArrowRight, Boxes, Check, Database, Github, Globe2, Layers, Link2, Loader2, Pencil, Server, Unlink, Workflow, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { FrameworkLogo } from '@/components/synergy/framework-logo'
 import { StatusDot, type DeployStatus } from '@/components/synergy/status'
@@ -55,7 +55,7 @@ export function StackPanel({ projectId, environment, compact = false }: { projec
   const load = useCallback(async () => {
     const response = await fetch(`/api/sites/${projectId}/related`, { cache: 'no-store' })
     const body = await response.json()
-    if (!response.ok) throw new Error(body.error || 'Could not load the stack')
+    if (!response.ok) throw new Error(body.error || 'Could not load the project')
     setSnapshot(body)
     setForm(current => ({ ...current, role: body.component_role === 'application' ? current.role : body.component_role }))
   }, [projectId])
@@ -70,18 +70,18 @@ export function StackPanel({ projectId, environment, compact = false }: { projec
   const request = async (method: string, body?: unknown) => {
     const response = await fetch(`/api/sites/${projectId}/related`, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
     const result = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(result.error || 'Stack update failed')
+    if (!response.ok) throw new Error(result.error || 'Project update failed')
   }
 
   const link = () => act(async () => { await request('POST', { relatedProjectId: form.relatedId, role: form.role, relatedRole: form.relatedRole }); setLinking(false) })
-  const leave = () => act(async () => { if (window.confirm('Remove this application from its stack? Its staging version leaves too.')) await request('DELETE') })
+  const leave = () => act(async () => { if (window.confirm('Move this application out of its project into one of its own? Its staging version moves too.')) await request('DELETE') })
   const rename = () => act(async () => { await request('PATCH', { name: renaming }); setRenaming(null) })
 
   const visible = useMemo(() => (snapshot?.members || []).filter(member => member.environment === environment)
     .sort((a, b) => roleOrder.indexOf(a.component_role) - roleOrder.indexOf(b.component_role) || a.name.localeCompare(b.name)), [snapshot, environment])
   const domainOf = (id: string) => snapshot?.domains.find(domain => domain.project_id === id)?.hostname
 
-  if (!snapshot) return <Section title="Stack">{error ? <p role="alert" className="text-sm text-red-300">{error}</p> : <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-label="Loading stack" />}</Section>
+  if (!snapshot) return <Section title="Project">{error ? <p role="alert" className="text-sm text-red-300">{error}</p> : <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-label="Loading project" />}</Section>
 
   const inStack = !!snapshot.application_group_id
   const linkForm = (
@@ -96,7 +96,7 @@ export function StackPanel({ projectId, environment, compact = false }: { projec
       </div>
       <div className="flex flex-wrap justify-end gap-2">
         <Button type="button" variant="ghost" onClick={() => setLinking(false)}>Cancel</Button>
-        <Button type="submit" disabled={busy || !form.relatedId}>{busy ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Link2 className="mr-1.5 h-4 w-4" />}{inStack ? 'Add to stack' : 'Create stack'}</Button>
+        <Button type="submit" disabled={busy || !form.relatedId}>{busy ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Link2 className="mr-1.5 h-4 w-4" />}{inStack ? 'Add to project' : 'Create project'}</Button>
       </div>
     </form>
   )
@@ -104,9 +104,9 @@ export function StackPanel({ projectId, environment, compact = false }: { projec
   if (!inStack) {
     return (
       <Section
-        title={<span className="flex items-center gap-2"><Layers className="h-4 w-4" />Stack</span>}
-        description="This application stands alone. Put a frontend, its backend API and supporting services in one stack so they can share a database and one domain, and are shown together."
-        action={snapshot.canWrite && !linking ? <Button variant="outline" size="sm" onClick={() => setLinking(true)} disabled={!snapshot.candidates.length}><Link2 className="mr-1.5 h-4 w-4" />Create a stack</Button> : undefined}
+        title={<span className="flex items-center gap-2"><Layers className="h-4 w-4" />Project</span>}
+        description="Put a frontend, its backend API and supporting services in one project so they can share databases and a domain."
+        action={snapshot.canWrite && !linking ? <Button variant="outline" size="sm" onClick={() => setLinking(true)} disabled={!snapshot.candidates.length}><Link2 className="mr-1.5 h-4 w-4" />Create a project</Button> : undefined}
       >
         {error && <p role="alert" className="mb-3 text-sm text-red-300">{error}</p>}
         {linking ? linkForm : !compact && (
@@ -126,20 +126,22 @@ export function StackPanel({ projectId, environment, compact = false }: { projec
     <Section
       title={renaming !== null ? (
         <form className="flex items-center gap-2" onSubmit={event => { event.preventDefault(); void rename() }}>
-          <input autoFocus className="control-input h-8 w-56" value={renaming} onChange={event => setRenaming(event.target.value)} aria-label="Stack name" />
+          <input autoFocus className="control-input h-8 w-56" value={renaming} onChange={event => setRenaming(event.target.value)} aria-label="Project name" />
           <Button type="submit" size="icon" className="h-8 w-8" disabled={busy || !renaming.trim()} aria-label="Save name"><Check className="h-4 w-4" /></Button>
           <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => setRenaming(null)} aria-label="Cancel"><X className="h-4 w-4" /></Button>
         </form>
       ) : (
-        <span className="flex items-center gap-2"><Layers className="h-4 w-4 text-syn-violet" />{snapshot.group_name || 'Stack'}
-          {snapshot.canWrite && <button type="button" onClick={() => setRenaming(snapshot.group_name || '')} className="rounded p-1 text-muted-foreground hover:bg-white/[0.06] hover:text-foreground" aria-label="Rename stack"><Pencil className="h-3.5 w-3.5" /></button>}
+        <span className="flex items-center gap-2"><Layers className="h-4 w-4 text-syn-violet" />{snapshot.group_name || 'Project'}
+          {snapshot.canWrite && <button type="button" onClick={() => setRenaming(snapshot.group_name || '')} className="rounded p-1 text-muted-foreground hover:bg-white/[0.06] hover:text-foreground" aria-label="Rename project"><Pencil className="h-3.5 w-3.5" /></button>}
         </span>
       )}
-      description={<>This app is the <strong className="font-medium text-foreground">{roleLabels[snapshot.component_role] || snapshot.component_role}</strong> of this stack. Stack apps can share databases and one domain.</>}
-      action={snapshot.canWrite ? <>
-        {!linking && <Button variant="outline" size="sm" onClick={() => setLinking(true)} disabled={!snapshot.candidates.length}><Link2 className="mr-1.5 h-4 w-4" />Add app</Button>}
-        <Button variant="ghost" size="sm" onClick={() => void leave()} disabled={busy}><Unlink className="mr-1.5 h-4 w-4" />Leave</Button>
-      </> : undefined}
+      description={<>This app is the <strong className="font-medium text-foreground">{roleLabels[snapshot.component_role] || snapshot.component_role}</strong> of this project. Apps in a project can share databases and a domain.</>}
+      action={<>
+        <Button asChild variant="outline" size="sm"><Link href={`/projects/${snapshot.application_group_id}`}>Open project</Link></Button>
+        {snapshot.canWrite && <Button asChild variant="outline" size="sm"><Link href={`/sites/new?project=${snapshot.application_group_id}`}><Github className="mr-1.5 h-4 w-4" />Import app from GitHub</Link></Button>}
+        {snapshot.canWrite && !linking && <Button variant="ghost" size="sm" onClick={() => setLinking(true)} disabled={!snapshot.candidates.length}><Link2 className="mr-1.5 h-4 w-4" />Add existing app</Button>}
+        {snapshot.canWrite && visible.length > 1 && <Button variant="ghost" size="sm" onClick={() => void leave()} disabled={busy}><Unlink className="mr-1.5 h-4 w-4" />Move out</Button>}
+      </>}
     >
       {error && <p role="alert" className="mb-3 rounded-md border border-red-400/25 bg-red-400/5 px-3 py-2 text-sm text-red-300">{error}</p>}
       <div className="flex flex-col gap-2 lg:flex-row lg:items-stretch">

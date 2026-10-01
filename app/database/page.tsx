@@ -568,7 +568,7 @@ export default function DatabasePage() {
 
   if (userLoaded && user?.role !== 'admin') {
     return (
-      <AppShell title="Database" subtitle="Browse and query every Postgres database on this server." user={{ name: user?.name, role: user?.role }}>
+      <AppShell area="infrastructure" title="PostgreSQL explorer" subtitle="Browse and query every Postgres database on this server." user={{ name: user?.name, role: user?.role }}>
         <Card className="mx-auto max-w-md text-center">
           <CardHeader>
             <Lock className="mx-auto mb-2 h-8 w-8 text-muted-foreground" />
@@ -581,8 +581,8 @@ export default function DatabasePage() {
   }
 
   return (
-    <AppShell
-      title="Database"
+    <AppShell area="infrastructure"
+      title="PostgreSQL explorer"
       subtitle="Browse and query every Postgres database on this server."
       user={{ name: user?.name, role: user?.role }}
       actions={

@@ -1,13 +1,15 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { EDITABLE_SETTINGS, SETTINGS_SECTIONS, settingsSection, settingsForm, settingsChanges, validateSettingsSection, runtimeCategory } = require('../lib/settings-workspace.ts');
+const { EDITABLE_SETTINGS, SETTINGS_SECTIONS, MOVED_SETTINGS_SECTIONS, settingsSection, settingsForm, settingsChanges, validateSettingsSection, runtimeCategory } = require('../lib/settings-workspace.ts');
 const initial = { ...EDITABLE_SETTINGS, PRODUCTION_PATH: 'C:\\apps\\production', STAGING_PATH: 'C:\\apps\\staging', LOGS_PATH: 'C:\\logs', CADDY_PATH: 'C:\\caddy', BACKUP_DIR: 'C:\\backups', PG_BIN_PATH: 'C:\\postgres\\bin' };
 
 test('settings sections have stable deep links and unknown sections fall back safely', () => {
   assert.equal(SETTINGS_SECTIONS.length, 6);
   for (const section of SETTINGS_SECTIONS) assert.equal(settingsSection(section.id), section.id);
-  assert.equal(settingsSection(null), 'general');
-  assert.equal(settingsSection('unsupported'), 'general');
+  assert.equal(settingsSection(null), 'account');
+  assert.equal(settingsSection('unsupported'), 'account');
+  assert.deepEqual([...new Set(SETTINGS_SECTIONS.map(section => section.group))], ['Personal', 'Workspace', 'Server']);
+  assert.equal(MOVED_SETTINGS_SECTIONS.runtimes, '/infrastructure/runtimes');
 });
 test('settings forms exclude legacy tokens, internal metadata and unexpected fields', () => {
   const form = settingsForm({ ...initial, GITHUB_TOKEN: 'private-legacy-token', BACKUP_LAST_RUN: 'internal', extra: 'value' });
@@ -21,7 +23,7 @@ test('saving one settings section only sends changed keys from that section', ()
   assert.deepEqual(settingsChanges('notifications', initial, draft), { NOTIFY_WEBHOOK_URL: 'https://example.test/notify' });
   assert.deepEqual(settingsChanges('backups', initial, draft), { BACKUP_RETENTION_DAYS: '30' });
   assert.deepEqual(settingsChanges('integrations', initial, draft), {});
-  assert.deepEqual(settingsChanges('runtimes', initial, draft), {});
+  assert.deepEqual(settingsChanges('account', initial, draft), {});
   assert.deepEqual(settingsChanges('access', initial, draft), {});
   assert.deepEqual(settingsChanges('general', initial, initial), {});
 });

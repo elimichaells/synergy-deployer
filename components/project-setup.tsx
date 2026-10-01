@@ -20,7 +20,7 @@ interface Snapshot { project: SetupProject; checkout: boolean; detectedType?: Pr
 const descriptions: Record<SetupStep, string> = {
   repository: 'Synergy clones your repository onto this server and looks at it to work out how to build it.',
   runtime: 'Pick the framework and, if you need to, override how the app is installed, built and started.',
-  database: 'Give the app somewhere to store data: a new database, one shared with its stack, or one you already have.',
+  database: 'Give the app somewhere to store data: a new database, one shared with its project, or one you already have.',
   environment: 'Secrets and settings your app reads at runtime, like API keys. They stay on this server.',
   domain: 'Choose the address people will use. HTTPS certificates are issued automatically.',
   review: 'Synergy checks everything is in place. Then deploy: the app is built and verified before it goes live.',

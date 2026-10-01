@@ -1,11 +1,14 @@
 export const SETTINGS_SECTIONS = [
-  { id: 'general', label: 'Server paths', description: 'Deployment folders, logs, and the edge proxy.' },
-  { id: 'runtimes', label: 'Runtimes & tools', description: 'Host dependencies and project runtime versions.' },
-  { id: 'integrations', label: 'Connections', description: 'Repository accounts and infrastructure connections.' },
-  { id: 'notifications', label: 'Notifications', description: 'Deployment result delivery.' },
-  { id: 'backups', label: 'Backup defaults', description: 'PostgreSQL backup storage, retention, and the nightly fallback.' },
-  { id: 'access', label: 'Account & access', description: 'Your account and Manager users.' },
+  { id: 'account', group: 'Personal', label: 'Your account', description: 'Who you are signed in as and what you can do.' },
+  { id: 'access', group: 'Workspace', label: 'Team & access', description: 'Everyone who can sign in to Synergy, and their roles.' },
+  { id: 'integrations', group: 'Workspace', label: 'Git & integrations', description: 'GitHub accounts Synergy deploys from, and other connected services.' },
+  { id: 'notifications', group: 'Workspace', label: 'Notifications', description: 'Where Synergy sends a message after each deployment.' },
+  { id: 'general', group: 'Server', label: 'Server folders', description: 'Where apps, logs and the web server live on this machine.' },
+  { id: 'backups', group: 'Server', label: 'Backups', description: 'Where PostgreSQL backups are stored and how long they are kept.' },
 ] as const
+
+/** Sections that moved elsewhere keep working as links. */
+export const MOVED_SETTINGS_SECTIONS: Record<string, string> = { runtimes: '/infrastructure/runtimes' }
 
 export type SettingsSection = typeof SETTINGS_SECTIONS[number]['id']
 export const EDITABLE_SETTINGS = {
@@ -17,12 +20,12 @@ export type SettingsForm = typeof EDITABLE_SETTINGS
 export type SettingsField = keyof SettingsForm
 export const SECTION_FIELDS: Record<SettingsSection, SettingsField[]> = {
   general: ['PRODUCTION_PATH', 'STAGING_PATH', 'LOGS_PATH', 'CADDY_PATH'],
-  runtimes: [], integrations: [], notifications: ['NOTIFY_WEBHOOK_URL'],
+  account: [], integrations: [], notifications: ['NOTIFY_WEBHOOK_URL'],
   backups: ['BACKUP_DIR', 'BACKUP_ENABLED', 'BACKUP_RETENTION_DAYS', 'PG_BIN_PATH'], access: [],
 }
 
 export function settingsSection(value: string | null): SettingsSection {
-  return SETTINGS_SECTIONS.find(section => section.id === value)?.id || 'general'
+  return SETTINGS_SECTIONS.find(section => section.id === value)?.id || 'account'
 }
 
 export function settingsForm(value: unknown): SettingsForm {

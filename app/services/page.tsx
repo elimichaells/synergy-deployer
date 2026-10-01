@@ -159,8 +159,8 @@ export default function ServicesPage() {
   const caddyUp = caddy?.status === 'running'
 
   return (
-    <AppShell
-      title="Runtime & Proxy"
+    <AppShell area="infrastructure"
+      title="Processes"
       subtitle="Process health, service controls, and edge routing."
       user={{ name: user?.name, role: user?.role }}
       actions={

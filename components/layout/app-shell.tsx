@@ -4,16 +4,16 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { ReactNode, useEffect, useState } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { ChevronLeft, LogOut, Plus, Search } from 'lucide-react'
+import { ChevronLeft, LogOut, Plus, Search, Server } from 'lucide-react'
 import { SynergyMark } from '@/components/synergy/brand'
 import { CommandMenu } from '@/components/synergy/command-menu'
-import { navItems } from '@/components/synergy/nav'
+import { infrastructureItems, isNavActive, navItems } from '@/components/synergy/nav'
 
 function initials(name?: string) {
   return (name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]?.toUpperCase()).join('') || '?'
 }
 
-export function AppShell({ children, title, subtitle, user, actions, back, headerExtra, tabs }: {
+export function AppShell({ children, title, subtitle, user, actions, back, headerExtra, tabs, area }: {
   children: ReactNode
   title: string
   subtitle?: ReactNode
@@ -25,6 +25,8 @@ export function AppShell({ children, title, subtitle, user, actions, back, heade
   headerExtra?: ReactNode
   /** Section tabs rendered flush with the bottom edge of the page header. */
   tabs?: ReactNode
+  /** Adds the side menu for a multi-page area. */
+  area?: 'infrastructure'
 }) {
   const pathname = usePathname()
   const router = useRouter()
@@ -54,9 +56,6 @@ export function AppShell({ children, title, subtitle, user, actions, back, heade
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const isActive = (href: string) => href === '/'
-    ? pathname === '/'
-    : pathname === href || pathname.startsWith(`${href}/`)
 
   const handleLogout = async () => {
     try {
@@ -117,7 +116,7 @@ export function AppShell({ children, title, subtitle, user, actions, back, heade
         <nav className="mx-auto max-w-[1240px] px-2 sm:px-4" aria-label="Primary navigation">
           <div className="scrollbar-none flex overflow-x-auto">
             {navItems.map(item => {
-              const active = isActive(item.href)
+              const active = isNavActive(pathname, item.matches)
               return (
                 <Link key={item.href} href={item.href} aria-current={active ? 'page' : undefined}
                   className={`group relative shrink-0 px-1 pb-2.5 pt-1 text-[13px] transition-colors ${active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
@@ -145,7 +144,31 @@ export function AppShell({ children, title, subtitle, user, actions, back, heade
       </section>
 
       <main className="min-w-0">
-        <div className="mx-auto max-w-[1240px] px-4 py-6 sm:px-6 sm:py-8">{children}</div>
+        <div className="mx-auto max-w-[1240px] px-4 py-6 sm:px-6 sm:py-8">
+          {area === 'infrastructure' ? (
+            <div className="grid min-w-0 gap-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-10">
+              <aside className="min-w-0">
+                <nav aria-label="Infrastructure" className="scrollbar-none -mx-1 flex gap-1 overflow-x-auto px-1 lg:sticky lg:top-32 lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0">
+                  <Link href="/infrastructure" aria-current={pathname === '/infrastructure' ? 'page' : undefined}
+                    className={`flex shrink-0 items-center gap-2.5 rounded-md px-3 py-2 text-[13px] transition-colors ${pathname === '/infrastructure' ? 'bg-white/[0.07] text-foreground' : 'text-muted-foreground hover:bg-white/[0.04] hover:text-foreground'}`}>
+                    <Server className="h-4 w-4" />Overview
+                  </Link>
+                  {infrastructureItems.map(item => {
+                    const active = pathname === item.href || pathname.startsWith(`${item.href}/`)
+                    return (
+                      <Link key={item.href} href={item.href} aria-current={active ? 'page' : undefined}
+                        className={`flex shrink-0 items-center gap-2.5 rounded-md px-3 py-2 text-[13px] transition-colors ${active ? 'bg-white/[0.07] text-foreground' : 'text-muted-foreground hover:bg-white/[0.04] hover:text-foreground'}`}>
+                        <item.icon className="h-4 w-4" />{item.label}
+                      </Link>
+                    )
+                  })}
+                </nav>
+                <p className="mt-6 hidden rounded-lg border border-border p-3 text-xs leading-5 text-muted-foreground lg:block">Server-wide settings for administrators. To give an app a database or a domain, open its <Link href="/projects" className="text-foreground underline-offset-4 hover:underline">project</Link>.</p>
+              </aside>
+              <div className="min-w-0">{children}</div>
+            </div>
+          ) : children}
+        </div>
       </main>
 
       <footer className="mx-auto flex max-w-[1240px] items-center justify-between gap-4 px-4 pb-8 pt-2 text-xs text-muted-foreground sm:px-6">

@@ -1,13 +1,24 @@
-import { Boxes, Database, Gauge, Globe2, HardDrive, Rocket, Server, Settings, Workflow } from 'lucide-react'
+import { Boxes, Cpu, Database, Gauge, Globe2, HardDrive, Rocket, Server, Settings, Workflow, Wrench } from 'lucide-react'
 
+/** Top-level navigation. `matches` lists every route prefix a tab owns. */
 export const navItems = [
-  { href: '/', label: 'Overview', icon: Gauge, description: 'Workspace health' },
-  { href: '/sites', label: 'Applications', icon: Boxes, description: 'Projects on this host' },
-  { href: '/deployments', label: 'Deployments', icon: Rocket, description: 'Release history and logs' },
-  { href: '/automation', label: 'Jobs & Workers', icon: Workflow, description: 'Cron jobs and workers' },
-  { href: '/services', label: 'Processes', icon: Server, description: 'PM2 and Caddy' },
-  { href: '/data-services', label: 'Data Services', icon: HardDrive, description: 'Database connections' },
-  { href: '/database', label: 'PostgreSQL', icon: Database, description: 'Server and backups' },
-  { href: '/domains', label: 'Domains', icon: Globe2, description: 'DNS and TLS' },
-  { href: '/settings', label: 'Settings', icon: Settings, description: 'Host and integrations' },
+  { href: '/', label: 'Overview', icon: Gauge, description: 'Workspace health', matches: ['/'] },
+  { href: '/projects', label: 'Projects', icon: Boxes, description: 'Your apps, grouped by product', matches: ['/projects', '/sites'] },
+  { href: '/deployments', label: 'Deployments', icon: Rocket, description: 'Release history and logs', matches: ['/deployments'] },
+  { href: '/infrastructure', label: 'Infrastructure', icon: Server, description: 'Server-level services (admins)', matches: ['/infrastructure', '/data-services', '/database', '/domains', '/services', '/automation'] },
+  { href: '/settings', label: 'Settings', icon: Settings, description: 'Account, team and integrations', matches: ['/settings'] },
 ]
+
+/** Server-level areas, shown in the Infrastructure side menu. */
+export const infrastructureItems = [
+  { href: '/data-services', label: 'Database servers', icon: HardDrive, description: 'Engines apps get databases from, backups and migrations' },
+  { href: '/database', label: 'PostgreSQL explorer', icon: Database, description: 'Browse data, run SQL, back up and restore' },
+  { href: '/domains', label: 'Domains & DNS', icon: Globe2, description: 'Cloudflare accounts and every public address' },
+  { href: '/services', label: 'Processes', icon: Cpu, description: 'Running processes and the Caddy web server' },
+  { href: '/automation', label: 'Jobs & workers', icon: Workflow, description: 'Scheduled jobs and background workers' },
+  { href: '/infrastructure/runtimes', label: 'Runtimes & tools', icon: Wrench, description: 'Node, PHP, Go, database engines and tools' },
+]
+
+export function isNavActive(pathname: string, matches: string[]) {
+  return matches.some(prefix => prefix === '/' ? pathname === '/' : pathname === prefix || pathname.startsWith(`${prefix}/`))
+}

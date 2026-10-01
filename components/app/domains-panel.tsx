@@ -111,7 +111,7 @@ export function DomainsPanel({ projectId, projectName, port, environment, role, 
             <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center">
               <Globe2 className="mx-auto mb-2 h-5 w-5 text-muted-foreground" />
               <p className="text-sm font-medium">No domain yet</p>
-              <p className="mt-1 text-xs text-muted-foreground">{port ? `Reachable on the server at localhost:${port}.` : 'Not reachable until it has a port.'} {siblingDomains.length ? 'You can also serve it under a stack domain below.' : ''}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{port ? `Reachable on the server at localhost:${port}.` : 'Not reachable until it has a port.'} {siblingDomains.length ? 'You can also serve it under a project domain below.' : ''}</p>
             </div>
           ) : (
             <div className="divide-y divide-border overflow-hidden rounded-lg border border-border">
@@ -146,8 +146,8 @@ export function DomainsPanel({ projectId, projectName, port, environment, role, 
 
       {stack?.application_group_id && (
         <Section
-          title={<span className="flex items-center gap-2"><Layers className="h-4 w-4" />Share a domain with your stack</span>}
-          description={<>Serve {projectName} under a path of another {stack.group_name ? <strong className="font-medium text-foreground">{stack.group_name}</strong> : 'stack'} app&apos;s domain, for example <span className="font-mono text-foreground">{siblingDomains[0]?.hostname || 'app.example.com'}/api</span>. One address and one certificate, and no cross-origin setup for your frontend.</>}
+          title={<span className="flex items-center gap-2"><Layers className="h-4 w-4" />Share a domain with your project</span>}
+          description={<>Serve {projectName} under a path of another {stack.group_name ? <strong className="font-medium text-foreground">{stack.group_name}</strong> : 'project'} app&apos;s domain, for example <span className="font-mono text-foreground">{siblingDomains[0]?.hostname || 'app.example.com'}/api</span>. One address and one certificate, and no cross-origin setup for your frontend.</>}
           footer={<span>Requests matching the path go to this app; everything else keeps going to the domain&apos;s own app.</span>}
         >
           {incoming.length > 0 && (
@@ -163,7 +163,7 @@ export function DomainsPanel({ projectId, projectName, port, environment, role, 
             </div>
           )}
           {siblingDomains.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">No other {environment} app in this stack has a domain yet. Add one to the frontend first, then route a path of it here.</p>
+            <p className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">No other {environment} app in this project has a domain yet. Add one to the frontend first, then route a path of it here.</p>
           ) : (
             <form className="grid gap-4 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_auto] sm:items-end" onSubmit={event => { event.preventDefault(); void addRoute() }}>
               <label className="field-label">Domain<select className="control-input" value={route.domainId || siblingDomains[0].id} onChange={event => setRoute({ ...route, domainId: event.target.value })}>
@@ -187,7 +187,7 @@ export function DomainsPanel({ projectId, projectName, port, environment, role, 
           <SheetHeader><SheetTitle>Add a domain</SheetTitle><SheetDescription>{projectName} · HTTPS is set up automatically once DNS points at this server</SheetDescription></SheetHeader>
           <form className="mt-6 space-y-5" onSubmit={event => { event.preventDefault(); void addDomain() }}>
             <label className="field-label">Domain<input required className="control-input" value={form.hostname} onChange={event => setForm({ ...form, hostname: event.target.value })} placeholder={suggestedHost || 'app.example.com'} /></label>
-            {suggestedHost && <p className="-mt-3 text-xs text-muted-foreground">Suggested from your stack: <button type="button" className="font-mono text-foreground hover:underline" onClick={() => setForm({ ...form, hostname: suggestedHost })}>{suggestedHost}</button></p>}
+            {suggestedHost && <p className="-mt-3 text-xs text-muted-foreground">Suggested from your project: <button type="button" className="font-mono text-foreground hover:underline" onClick={() => setForm({ ...form, hostname: suggestedHost })}>{suggestedHost}</button></p>}
             <div className="grid gap-2" role="radiogroup" aria-label="DNS management">
               <ChoiceCard selected={form.mode === 'manual'} onSelect={() => setForm({ ...form, mode: 'manual' })} icon={<Globe2 className="h-4 w-4" />} title="I'll update DNS myself" description="Add the record at your DNS provider. Synergy shows you exactly what to enter." />
               <ChoiceCard selected={form.mode === 'cloudflare'} onSelect={() => setForm({ ...form, mode: 'cloudflare' })} disabled={!connections.length} icon={<Cloud className="h-4 w-4" />} title="Let Synergy manage it in Cloudflare" description={connections.length ? 'Creates the DNS record for you.' : 'Connect a Cloudflare account in Domains first.'} />

@@ -21,6 +21,43 @@ export function projectIdentifier(value: unknown): asserts value is string {
   if (typeof value !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value)) throw new ApiError('Invalid related application', 400)
 }
 
+/** Puts a production application (and its staging copy) into a new project of its own. */
+export async function assignOwnProject(client: Pick<PoolClient, 'query'>, productionId: string, options: { name?: string; role?: string } = {}) {
+  const created = await client.query(
+    `insert into application_groups (name) select coalesce($2, name) from projects where id=$1 returning id`, [productionId, options.name || null])
+  const groupId = created.rows[0]?.id as string | undefined
+  if (!groupId) throw new ApiError('Application not found', 404)
+  await client.query(`update projects set application_group_id=$1,component_role=coalesce($3,component_role),updated_at=now() where id=$2 or production_id=$2`,
+    [groupId, productionId, options.role || null])
+  return groupId
+}
+
+let backfill: Promise<void> | undefined
+/**
+ * Older installations have applications without a project. Give each its own,
+ * keep staging copies with their production app, and drop projects left empty.
+ */
+export function ensureEveryAppHasProject() {
+  return backfill ??= (async () => {
+    await ensureApplicationGroupsSchema()
+    const client = await db.connect()
+    try {
+      await client.query('begin')
+      await client.query(`select pg_advisory_xact_lock(hashtext('manager:project-backfill'))`)
+      const orphans = await client.query<{ id: string }>(
+        `select id from projects where application_group_id is null and (environment='production' or production_id is null) order by created_at`)
+      for (const orphan of orphans.rows) await assignOwnProject(client, orphan.id)
+      await client.query(`update projects s set application_group_id=p.application_group_id
+        from projects p where s.production_id=p.id and s.application_group_id is distinct from p.application_group_id`)
+      await client.query(`delete from application_groups g where not exists (select 1 from projects p where p.application_group_id=g.id)`)
+      await client.query('commit')
+    } catch (error) {
+      await client.query('rollback')
+      throw error
+    } finally { client.release() }
+  })().catch(error => { backfill = undefined; throw error })
+}
+
 // Called inside the creation transaction as well as the related-applications endpoint.
 export async function linkApplicationProjects(client: PoolClient, projectId: string, relatedId: string, role: string, relatedRole?: string) {
   projectIdentifier(projectId); projectIdentifier(relatedId); componentRole(role)
@@ -31,13 +68,19 @@ export async function linkApplicationProjects(client: PoolClient, projectId: str
   if (rows.some(row => row.environment !== 'production')) throw new ApiError('Link production applications; their staging versions follow automatically', 400)
   const project = rows.find(row => row.id === projectId)!
   const related = rows.find(row => row.id === relatedId)!
+  // Every application lives in a project. An application that is alone in its own
+  // project may move into another one; a project with other apps is never merged implicitly.
+  let previousGroup: string | null = null
   if (project.application_group_id && related.application_group_id && project.application_group_id !== related.application_group_id) {
-    throw new ApiError('These applications belong to different groups. Unlink the application before moving it', 409)
+    const others = await client.query(`select count(*)::int as count from projects where application_group_id=$1 and environment='production' and id<>$2`, [project.application_group_id, projectId])
+    if (Number(others.rows[0]?.count) > 0) throw new ApiError('This application already shares a project with other apps. Remove it from that project before moving it', 409)
+    previousGroup = project.application_group_id
   }
-  let groupId = project.application_group_id || related.application_group_id
+  let groupId = related.application_group_id || project.application_group_id
   if (!groupId) groupId = (await client.query('insert into application_groups (name) values ($1) returning id', [related.name])).rows[0].id
   await client.query('update projects set application_group_id=$1,component_role=$2,updated_at=now() where id=$3 or production_id=$3', [groupId, role, projectId])
   await client.query('update projects set application_group_id=$1,component_role=$2,updated_at=now() where id=$3 or production_id=$3', [groupId, relatedRole ?? related.component_role, relatedId])
+  if (previousGroup) await client.query('delete from application_groups where id=$1 and not exists (select 1 from projects where application_group_id=$1)', [previousGroup])
   return groupId as string
 }
 
@@ -110,7 +153,10 @@ export async function updateApplicationGroup(id: string, body: { relatedProjectI
             where (rp.id=$1 or rp.production_id=$1 or dp.id=$1 or dp.production_id=$1)) end)
         )::int as count`, [productionId])
       if (shared.rows[0].count > 0) throw new ApiError('This application shares a database or domain path with its stack. Remove those first, then leave the stack.', 409)
-      await client.query('update projects set application_group_id=null,updated_at=now() where id=$1 or production_id=$1', [productionId])
+      const current = await client.query<{ application_group_id: string | null }>('select application_group_id from projects where id=$1', [productionId])
+      await assignOwnProject(client, productionId, { role: 'application' })
+      const previous = current.rows[0]?.application_group_id
+      if (previous) await client.query('delete from application_groups where id=$1 and not exists (select 1 from projects where application_group_id=$1)', [previous])
     } else {
       projectIdentifier(body.relatedProjectId)
       await linkApplicationProjects(client, productionId, body.relatedProjectId, componentRole(body.role), body.relatedRole === undefined ? undefined : componentRole(body.relatedRole))

@@ -765,10 +765,10 @@ export default function SitePage() {
     <Tabs value={activeTab} onValueChange={changeTab}>
       <AppShell
         title={project.name}
-        back={{ href: '/sites', label: 'Applications' }}
+        back={inStack ? { href: `/projects/${stack!.application_group_id}`, label: stack!.group_name || 'Project' } : { href: '/projects', label: 'Projects' }}
         subtitle={<span className="flex flex-wrap items-center gap-2">
           <EnvironmentBadge environment={project.environment} />
-          {inStack && <span className="flex items-center gap-1 rounded-full border border-syn-violet/30 bg-syn-violet/10 px-2 py-px text-[11px] text-violet-200"><Layers className="h-3 w-3" />{roleLabels[stack!.component_role]} · {stack!.group_name}</span>}
+          {inStack && <Link href={`/projects/${stack!.application_group_id}`} className="flex items-center gap-1 rounded-full border border-syn-violet/30 bg-syn-violet/10 px-2 py-px text-[11px] text-violet-200 hover:bg-syn-violet/20"><Layers className="h-3 w-3" />{roleLabels[stack!.component_role]} · {stack!.group_name}</Link>}
           {repoLabel(project.repo_url) && <span className="truncate font-mono text-xs">{repoLabel(project.repo_url)}</span>}
         </span>}
         tabs={tabs}
@@ -868,7 +868,7 @@ export default function SitePage() {
                 {project.auto_deploy ? <><span className="font-medium">Deploys automatically</span><span className="text-muted-foreground"> when you push to <span className="font-mono">{project.default_branch}</span></span></> : <><span className="font-medium">Manual deploys only</span><span className="text-muted-foreground"> — pushes to <span className="font-mono">{project.default_branch}</span> are ignored</span></>}
               </StatusLine>
               <StatusLine tone={inStack ? 'info' : 'off'} icon={<Layers className="h-3.5 w-3.5" />}>
-                {inStack ? <><span className="font-medium">{roleLabels[stack!.component_role]}</span><span className="text-muted-foreground"> of the {stack!.group_name} stack, with {stackSiblings} other {stackSiblings === 1 ? 'app' : 'apps'}</span></> : <><span className="font-medium">Standalone</span><span className="text-muted-foreground"> — not part of a stack</span></>}
+                {inStack ? <><span className="font-medium">{roleLabels[stack!.component_role]}</span><span className="text-muted-foreground"> of the {stack!.group_name} project, with {stackSiblings} other {stackSiblings === 1 ? 'app' : 'apps'}</span></> : <><span className="font-medium">Standalone</span><span className="text-muted-foreground"> — the only app in its project</span></>}
               </StatusLine>
               {latest && (
                 <StatusLine tone={latest.status === 'failed' ? 'warn' : latest.status === 'success' ? 'ok' : 'info'} icon={<Rocket className="h-3.5 w-3.5" />}

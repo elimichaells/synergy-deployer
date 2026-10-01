@@ -3,9 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import * as Dialog from '@radix-ui/react-dialog'
-import { CornerDownLeft, Plus, Search } from 'lucide-react'
+import { CornerDownLeft, Layers, Plus, Search } from 'lucide-react'
 import { FrameworkLogo } from './framework-logo'
-import { navItems } from './nav'
+import { infrastructureItems, navItems } from './nav'
 
 interface Entry { id: string; label: string; hint: string; href: string; icon: React.ReactNode; group: string }
 interface ProjectSummary { id: string; name: string; project_type?: string; environment?: string }
@@ -15,6 +15,7 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null)
+  const [stacks, setStacks] = useState<{ id: string; name: string; apps: { environment: string }[] }[] | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -23,15 +24,17 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
     setActive(0)
     if (projects) return
     void fetch('/api/sites').then(response => response.ok ? response.json() : []).then(data => setProjects(Array.isArray(data) ? data : [])).catch(() => setProjects([]))
+    void fetch('/api/groups').then(response => response.ok ? response.json() : { projects: [] }).then(data => setStacks(data.projects || [])).catch(() => setStacks([]))
   }, [open, projects])
 
   const entries = useMemo<Entry[]>(() => {
-    const pages = navItems.map(item => ({ id: `page-${item.href}`, label: item.label, hint: item.description, href: item.href, icon: <item.icon className="h-4 w-4" />, group: 'Navigate' }))
-    const actions = [{ id: 'new-app', label: 'New application', hint: 'Import a repository', href: '/sites/new', icon: <Plus className="h-4 w-4" />, group: 'Actions' }]
+    const pages = [...navItems, ...infrastructureItems].map(item => ({ id: `page-${item.href}`, label: item.label, hint: item.description, href: item.href, icon: <item.icon className="h-4 w-4" />, group: 'Navigate' }))
+    const actions = [{ id: 'new-app', label: 'New project', hint: 'Import a repository', href: '/sites/new', icon: <Plus className="h-4 w-4" />, group: 'Actions' }]
+    const groups = (stacks || []).map(project => ({ id: `project-${project.id}`, label: project.name, hint: `${project.apps.filter(app => app.environment === 'production').length} apps`, href: `/projects/${project.id}`, icon: <Layers className="h-4 w-4" />, group: 'Projects' }))
     const apps = (projects || []).map(project => ({ id: `app-${project.id}`, label: project.name, hint: project.environment || 'application', href: `/sites/${project.id}`, icon: <FrameworkLogo type={project.project_type} className="h-4 w-4" />, group: 'Applications' }))
     const q = query.trim().toLowerCase()
-    return [...actions, ...pages, ...apps].filter(entry => !q || entry.label.toLowerCase().includes(q) || entry.hint.toLowerCase().includes(q))
-  }, [projects, query])
+    return [...actions, ...pages, ...groups, ...apps].filter(entry => !q || entry.label.toLowerCase().includes(q) || entry.hint.toLowerCase().includes(q))
+  }, [projects, stacks, query])
 
   useEffect(() => { setActive(0) }, [query])
   useEffect(() => {

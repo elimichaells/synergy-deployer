@@ -12,7 +12,10 @@ import { DataRemovalAction } from '@/components/data-removal-action'
 import { ChoiceCard, Section, roleLabels } from './section'
 import { cn } from '@/lib/utils'
 
-type Provider = 'postgresql' | 'mysql' | 'mariadb' | 'sqlserver' | 'mongodb' | 'redis'
+import { ProviderLogo, providerMeta, type Provider } from './providers'
+import { ServiceCatalog, type ServerConnection } from './service-catalog'
+
+export { ProviderLogo, providerMeta }
 
 interface Service {
   id: string
@@ -33,20 +36,6 @@ interface Service {
 interface Connection { id: string; name: string; provider: Provider; host: string; port: number; last_status: string; is_default: boolean; provisioning_enabled: boolean }
 interface Shareable { id: string; name: string; database_name: string; project_id: string; project_name: string; component_role: string; provider: Provider; connection_name: string; already_shared: boolean }
 interface LegacyDatabase { database_name: string; role_name: string }
-
-export const providerMeta: Record<Provider, { label: string; short: string; color: string }> = {
-  postgresql: { label: 'PostgreSQL', short: 'PG', color: 'bg-[#336791]' },
-  mysql: { label: 'MySQL', short: 'My', color: 'bg-[#00758f]' },
-  mariadb: { label: 'MariaDB', short: 'Ma', color: 'bg-[#a4775b]' },
-  sqlserver: { label: 'SQL Server', short: 'MS', color: 'bg-[#a91d22]' },
-  mongodb: { label: 'MongoDB', short: 'Mo', color: 'bg-[#13aa52]' },
-  redis: { label: 'Redis', short: 'Re', color: 'bg-[#d82c20]' },
-}
-
-export function ProviderLogo({ provider, size = 'md' }: { provider: Provider; size?: 'sm' | 'md' }) {
-  const meta = providerMeta[provider] || { short: 'DB', color: 'bg-neutral-700' }
-  return <span className={cn('flex shrink-0 items-center justify-center rounded-md font-mono font-semibold text-white', meta.color, size === 'sm' ? 'h-6 w-6 text-[10px]' : 'h-9 w-9 text-xs')}>{meta.short}</span>
-}
 
 const menuItem = 'flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-[13px] text-muted-foreground outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-40 data-[highlighted]:bg-white/[0.06] data-[highlighted]:text-foreground'
 const envName = (value: string) => value.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'DATABASE'
@@ -103,7 +92,8 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
   const refresh = async () => { await load(); onChanged?.() }
   const available = useMemo(() => shareable.filter(item => !item.already_shared), [shareable])
   const usableConnections = connections.filter(connection => connection.provisioning_enabled && connection.last_status === 'healthy')
-  const selectedConnection = connections.find(connection => connection.id === form.connectionId)
+  const [selectedServer, setSelectedServer] = useState<ServerConnection | null>(null)
+  const selectedConnection = connections.find(connection => connection.id === form.connectionId) || (selectedServer?.id === form.connectionId ? selectedServer : undefined)
   const hasPrimary = !!services?.some(service => service.application_primary)
 
   const openAdd = (next: AddMode) => {
@@ -169,7 +159,7 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
       if (synced) tail = `${synced.keys.length} variables were written to .env.`
     }
     await refresh()
-    return `${mode === 'stack' ? 'Stack database connected' : mode === 'existing' ? 'Existing database connected' : 'Database created'}. ${tail}`
+    return `${mode === 'stack' ? 'Project database connected' : mode === 'existing' ? 'Existing database connected' : 'Database created'}. ${tail}`
   })
 
   const makePrimary = (service: Service) => run(async () => {
@@ -204,7 +194,7 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
   if (browserApp) {
     return (
       <Section title="Storage" description="Browser applications never hold database credentials. Connect the database to your backend API, then call that API from this app.">
-        <p className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">Add this app to a stack with its backend so they share a domain and deploy together.</p>
+        <p className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">Add the database to this project&apos;s backend; the frontend calls the backend&apos;s API.</p>
       </Section>
     )
   }
@@ -242,7 +232,7 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="truncate font-mono text-sm font-medium">{service.provider === 'redis' ? `${service.name} · db ${service.database_name}` : service.database_name}</p>
                     {service.application_primary && <span className="flex items-center gap-1 rounded-full border border-white/15 bg-white/[0.06] px-2 py-px text-[11px] font-medium"><Star className="h-3 w-3" />Main database</span>}
-                    {service.options?.ownership === 'shared' && <span className="flex items-center gap-1 rounded-full border border-syn-violet/30 bg-syn-violet/10 px-2 py-px text-[11px] text-violet-200"><Layers className="h-3 w-3" />From {service.shared_from_project_name || 'stack'}</span>}
+                    {service.options?.ownership === 'shared' && <span className="flex items-center gap-1 rounded-full border border-syn-violet/30 bg-syn-violet/10 px-2 py-px text-[11px] text-violet-200"><Layers className="h-3 w-3" />From {service.shared_from_project_name || 'project'}</span>}
                     {!!service.shared_with?.length && <span className="flex items-center gap-1 rounded-full border border-syn-cyan/30 bg-syn-cyan/10 px-2 py-px text-[11px] text-cyan-200"><Layers className="h-3 w-3" />Shared with {service.shared_with.join(', ')}</span>}
                     {service.options?.ownership === 'external' && <span className="rounded-full border border-border px-2 py-px text-[11px] text-muted-foreground">External</span>}
                   </div>
@@ -277,8 +267,8 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
         ) : (
           <div className="grid gap-3 md:grid-cols-3">
             {[
-              { mode: 'new' as const, icon: <Sparkles className="h-4 w-4" />, title: 'Create a database', text: usableConnections.length ? `New ${providerMeta[(usableConnections.find(c => c.is_default) || usableConnections[0]).provider].label} database with its own user and daily backups.` : 'No database server is ready yet. Add one in Data Services.', disabled: !usableConnections.length },
-              { mode: 'stack' as const, icon: <Layers className="h-4 w-4" />, title: 'Use a stack database', text: available.length ? `Share ${available[0].database_name} from ${available[0].project_name}${available.length > 1 ? ` or ${available.length - 1} more` : ''}.` : 'Add this app to a stack with a backend that has a database to share it.', disabled: !available.length },
+              { mode: 'new' as const, icon: <Sparkles className="h-4 w-4" />, title: 'Create a database', text: usableConnections.length ? `New ${providerMeta[(usableConnections.find(c => c.is_default) || usableConnections[0]).provider].label} database (or any other engine) with its own user.` : 'PostgreSQL, MySQL, MongoDB and more. Install one on this server if needed.', disabled: false },
+              { mode: 'stack' as const, icon: <Layers className="h-4 w-4" />, title: 'Use a project database', text: available.length ? `Share ${available[0].database_name} from ${available[0].project_name}${available.length > 1 ? ` or ${available.length - 1} more` : ''}.` : 'No other app in this project has a database to share yet.', disabled: !available.length },
               { mode: 'existing' as const, icon: <Link2 className="h-4 w-4" />, title: 'Connect an existing one', text: 'Use a database that already exists, with its own username and password.', disabled: !connections.length },
             ].map(option => (
               <button key={option.mode} type="button" disabled={option.disabled || !isAdmin} onClick={() => openAdd(option.mode)}
@@ -300,13 +290,13 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
           </SheetHeader>
           <div className="mt-6 space-y-6">
             <div className="grid gap-2" role="radiogroup" aria-label="Database source">
-              <ChoiceCard selected={mode === 'new'} onSelect={() => openAdd('new')} disabled={!usableConnections.length} icon={<Sparkles className="h-4 w-4" />} title="Create a new database" description="Synergy creates the database and a dedicated user for you." />
-              <ChoiceCard selected={mode === 'stack'} onSelect={() => openAdd('stack')} disabled={!available.length} icon={<Layers className="h-4 w-4" />} title="Use a database from this app's stack" description={available.length ? 'Your frontend and backend read the same data. The owning app keeps control of its password.' : 'No other app in this stack has a database to share yet.'} />
+              <ChoiceCard selected={mode === 'new'} onSelect={() => openAdd('new')} icon={<Sparkles className="h-4 w-4" />} title="Create a new database" description="Synergy creates the database and a dedicated user for you." />
+              <ChoiceCard selected={mode === 'stack'} onSelect={() => openAdd('stack')} disabled={!available.length} icon={<Layers className="h-4 w-4" />} title="Use a database from this project" description={available.length ? 'Your frontend and backend read the same data. The owning app keeps control of its password.' : 'No other app in this project has a database to share yet.'} />
               <ChoiceCard selected={mode === 'existing'} onSelect={() => openAdd('existing')} disabled={!connections.length} icon={<Link2 className="h-4 w-4" />} title="Connect an existing database" description="Verify a database that already exists with its own credentials." />
             </div>
 
             {mode === 'stack' && (
-              <div className="space-y-2" role="radiogroup" aria-label="Stack database">
+              <div className="space-y-2" role="radiogroup" aria-label="Project database">
                 <p className="text-sm font-medium">Choose a database</p>
                 {available.map(item => (
                   <ChoiceCard key={item.id} selected={form.sourceServiceId === item.id} onSelect={() => setForm({ ...form, sourceServiceId: item.id, envPrefix: envName(item.name) })}
@@ -321,15 +311,7 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
                 {mode === 'new' ? (
                   <div className="space-y-2">
                     <p className="text-sm font-medium">Database engine</p>
-                    <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Database server">
-                      {connections.map(connection => {
-                        const ready = connection.provisioning_enabled && connection.last_status === 'healthy'
-                        return <ChoiceCard key={connection.id} selected={form.connectionId === connection.id} disabled={!ready} onSelect={() => setForm({ ...form, connectionId: connection.id })}
-                          icon={<ProviderLogo provider={connection.provider} size="sm" />} title={providerMeta[connection.provider]?.label || connection.provider}
-                          badge={connection.is_default ? <span className="rounded-full bg-white/[0.08] px-1.5 py-px text-[10px] text-muted-foreground">Recommended</span> : undefined}
-                          description={ready ? connection.name : `${connection.name} · ${connection.provisioning_enabled ? 'needs a successful connection test' : 'provisioning disabled'}`} />
-                      })}
-                    </div>
+                    <ServiceCatalog role={role} selectedConnectionId={form.connectionId} onSelect={server => { setSelectedServer(server); setForm({ ...form, connectionId: server.id }) }} />
                   </div>
                 ) : (
                   <label className="field-label">Database server<select className="control-input" value={form.connectionId} onChange={event => setForm({ ...form, connectionId: event.target.value })}>{connections.map(connection => <option key={connection.id} value={connection.id}>{connection.name} · {providerMeta[connection.provider]?.label}</option>)}</select></label>
@@ -360,7 +342,7 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
             {notice?.tone === 'error' && <p role="alert" className="rounded-md border border-red-400/25 bg-red-400/5 px-3 py-2 text-sm text-red-300">{notice.text}</p>}
             <Button className="w-full" onClick={() => void create()} disabled={busy || !canSubmit}>
               {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Database className="mr-2 h-4 w-4" />}
-              {mode === 'stack' ? 'Connect stack database' : mode === 'existing' ? 'Verify and connect' : 'Create database'}
+              {mode === 'stack' ? 'Connect project database' : mode === 'existing' ? 'Verify and connect' : 'Create database'}
             </Button>
           </div>
         </SheetContent>
