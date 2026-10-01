@@ -3,15 +3,19 @@ import { query } from '@/lib/db'
 import { getSessionFromCookie } from '@/lib/auth'
 import { requireRole } from '@/lib/rbac'
 import { jsonError } from '@/lib/api'
+import { ensureDeploymentSchema } from '@/lib/deployment-schema'
 
 export async function GET(_: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator', 'viewer'])
 
+    await ensureDeploymentSchema()
+
     const { rows } = await query(
       `select d.id, d.project_id, d.user_id, d.status, d.branch, d.commit_sha, d.started_at, d.finished_at,
-              d.trigger, d.phase, d.security_status, d.log, p.name as project_name, u.name as user_name
+              d.trigger, d.phase, d.security_status, d.log, (p.active_deployment_id = d.id) as is_active,
+              p.name as project_name, u.name as user_name
        from deployments d
        join projects p on p.id = d.project_id
        left join users u on u.id = d.user_id

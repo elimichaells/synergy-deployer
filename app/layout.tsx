@@ -1,12 +1,13 @@
 import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
+import { Geist, Geist_Mono } from 'next/font/google'
 import './globals.css'
 
-const inter = Inter({ subsets: ['latin'] })
+const sans = Geist({ subsets: ['latin'], variable: '--font-geist-sans' })
+const mono = Geist_Mono({ subsets: ['latin'], variable: '--font-geist-mono' })
 
 export const metadata: Metadata = {
-  title: 'Manager | Deployment workspace',
-  description: 'Application deployments and infrastructure management',
+  title: 'Synergy Deploy',
+  description: 'Synergy deployment and infrastructure workspace',
 }
 
 export default function RootLayout({
@@ -15,8 +16,8 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
-      <body className={inter.className}>{children}</body>
+    <html lang="en" className={`${sans.variable} ${mono.variable}`}>
+      <body className="font-sans">{children}</body>
     </html>
   )
 }

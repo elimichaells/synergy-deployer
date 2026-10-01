@@ -50,6 +50,21 @@ module.exports = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        syn: {
+          violet: "hsl(var(--syn-violet))",
+          cyan: "hsl(var(--syn-cyan))",
+          mint: "hsl(var(--syn-mint))",
+        },
+        status: {
+          ready: "hsl(var(--ready))",
+          building: "hsl(var(--building))",
+          failed: "hsl(var(--failed))",
+          queued: "hsl(var(--queued))",
+        },
+      },
+      fontFamily: {
+        sans: ["var(--font-geist-sans)", "ui-sans-serif", "system-ui", "sans-serif"],
+        mono: ["var(--font-geist-mono)", "ui-monospace", "SFMono-Regular", "Consolas", "monospace"],
       },
       borderRadius: {
         lg: "var(--radius)",

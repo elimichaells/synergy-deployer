@@ -2,36 +2,51 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Synergy design language
+ * Monochrome surfaces, hairline borders and one signature accent: the
+ * "synergy spectrum" (violet → cyan → mint) reserved for brand moments and
+ * live pipeline progress, so it always means "something is happening".
+ */
 @layer base {
   :root {
-    --background: 0 0% 8%;
-    --foreground: 220 15% 96%;
-    --card: 0 0% 10%;
-    --card-foreground: 220 15% 96%;
-    --popover: 0 0% 10%;
-    --popover-foreground: 220 15% 96%;
-    --primary: 160 64% 52%;
-    --primary-foreground: 220 20% 6%;
-    --secondary: 0 0% 16%;
-    --secondary-foreground: 220 15% 96%;
-    --muted: 0 0% 13%;
-    --muted-foreground: 0 0% 65%;
-    --accent: 0 0% 17%;
-    --accent-foreground: 220 15% 96%;
-    --destructive: 0 84% 60%;
+    --background: 0 0% 2.4%;
+    --foreground: 0 0% 93%;
+    --card: 0 0% 4.7%;
+    --card-foreground: 0 0% 93%;
+    --popover: 0 0% 6%;
+    --popover-foreground: 0 0% 93%;
+    --primary: 0 0% 96%;
+    --primary-foreground: 0 0% 4%;
+    --secondary: 0 0% 10%;
+    --secondary-foreground: 0 0% 93%;
+    --muted: 0 0% 8%;
+    --muted-foreground: 0 0% 57%;
+    --accent: 0 0% 11%;
+    --accent-foreground: 0 0% 96%;
+    --destructive: 0 80% 60%;
     --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 22%;
-    --input: 0 0% 25%;
-    --ring: 160 64% 52%;
-    --sidebar: 0 0% 6%;
+    --border: 0 0% 13%;
+    --input: 0 0% 16%;
+    --ring: 199 92% 60%;
+    --sidebar: 0 0% 3%;
     --radius: 0.5rem;
+
+    --syn-violet: 258 90% 68%;
+    --syn-cyan: 189 94% 56%;
+    --syn-mint: 158 72% 56%;
+    --ready: 152 68% 48%;
+    --building: 38 95% 56%;
+    --failed: 0 84% 62%;
+    --queued: 0 0% 46%;
+
+    --spectrum: linear-gradient(90deg, hsl(var(--syn-violet)), hsl(var(--syn-cyan)) 55%, hsl(var(--syn-mint)));
   }
 }
 
 @layer base {
   * {
     @apply border-border;
-    letter-spacing: 0 !important;
   }
 
   html {
@@ -39,60 +54,53 @@
   }
 
   body {
-    @apply bg-background text-foreground antialiased selection:bg-primary/30;
+    @apply bg-background text-foreground antialiased selection:bg-white/20;
     min-height: 100vh;
+    font-feature-settings: "ss01", "cv11";
   }
 
-  :focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 3px; }
+  :focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
   input, select, textarea { min-width: 0; }
+  code, kbd, samp, pre, .font-mono { font-feature-settings: "liga" 0, "calt" 0; }
 
-  /* Slim translucent scrollbars everywhere */
-  ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
-  }
-
-  ::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb {
-    background: hsl(225 10% 40% / 0.35);
+    background: hsl(0 0% 50% / 0.22);
     border-radius: 999px;
     border: 3px solid transparent;
     background-clip: content-box;
   }
-
   ::-webkit-scrollbar-thumb:hover {
-    background: hsl(225 10% 55% / 0.5);
+    background: hsl(0 0% 60% / 0.4);
     border: 3px solid transparent;
     background-clip: content-box;
   }
 }
 
 @layer components {
-  .control-input { @apply h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring disabled:opacity-60; }
-  .control-textarea { @apply w-full resize-y rounded-md border border-input bg-background p-3 text-sm leading-6 outline-none focus:ring-1 focus:ring-ring; }
+  .control-input { @apply h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground/70 hover:border-white/20 focus:border-white/40 focus:ring-2 focus:ring-white/10 disabled:opacity-60; }
+  .control-textarea { @apply w-full resize-y rounded-md border border-input bg-background p-3 text-sm leading-6 outline-none transition-colors hover:border-white/20 focus:border-white/40 focus:ring-2 focus:ring-white/10; }
   .field-label { @apply grid min-w-0 gap-2 text-sm font-medium; }
-  .eyebrow { @apply mb-2 text-[10px] font-semibold text-muted-foreground; }
+  .eyebrow { @apply mb-2 font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground; }
   .section-heading { @apply mb-6 flex items-center justify-between gap-4 border-b border-border pb-5; }
   .notice-error { @apply mb-5 break-words rounded-md border border-red-400/25 bg-red-400/5 px-4 py-3 text-sm text-red-300; }
   .setup-layout { @apply grid min-w-0 gap-8 lg:grid-cols-[196px_minmax(0,1fr)]; }
-  .setup-steps { @apply flex items-start gap-1 overflow-x-auto border-b border-border pb-4 lg:flex-col lg:gap-2 lg:overflow-visible lg:border-b-0 lg:border-r lg:pb-0 lg:pr-5; }
-  .setup-step { @apply flex min-h-16 shrink-0 items-center gap-3 rounded-md px-3 py-2 text-muted-foreground transition-colors lg:w-full; }
-  .setup-step:not(:disabled):hover { @apply bg-muted text-foreground; }
-  .setup-step-active { @apply bg-primary/10 text-foreground; }
-  .setup-step-icon { @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border; }
-  .setup-step-active .setup-step-icon { @apply border-primary/30 text-primary; }
+  .setup-steps { @apply flex items-start gap-1 overflow-x-auto border-b border-border pb-4 lg:flex-col lg:gap-1 lg:overflow-visible lg:border-b-0 lg:border-r lg:pb-0 lg:pr-5; }
+  .setup-step { @apply flex min-h-14 shrink-0 items-center gap-3 rounded-md px-3 py-2 text-muted-foreground transition-colors lg:w-full; }
+  .setup-step:not(:disabled):hover { @apply bg-white/[0.04] text-foreground; }
+  .setup-step-active { @apply bg-white/[0.06] text-foreground; }
+  .setup-step-icon { @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-background; }
+  .setup-step-active .setup-step-icon { @apply border-white/40 text-foreground; }
   .summary-list { @apply divide-y divide-border border-y border-border text-sm; }
   .summary-list > div { @apply grid gap-2 py-3 sm:grid-cols-[160px_minmax(0,1fr)]; }
   .summary-list dt { @apply text-muted-foreground; }
   .summary-list dd { @apply min-w-0; }
-  .inline-tab { @apply shrink-0 border-b-2 border-transparent px-3 py-3 text-sm text-muted-foreground; }
-  .inline-tab-active { @apply border-primary text-foreground; }
-  .terminal-output { @apply max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-black/40 p-4 font-mono text-xs leading-5; }
+  .inline-tab { @apply shrink-0 border-b-2 border-transparent px-3 py-3 text-sm text-muted-foreground transition-colors hover:text-foreground; }
+  .inline-tab-active { @apply border-foreground text-foreground; }
+  .terminal-output { @apply max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-black p-4 font-mono text-xs leading-5; }
   .workspace-tabs { @apply flex h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b border-border bg-transparent p-0; }
-  .workspace-tabs > button { @apply min-h-11 rounded-none border-b-2 border-transparent px-3 py-3 shadow-none data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none; }
+  .workspace-tabs > button { @apply min-h-10 rounded-none border-b-2 border-transparent px-3 py-2.5 text-[13px] text-muted-foreground shadow-none hover:text-foreground data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none; }
   .application-workspace .glass-card { @apply rounded-none border-x-0 border-t-0 bg-transparent shadow-none; }
   .application-workspace .glass-card > div { @apply px-0; }
   .setup-database .glass-card { @apply border-0 bg-transparent shadow-none; }
@@ -104,99 +112,80 @@
     position: relative;
     background: hsl(var(--card));
     border: 1px solid hsl(var(--border));
-    border-radius: var(--radius);
-    box-shadow: 0 1px 2px hsl(220 20% 2% / 0.35);
+    border-radius: calc(var(--radius) + 2px);
   }
 
-  /* Secondary / nested surface: lighter blur, quieter */
   .glass-panel,
   .surface-panel {
-    background: hsl(var(--muted) / 0.65);
+    background: hsl(var(--muted) / 0.7);
     border: 1px solid hsl(var(--border));
     border-radius: var(--radius);
   }
 
-  /* Recessed terminal / code well */
   .glass-well {
-    background: hsl(0 0% 4% / 0.75);
-    border: 1px solid hsl(220 30% 90% / 0.06);
-    box-shadow: none;
+    background: #000;
+    border: 1px solid hsl(var(--border));
   }
 
-  /* Interactive glass hover lift */
-  .glass-hover {
-    transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease, background 200ms ease;
+  .glass-hover { transition: border-color 160ms ease, background 160ms ease; }
+  .glass-hover:hover { border-color: hsl(0 0% 100% / 0.18); }
+
+  /* Interactive card used by project and deployment tiles */
+  .syn-tile {
+    @apply relative rounded-[10px] border border-border bg-card transition-[border-color,background-color,box-shadow] duration-150;
+  }
+  .syn-tile:hover { @apply border-white/20; box-shadow: 0 0 0 4px hsl(0 0% 100% / 0.02); }
+
+  /* Signature spectrum: brand mark, live progress, focused moments. */
+  .spectrum-text {
+    background: var(--spectrum);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .spectrum-bar { background: var(--spectrum); }
+  .spectrum-line {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, hsl(var(--syn-violet) / 0.6), hsl(var(--syn-cyan) / 0.6), hsl(var(--syn-mint) / 0.5), transparent);
+  }
+  .spectrum-flow {
+    background: linear-gradient(90deg, hsl(var(--syn-violet)), hsl(var(--syn-cyan)), hsl(var(--syn-mint)), hsl(var(--syn-cyan)), hsl(var(--syn-violet)));
+    background-size: 200% 100%;
+    animation: spectrumFlow 2.4s linear infinite;
+  }
+  @keyframes spectrumFlow { from { background-position: 0% 0; } to { background-position: -200% 0; } }
+
+  /* Dotted canvas behind page headers */
+  .syn-canvas {
+    background-image: radial-gradient(hsl(0 0% 100% / 0.07) 1px, transparent 1px);
+    background-size: 18px 18px;
+    mask-image: linear-gradient(180deg, #000 0%, transparent 100%);
   }
 
-  .glass-hover:hover {
-    border-color: hsl(199 95% 60% / 0.25);
-    box-shadow: none;
-  }
+  .kbd { @apply inline-flex h-5 min-w-5 items-center justify-center rounded border border-border bg-white/[0.04] px-1 font-mono text-[10px] text-muted-foreground; }
 
-  /* ── Status glow dots ──────────────────────────────────────────────── */
+  /* Status dots: ready, building, failed, queued */
+  .dot-live { @apply h-2.5 w-2.5 rounded-full; background: hsl(var(--ready)); }
+  .dot-dead { @apply h-2.5 w-2.5 rounded-full; background: hsl(var(--failed)); }
 
-  .dot-live {
-    @apply h-2.5 w-2.5 rounded-full bg-emerald-400;
-    box-shadow: none;
-  }
-
-  .dot-dead {
-    @apply h-2.5 w-2.5 rounded-full bg-red-500;
-    box-shadow: none;
-  }
-
-  .heartbeat {
-    animation: heartbeat 2s ease-in-out infinite;
-  }
-
+  .heartbeat { animation: heartbeat 2s ease-in-out infinite; }
   @keyframes heartbeat {
-    0% {
-      transform: scale(1);
-      opacity: 0.8;
-    }
-
-    50% {
-      transform: scale(1.4);
-      opacity: 0.4;
-    }
-
-    100% {
-      transform: scale(1);
-      opacity: 0.8;
-    }
+    0% { transform: scale(1); opacity: 0.8; }
+    50% { transform: scale(1.9); opacity: 0; }
+    100% { transform: scale(1); opacity: 0; }
   }
 
-  /* Soft fade-in for page content */
-  .fade-in-up {
-    animation: fadeInUp 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
-  }
-
+  .fade-in-up { animation: fadeInUp 320ms cubic-bezier(0.16, 1, 0.3, 1) both; }
   @keyframes fadeInUp {
-    from {
-      opacity: 0;
-      transform: translateY(6px);
-    }
-
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
   }
 }
 
 @layer utilities {
-  .scrollbar-none {
-    scrollbar-width: none;
-  }
-
-  .scrollbar-none::-webkit-scrollbar {
-    display: none;
-  }
-
-  /* Gradient text for headings */
-  .text-shine {
-    color: hsl(var(--foreground));
-  }
+  .scrollbar-none { scrollbar-width: none; }
+  .scrollbar-none::-webkit-scrollbar { display: none; }
+  .text-shine { color: hsl(var(--foreground)); }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { watchDeployment } from '@/lib/deployment-watch'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import {
   Plus,
@@ -12,7 +11,6 @@ import {
   Square,
   RotateCw,
   Activity,
-  ChevronLeft,
   Settings as SettingsIcon,
   Terminal,
   Database,
@@ -37,6 +35,7 @@ import { DataRemovalAction } from '@/components/data-removal-action'
 import { ProjectSetup } from '@/components/project-setup'
 import { RelatedApplications } from '@/components/related-applications'
 import { RuntimeManager } from '@/components/runtime-manager'
+import { DeploymentRow } from '@/components/synergy/deployment-row'
 import { PROJECT_TYPES as projectTypeDefaults, getProjectCommandOverrides, type ProjectType } from '@/lib/project-types'
 
 interface Project {
@@ -180,11 +179,7 @@ export default function SitePage() {
   const [logsPath, setLogsPath] = useState('')
   const [logsStatus, setLogsStatus] = useState<string | null>(null)
   const [panel, setPanel] = useState<'logs' | 'env' | 'settings' | 'deployments' | 'webhook'>('logs')
-  const [selectedDeployment, setSelectedDeployment] = useState<Deployment | null>(null)
-  const [deploymentLog, setDeploymentLog] = useState('')
-  const [loadingDeploymentLog, setLoadingDeploymentLog] = useState(false)
-  const deployLogRef = useRef<HTMLDivElement>(null)
-  const deployStreamRef = useRef<{ close(): void } | null>(null)
+  const [clock, setClock] = useState(() => Date.now())
   const [editing, setEditing] = useState(false)
   const [savingProject, setSavingProject] = useState(false)
   const [savingAutoDeploy, setSavingAutoDeploy] = useState(false)
@@ -258,7 +253,7 @@ export default function SitePage() {
     try {
       const [projectRes, deploymentsRes, connectionsRes, databaseRes, dataServicesRes, runtimesRes, dataConnectionsRes] = await Promise.all([
         fetch(`/api/sites/${siteId}`),
-        fetch('/api/deployments'),
+        fetch(`/api/deployments?project_id=${encodeURIComponent(siteId || '')}`),
         fetch('/api/github/connections'),
         fetch(`/api/sites/${siteId}/database`),
         fetch(`/api/sites/${siteId}/data-services`),
@@ -413,21 +408,13 @@ export default function SitePage() {
         throw new Error(body.error || 'Deployment failed')
       }
       const body = await res.json().catch(() => ({}))
-      await refresh()
-      // Auto-switch to deployments panel and stream the new deployment
-      setPanel('deployments')
+      // Follow the new release on its own pipeline page.
       if (body.deploymentId) {
-        const newDep: Deployment = {
-          id: body.deploymentId,
-          project_id: siteId!,
-          status: 'running',
-          branch: null,
-          commit_sha: null,
-          started_at: new Date().toISOString(),
-          finished_at: null,
-        }
-        void handleSelectDeployment(newDep)
+        router.push(`/deployments/${body.deploymentId}`)
+        return
       }
+      await refresh()
+      setPanel('deployments')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Deployment failed')
     } finally {
@@ -707,38 +694,18 @@ export default function SitePage() {
     }
   }
 
-  const closeDeployStream = useCallback(() => {
-    if (deployStreamRef.current) {
-      deployStreamRef.current.close()
-      deployStreamRef.current = null
-    }
-  }, [])
-
-  const handleSelectDeployment = useCallback((deployment: Deployment) => {
-    closeDeployStream()
-    setSelectedDeployment(deployment)
-    setDeploymentLog('')
-    setLoadingDeploymentLog(true)
-
-    deployStreamRef.current = watchDeployment<Deployment>(deployment.id, data => {
-      setDeploymentLog(data.log || '')
-      setLoadingDeploymentLog(false)
-      setSelectedDeployment(current => current?.id === data.id ? data : current)
-      setDeployments(current => current.map(item => item.id === data.id ? { ...item, ...data } : item))
-    }, () => setLoadingDeploymentLog(false))
-  }, [closeDeployStream])
-
-  // Cleanup stream on unmount
+  // Keep the history tab's live rows moving while a release is in flight.
+  const deploymentInFlight = deployments.some(d => d.status === 'running' || d.status === 'queued')
   useEffect(() => {
-    return () => closeDeployStream()
-  }, [closeDeployStream])
-
-  // Auto-scroll deployment log when streaming
-  useEffect(() => {
-    if (deployLogRef.current && selectedDeployment?.status === 'running') {
-      deployLogRef.current.scrollTop = deployLogRef.current.scrollHeight
-    }
-  }, [deploymentLog, selectedDeployment?.status])
+    if (!siteId || !deploymentInFlight) return
+    const timer = window.setInterval(async () => {
+      if (document.hidden) return
+      const response = await fetch(`/api/deployments?project_id=${encodeURIComponent(siteId)}`, { cache: 'no-store' }).catch(() => null)
+      if (response?.ok) setDeployments(await response.json())
+      setClock(Date.now())
+    }, 3000)
+    return () => window.clearInterval(timer)
+  }, [siteId, deploymentInFlight])
 
   const handleServiceAction = async (action: 'start' | 'stop' | 'restart') => {
     if (!siteId) return
@@ -1023,18 +990,11 @@ export default function SitePage() {
       const res = await fetch(`/api/deployments/${deployment.id}/rollback`, { method: 'POST' })
       const body = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(body.error || 'Rollback failed')
-      await refresh()
       if (body.deploymentId) {
-        void handleSelectDeployment({
-          id: body.deploymentId,
-          project_id: siteId!,
-          status: 'running',
-          branch: null,
-          commit_sha: deployment.commit_sha,
-          started_at: new Date().toISOString(),
-          finished_at: null,
-        })
+        router.push(`/deployments/${body.deploymentId}`)
+        return
       }
+      await refresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Rollback failed')
     } finally {
@@ -1124,7 +1084,8 @@ export default function SitePage() {
   return (
     <AppShell
       title={project?.name || 'Site'}
-      subtitle={project?.repo_url || 'No repo linked'}
+      subtitle={project?.repo_url?.replace(/^https?:\/\/(www\.)?github\.com\//, '').replace(/\.git$/, '') || 'No repo linked'}
+      back={{ href: '/sites', label: 'Applications' }}
       actions={
         <div className="flex items-center gap-2">
           {project?.environment === 'staging' && (
@@ -1156,8 +1117,8 @@ export default function SitePage() {
             onClick={handleDeploy}
             disabled={deploying || hasRunningDeploy || project?.setup_required}
             title={project?.setup_required ? 'Finish application setup first' : 'Deploy application'}
-            className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium transition-all disabled:opacity-50 shadow-lg shadow-blue-500/20 ${hasRunningDeploy
-              ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+            className={`flex h-8 items-center gap-2 rounded-md px-3 text-[13px] font-medium transition-all disabled:opacity-50 ${hasRunningDeploy
+              ? 'border border-syn-cyan/30 bg-syn-cyan/10 text-syn-cyan'
               : 'bg-primary text-primary-foreground hover:bg-primary/90'
               }`}
           >
@@ -1179,7 +1140,6 @@ export default function SitePage() {
       <div className="application-workspace space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
           <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-            <Link href="/sites" className="flex items-center gap-1 hover:text-foreground"><ChevronLeft className="h-3.5 w-3.5" />Applications</Link>
             <span className={project?.environment === 'production' ? 'text-emerald-300' : 'text-amber-300'}>{project?.environment}</span>
             <span>{project?.default_branch}</span><span>Port {project?.port}</span>
             {project?.setup_required && <Badge variant="secondary">Setup incomplete</Badge>}
@@ -1319,134 +1279,45 @@ export default function SitePage() {
           </TabsContent>
 
           <TabsContent value="deployments" className="space-y-4">
-            <Card className="">
-              <CardHeader>
-                <CardTitle>Deployment History</CardTitle>
-                <CardDescription>All past and current deployments for this environment.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="rounded-md border border-white/[0.08]">
-                  <div className="grid grid-cols-5 gap-4 p-3 text-xs font-medium text-muted-foreground border-b border-white/[0.08] bg-black/30">
-                    <div>Status</div>
-                    <div>Commit</div>
-                    <div>Started</div>
-                    <div>Duration</div>
-                    <div className="text-right">Action</div>
-                  </div>
-                  <div className="divide-y divide-white/[0.06]">
-                    {deployments.length === 0 ? (
-                      <div className="p-8 text-center text-sm text-muted-foreground">No deployments found.</div>
-                    ) : (
-                      deployments.map((d) => (
-                        <div key={d.id} className="grid grid-cols-5 gap-4 p-3 text-sm items-center hover:bg-white/[0.04] transition-colors cursor-pointer" onClick={() => handleSelectDeployment(d)}>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <div className={`h-2 w-2 rounded-full ${d.status === 'success' ? 'bg-emerald-500' :
-                              d.status === 'failed' ? 'bg-red-500' :
-                                d.status === 'running' ? 'bg-blue-500 animate-pulse' : 'bg-gray-500'
-                              }`} />
-                            <span className="capitalize text-foreground">{d.status}</span>
-                            {d.is_active && <Badge variant="secondary">Active</Badge>}
-                            {d.status === 'running' && d.phase && <span className="text-[11px] text-muted-foreground">{d.phase}</span>}
-                            {d.security_status === 'failed' && <span className="text-[11px] text-red-400">Security gate</span>}
-                          </div>
-                          <div className="font-mono text-xs text-muted-foreground">{d.commit_sha ? d.commit_sha.substring(0, 7) : '-'}</div>
-                          <div className="text-muted-foreground">{new Date(d.started_at!).toLocaleString()}</div>
-                          <div className="text-muted-foreground">
-                            {d.finished_at && d.started_at ? formatDuration(d.started_at, d.finished_at) : 'Running...'}
-                          </div>
-                          <div className="flex items-center justify-end gap-2">
-                            {d.status === 'success' && !d.is_active && d.commit_sha && !hasRunningDeploy && (
-                              <button
-                                onClick={(e) => { e.stopPropagation(); void handleRollback(d) }}
-                                disabled={rollingBack !== null}
-                                className="rounded border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-400 transition-colors hover:bg-amber-500/20 disabled:opacity-50"
-                              >
-                                {rollingBack === d.id ? 'Rolling back…' : 'Rollback'}
-                              </button>
-                            )}
-                            {d.status === 'running' && (
-                              <button
-                                onClick={(e) => { e.stopPropagation(); void handleCancelDeployment(d.id) }}
-                                disabled={cancellingDeploy === d.id}
-                                className="rounded border border-red-500/20 bg-red-500/10 px-2 py-1 text-[11px] font-medium text-red-400 transition-colors hover:bg-red-500/20 disabled:opacity-50"
-                              >
-                                {cancellingDeploy === d.id ? 'Cancelling…' : 'Cancel'}
-                              </button>
-                            )}
-                            <ChevronLeft className="h-4 w-4 text-muted-foreground" />
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold tracking-tight">Deployments</h2>
+                <p className="text-xs text-muted-foreground">Every release of this {project?.environment || 'application'} environment. Open one to see its full pipeline.</p>
+              </div>
+              <Button asChild variant="outline" size="sm"><Link href="/deployments">All deployments</Link></Button>
+            </div>
+            <div className="overflow-hidden rounded-xl border border-border bg-card">
+              {deployments.length === 0 ? (
+                <div className="px-6 py-14 text-center">
+                  <Rocket className="mx-auto mb-3 h-6 w-6 text-muted-foreground" />
+                  <p className="text-sm font-medium">No deployments yet</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{project?.setup_required ? 'Finish setup, then deploy to create the first release.' : 'Deploy to create the first release.'}</p>
                 </div>
-
-                {/* Selected Deployment Detail Overlay/Section could go here, or remain modal-like logic */}
-                {/* Sheet for Deployment Details */}
-                <Sheet open={!!selectedDeployment} onOpenChange={(open) => { if (!open) { closeDeployStream(); setSelectedDeployment(null) } }}>
-                  <SheetContent side="right" className="w-[85vw] sm:w-[50vw] sm:max-w-none bg-background/95 backdrop-blur-2xl border-l border-white/[0.08] text-foreground p-0 flex flex-col shadow-2xl">
-                    <SheetHeader className="px-6 py-5 border-b border-white/[0.08] bg-black/30">
-                      <div className="flex items-center justify-between pr-8">
-                        <div className="flex flex-col gap-1.5">
-                          <SheetTitle className="text-foreground text-lg font-bold tracking-tight">Deployment Details</SheetTitle>
-                          <SheetDescription className="text-muted-foreground text-xs font-mono">ID: {selectedDeployment?.id}</SheetDescription>
-                        </div>
-                        <Badge
-                          className="text-sm px-3 py-1"
-                          variant={
-                            selectedDeployment?.status === 'success'
-                              ? 'default'
-                              : selectedDeployment?.status === 'running'
-                                ? 'secondary'
-                                : 'destructive'
-                          }
-                        >
-                          {selectedDeployment?.status}
-                        </Badge>
-                      </div>
-                    </SheetHeader>
-
-                    <div className="flex-1 overflow-hidden flex flex-col p-6 gap-6 bg-transparent">
-                      <div className="grid grid-cols-2 gap-4 text-xs surface-card p-4 rounded-lg border border-white/[0.08]">
-                        <div className="space-y-1">
-                          <span className="text-muted-foreground font-medium uppercase tracking-wider text-[10px]">Commit</span>
-                          <div className="font-mono text-foreground">{selectedDeployment?.commit_sha || '-'}</div>
-                        </div>
-                        <div className="space-y-1">
-                          <span className="text-muted-foreground font-medium uppercase tracking-wider text-[10px]">Branch</span>
-                          <div className="font-mono text-foreground">{selectedDeployment?.branch || '—'}</div>
-                        </div>
-                        <div className="space-y-1">
-                          <span className="text-muted-foreground font-medium uppercase tracking-wider text-[10px]">Started</span>
-                          <div className="text-foreground">{selectedDeployment?.started_at ? new Date(selectedDeployment.started_at).toLocaleString() : '-'}</div>
-                        </div>
-                        <div className="space-y-1">
-                          <span className="text-muted-foreground font-medium uppercase tracking-wider text-[10px]">Finished</span>
-                          <div className="text-foreground">{selectedDeployment?.finished_at ? new Date(selectedDeployment?.finished_at).toLocaleString() : ['running', 'queued'].includes(selectedDeployment?.status || '') ? 'Running...' : '—'}</div>
-                        </div>
-                      </div>
-
-                      <div className="flex-1 flex flex-col min-h-0 border border-white/[0.08] rounded-lg bg-black/30 shadow-inner overflow-hidden">
-                        <div className="flex items-center justify-between px-4 py-2 border-b border-white/[0.08] bg-white/[0.03]">
-                          <span className="text-xs font-semibold text-muted-foreground">Build Logs</span>
-                          {selectedDeployment?.status === 'running' && <RefreshCw className="h-3 w-3 animate-spin text-blue-400" />}
-                        </div>
-                        <div className="flex-1 overflow-auto p-4 font-mono text-xs leading-relaxed" ref={deployLogRef}>
-                          {loadingDeploymentLog ? (
-                            <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
-                              <RefreshCw className="h-5 w-5 animate-spin opacity-50" />
-                              <span>Loading logs...</span>
-                            </div>
-                          ) : (
-                            deploymentLog ? renderLogLines(deploymentLog) : <div className="flex h-full items-center justify-center text-muted-foreground italic">No logs captured.</div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </SheetContent>
-                </Sheet>
-              </CardContent>
-            </Card>
+              ) : (
+                <div className="divide-y divide-border">
+                  {deployments.map((d) => (
+                    <DeploymentRow
+                      key={d.id}
+                      deployment={{ ...d, project_name: project?.name }}
+                      now={clock}
+                      showProject={false}
+                      actions={<>
+                        {d.status === 'success' && !d.is_active && d.commit_sha && !hasRunningDeploy && (
+                          <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => void handleRollback(d)} disabled={rollingBack !== null}>
+                            {rollingBack === d.id ? 'Rolling back…' : 'Roll back'}
+                          </Button>
+                        )}
+                        {d.status === 'running' && (
+                          <Button variant="outline" size="sm" className="h-7 px-2 text-xs text-red-300" onClick={() => void handleCancelDeployment(d.id)} disabled={cancellingDeploy === d.id}>
+                            {cancellingDeploy === d.id ? 'Cancelling…' : 'Cancel'}
+                          </Button>
+                        )}
+                      </>}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
           </TabsContent>
 
           <TabsContent value="console" className="space-y-4">
