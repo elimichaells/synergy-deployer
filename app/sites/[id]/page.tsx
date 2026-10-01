@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
+import { AppToolGrid } from '@/components/app/app-tools'
 import { AppShell } from '@/components/layout/app-shell'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { EnvEditor } from '@/components/env-editor'
@@ -757,11 +758,11 @@ export default function SitePage() {
 
   const tabs = (
     <TabsList className="scrollbar-none h-auto min-h-0 w-full justify-start gap-0 overflow-x-auto border-0 bg-transparent p-0">
-      {(showSetupTab ? ['setup'] : []).concat(['overview', 'deployments', 'storage', 'domains', 'environment', 'logs', 'settings']).map(value => (
-        <TabsTrigger key={value} value={value === 'logs' && activeTab === 'console' ? 'console' : value} className="group relative min-h-0 rounded-none border-0 px-1 pb-3 pt-1 text-[13px] font-normal text-muted-foreground data-[state=active]:text-foreground">
+      {(showSetupTab ? ['setup'] : []).concat(['overview', 'deployments', 'environment', 'logs', 'storage', 'domains', 'settings']).map(value => (
+        <TabsTrigger key={value} value={value === 'logs' && activeTab === 'console' ? 'console' : value} title={{ setup: 'Finish connecting your repository, database and domain', overview: 'Is the app running, and what can I do with it?', deployments: 'Every release and its build output', environment: 'The settings and secrets in the .env file', logs: 'What the app prints, and a terminal for running commands', storage: 'Where the app keeps its data', domains: 'The web addresses that open the app', settings: 'Name, repository, build commands, restart and remove' }[value]} className="group relative min-h-0 rounded-none border-0 px-1 pb-3 pt-1 text-[13px] font-normal text-muted-foreground data-[state=active]:text-foreground">
           <span className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 transition-colors group-hover:bg-white/[0.06]">
             {value === 'setup' && <span className="h-1.5 w-1.5 rounded-full spectrum-bar" />}
-            {{ setup: 'Setup', overview: 'Overview', deployments: 'Deployments', storage: 'Storage', domains: 'Domains', environment: 'Environment', logs: 'Runtime', settings: 'Settings' }[value]}
+            {{ setup: 'Setup', overview: 'Overview', deployments: 'Deployments', storage: 'Databases', domains: 'Domains', environment: 'Environment', logs: 'Logs & console', settings: 'Settings' }[value]}
           </span>
           <span className="absolute inset-x-2 bottom-0 hidden h-[2px] rounded-full bg-foreground group-data-[state=active]:block" aria-hidden="true" />
         </TabsTrigger>
@@ -894,13 +895,14 @@ export default function SitePage() {
 
           <StackPanel key={project.id} projectId={project.id} environment={project.environment} />
 
-          <Section title="Related" description="Other places this application shows up.">
-            <div className="grid gap-2 sm:grid-cols-3">
-              {project.staging_id && <Link href={`/sites/${project.staging_id}`} className="syn-tile flex items-center gap-3 px-4 py-3 text-sm"><GitBranch className="h-4 w-4" />Staging version<ArrowRight className="ml-auto h-3.5 w-3.5 text-muted-foreground" /></Link>}
-              {project.production_id && <Link href={`/sites/${project.production_id}`} className="syn-tile flex items-center gap-3 px-4 py-3 text-sm"><Rocket className="h-4 w-4" />Production version<ArrowRight className="ml-auto h-3.5 w-3.5 text-muted-foreground" /></Link>}
-              <Link href={`/automation?project=${siteId}`} className="syn-tile flex items-center gap-3 px-4 py-3 text-sm"><Workflow className="h-4 w-4" />Jobs & workers<ArrowRight className="ml-auto h-3.5 w-3.5 text-muted-foreground" /></Link>
-              <button type="button" onClick={() => changeTab('console')} className="syn-tile flex items-center gap-3 px-4 py-3 text-left text-sm"><Terminal className="h-4 w-4" />Run a command<ArrowRight className="ml-auto h-3.5 w-3.5 text-muted-foreground" /></button>
-            </div>
+          <Section title="Everything for this app" description="Each part of this app has its own tab. Here is what each one is for, in plain words.">
+            <AppToolGrid appId={project.id} onSelect={tab => changeTab(tab)} />
+            {(project.staging_id || project.production_id) && (
+              <div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-4">
+                {project.staging_id && <Button asChild variant="outline" size="sm"><Link href={`/sites/${project.staging_id}`}><GitBranch className="mr-1.5 h-3.5 w-3.5" />Open the staging version<ArrowRight className="ml-1.5 h-3.5 w-3.5" /></Link></Button>}
+                {project.production_id && <Button asChild variant="outline" size="sm"><Link href={`/sites/${project.production_id}`}><Rocket className="mr-1.5 h-3.5 w-3.5" />Open the production version<ArrowRight className="ml-1.5 h-3.5 w-3.5" /></Link></Button>}
+              </div>
+            )}
           </Section>
         </TabsContent>
 
@@ -941,7 +943,7 @@ export default function SitePage() {
         <TabsContent value="environment" className="mt-0 space-y-4">
           <Section
             title="Environment variables"
-            description={<>Settings and secrets your app reads at runtime. Changes apply on the next deployment or restart. Database variables are added automatically and don&apos;t need to be listed here.</>}
+            description={<>These are the settings and secrets your app reads when it starts, such as a database address, an API key or a mail password. They are saved in the app&apos;s <span className="font-mono text-xs">.env</span> file on this server. Changes apply on the next deployment or restart. Database variables are added for you and don&apos;t need to be listed here.</>}
             action={<div className="flex h-8 items-center rounded-md border border-border p-0.5" role="group" aria-label="File">
               {['.env', '.env.local'].map(file => <button key={file} type="button" onClick={() => setEnvFile(file)} aria-pressed={envFile === file} className={cn('h-full rounded-[5px] px-2.5 font-mono text-xs', envFile === file ? 'bg-white/[0.09] text-foreground' : 'text-muted-foreground hover:text-foreground')}>{file}</button>)}
             </div>}
@@ -971,8 +973,8 @@ export default function SitePage() {
         <TabsContent value="logs" className="mt-0">
           {runtimeSwitch}
           <Section
-            title="Runtime logs"
-            description={<>Live output from the running process{logsPath && <> · <span className="font-mono text-xs">{logsPath}</span></>}</>}
+            title="Logs"
+            description={<>What the app prints while it runs. When something is not working, look here first. This is the live output from the running process{logsPath && <> · <span className="font-mono text-xs">{logsPath}</span></>}</>}
             action={<>
               <div className="flex h-8 items-center rounded-md border border-border p-0.5" role="group" aria-label="Log stream">
                 {(['out', 'err'] as const).map(type => <button key={type} type="button" onClick={() => setLogsType(type)} aria-pressed={logsType === type} className={cn('h-full rounded-[5px] px-2.5 text-xs', logsType === type ? 'bg-white/[0.09] text-foreground' : 'text-muted-foreground hover:text-foreground')}>{type === 'out' ? 'Output' : 'Errors'}</button>)}
@@ -988,7 +990,7 @@ export default function SitePage() {
 
         <TabsContent value="console" className="mt-0 space-y-4">
           {runtimeSwitch}
-          <Section title="Console" description={<>Run commands inside <span className="break-all font-mono text-xs">{project.root_path}</span> with this app&apos;s runtime versions and environment.</>}>
+          <Section title="Console" description={<>A terminal for one-off commands, such as running database migrations or an npm script. It opens inside <span className="break-all font-mono text-xs">{project.root_path}</span> with this app&apos;s runtime versions and environment.</>}>
             {(consoleCommands.length > 0 || Object.keys(npmScripts).length > 0) && (
               <div className="mb-4 flex flex-wrap gap-2">
                 {consoleCommands.map(cmd => <Button key={cmd} variant="outline" size="sm" className="font-mono text-xs" disabled={npmRunning || !canWrite} onClick={() => { setNpmCommand(cmd); void runNpmCommand(cmd) }}>{cmd}</Button>)}

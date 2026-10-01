@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { ArrowRight, ArrowUpRight, Boxes, Check, ChevronDown, CornerDownRight, Database, Github, Globe2, Layers, Link2, Loader2, Pencil, Plus, Rocket, Unlink, Workflow, X, Zap } from 'lucide-react'
+import { ArrowRight, ArrowUpRight, Boxes, Check, ChevronDown, CornerDownRight, Database, Github, Globe2, Layers, Link2, Loader2, KeyRound, Pencil, Plus, Rocket, ScrollText, Unlink, X, Zap } from 'lucide-react'
 import { AppShell } from '@/components/layout/app-shell'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
@@ -16,6 +16,8 @@ import { Section, roleLabels } from '@/components/app/section'
 import { RolePicker, roleIcons } from '@/components/app/stack-panel'
 import { ProviderLogo, providerMeta, type Provider } from '@/components/app/providers'
 import { ProjectServiceSheet } from '@/components/app/project-service-sheet'
+import { AppToolLinks } from '@/components/app/app-tools'
+import { ProjectDeployments, ProjectEnvironment, ProjectLogsConsole } from '@/components/app/project-tools'
 import { relativeTime } from '@/lib/deployment-stages'
 import { cn } from '@/lib/utils'
 
@@ -26,7 +28,7 @@ interface DatabaseRow { id: string; project_id: string; name: string; database_n
 interface Project { id: string; name: string; apps: App[]; domains: Domain[]; routes: Route[]; databases: DatabaseRow[] }
 interface Candidate { appId: string; name: string; project_type: string; projectName: string }
 
-const TABS = ['overview', 'apps', 'storage', 'domains', 'jobs', 'settings'] as const
+const TABS = ['overview', 'apps', 'deployments', 'environment', 'logs', 'storage', 'domains', 'settings'] as const
 type Tab = typeof TABS[number]
 const menuItem = 'flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] text-muted-foreground outline-none data-[highlighted]:bg-white/[0.06] data-[highlighted]:text-foreground'
 
@@ -59,7 +61,8 @@ export default function ProjectPage() {
   useEffect(() => { void load().catch(err => setError(err.message)) }, [load])
   useEffect(() => {
     const value = new URLSearchParams(window.location.search).get('tab')
-    if (TABS.includes(value as Tab)) setTab(value as Tab)
+    const wanted = value === 'jobs' ? 'apps' : value
+    if (TABS.includes(wanted as Tab)) setTab(wanted as Tab)
   }, [])
 
   const changeTab = (value: string) => {
@@ -164,8 +167,8 @@ export default function ProjectPage() {
   const tabs = (
     <TabsList className="scrollbar-none h-auto min-h-0 w-full justify-start gap-0 overflow-x-auto border-0 bg-transparent p-0">
       {TABS.map(value => (
-        <TabsTrigger key={value} value={value} className="group relative min-h-0 rounded-none border-0 px-1 pb-3 pt-1 text-[13px] font-normal text-muted-foreground data-[state=active]:text-foreground">
-          <span className="rounded-md px-2.5 py-1.5 transition-colors group-hover:bg-white/[0.06]">{{ overview: 'Overview', apps: 'Apps', storage: 'Storage', domains: 'Domains', jobs: 'Jobs', settings: 'Settings' }[value]}</span>
+        <TabsTrigger key={value} value={value} title={{ overview: 'How the project fits together', apps: 'Every app, with shortcuts to all of its tools', deployments: 'Every release across the project', environment: 'The .env settings of each app', logs: 'Logs and a terminal for each app', storage: 'The project databases and services', domains: 'The web addresses of the project', settings: 'Rename the project and move apps' }[value]} className="group relative min-h-0 rounded-none border-0 px-1 pb-3 pt-1 text-[13px] font-normal text-muted-foreground data-[state=active]:text-foreground">
+          <span className="rounded-md px-2.5 py-1.5 transition-colors group-hover:bg-white/[0.06]">{{ overview: 'Overview', apps: 'Apps', deployments: 'Deployments', environment: 'Environment', logs: 'Logs & console', storage: 'Databases', domains: 'Domains', settings: 'Settings' }[value]}</span>
           <span className="absolute inset-x-2 bottom-0 hidden h-[2px] rounded-full bg-foreground group-data-[state=active]:block" aria-hidden="true" />
         </TabsTrigger>
       ))}
@@ -223,6 +226,23 @@ export default function ProjectPage() {
         )}
 
         <TabsContent value="overview" className="mt-0 space-y-6">
+          <Section title="What do you want to do?" description="Pick what you are looking for. Every tab here works for all the apps in this project at once.">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {([
+                ['deployments', Rocket, 'See releases', 'Every deployment, and why one failed.'],
+                ['environment', KeyRound, 'Edit settings and secrets', 'The .env file each app reads, such as database addresses and API keys.'],
+                ['logs', ScrollText, 'Read logs or run a command', 'What each app prints while running, and a terminal inside it.'],
+                ['storage', Database, 'Manage databases', 'Where the apps keep their data, with backups.'],
+                ['domains', Globe2, 'Manage web addresses', 'Which domains open which app.'],
+                ['apps', Layers, 'Open or deploy an app', 'Every app with shortcuts to all of its tools.'],
+              ] as const).map(([value, Icon, title, text]) => (
+                <button key={value} type="button" onClick={() => changeTab(value)} className="syn-tile flex flex-col p-4 text-left">
+                  <span className="flex items-center gap-2.5 text-sm font-medium"><Icon className="h-4 w-4 text-muted-foreground" aria-hidden="true" />{title}<ArrowRight className="ml-auto h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" /></span>
+                  <span className="mt-1.5 text-xs leading-5 text-muted-foreground">{text}</span>
+                </button>
+              ))}
+            </div>
+          </Section>
           <Section title="How it fits together" description="Requests come in through a domain, reach your apps, and the apps read and write their databases.">
             <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_auto_minmax(0,1.3fr)_auto_minmax(0,0.9fr)] lg:items-start">
               <div className="space-y-2">
@@ -261,10 +281,11 @@ export default function ProjectPage() {
         </TabsContent>
 
         <TabsContent value="apps" className="mt-0 space-y-4">
-          <Section title="Apps" description="Each app is its own repository with its own deployments. Open one to see its logs, settings and environment." action={addAppMenu}>
+          <Section title="Apps" description="Each app is its own repository with its own releases. Under each app are shortcuts to everything you can do with it: its settings file, logs, terminal, databases and more. Hover a shortcut to see what it is for." action={addAppMenu}>
             <div className="divide-y divide-border overflow-hidden rounded-lg border border-border">
               {apps.map(app => (
-                <div key={app.id} className="flex flex-wrap items-center gap-4 px-4 py-3.5">
+                <div key={app.id}>
+                <div className="flex flex-wrap items-center gap-4 px-4 py-3.5">
                   <FrameworkAvatar type={app.project_type} size="sm" />
                   <div className="min-w-0 flex-1">
                     <Link href={`/sites/${app.id}`} className="truncate text-sm font-medium hover:underline">{app.name}</Link>
@@ -284,6 +305,8 @@ export default function ProjectPage() {
                       : <Button size="sm" variant="outline" onClick={() => void deploy(app)} disabled={!access.canWrite || busy !== null || app.deployment_status === 'running'}>{busy === app.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Rocket className="mr-1.5 h-3.5 w-3.5" />}Deploy</Button>}
                     <Button asChild size="sm" variant="ghost"><Link href={`/sites/${app.id}`}>Open</Link></Button>
                   </div>
+                </div>
+                <AppToolLinks appId={app.id} className="px-4 pb-3.5" />
                 </div>
               ))}
             </div>
@@ -349,19 +372,11 @@ export default function ProjectPage() {
           </Section>
         </TabsContent>
 
-        <TabsContent value="jobs" className="mt-0 space-y-4">
-          <Section title="Scheduled jobs & workers" description="Cron jobs and always-on background workers run inside an app's folder with its environment.">
-            <div className="grid gap-2 sm:grid-cols-2">
-              {apps.map(app => (
-                <Link key={app.id} href={`/automation?project=${app.id}`} className="syn-tile flex items-center gap-3 px-4 py-3">
-                  <Workflow className="h-4 w-4 text-muted-foreground" />
-                  <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{app.name}</span><span className="block text-xs text-muted-foreground">Jobs and workers</span></span>
-                  <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
-                </Link>
-              ))}
-            </div>
-          </Section>
-        </TabsContent>
+        <TabsContent value="deployments" className="mt-0"><ProjectDeployments apps={apps} now={now} /></TabsContent>
+
+        <TabsContent value="environment" className="mt-0"><ProjectEnvironment projectId={project.id} apps={apps} canView={access.canWrite} /></TabsContent>
+
+        <TabsContent value="logs" className="mt-0"><ProjectLogsConsole apps={apps} canRun={access.canWrite} /></TabsContent>
 
         <TabsContent value="settings" className="mt-0 space-y-6">
           <Section title="Project name" description="Shown on the Projects page and across Synergy. It doesn't change any app or address."
