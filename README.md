@@ -66,6 +66,25 @@ connections, DNS records, proxy state, Caddy routing, and explicit Full
 Manager itself continues to use PostgreSQL as its control-plane store. Project
 applications are not restricted to PostgreSQL.
 
+### Stacks (2.1.0)
+
+Applications that ship together, such as a frontend, its backend API and
+supporting services, can be placed in one stack with a role each. Stack members
+in the same environment can:
+
+- share a database: the consumer receives its own service record and
+  environment variables for the owner's database. Only the owning application
+  rotates the password, which updates every consumer, and the database cannot
+  be removed while it is shared.
+- share a domain by path: for example `app.example.com/api` is routed to the
+  backend while the rest of the domain stays with the frontend. Routes are
+  stored in `project_domain_routes` and rendered as Caddy `handle` blocks,
+  longest prefix first, with optional prefix stripping.
+
+An application cannot leave its stack while it still shares a database or a
+domain path. Each deployment has its own page with the stage-by-stage pipeline
+parsed from the engine's `[stage]` and `[timing]` log markers.
+
 ## Legacy Quick Start
 
 ### One-command bootstrap (new server)
