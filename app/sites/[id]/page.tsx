@@ -737,6 +737,8 @@ export default function SitePage() {
       : runtime.id === 'go' && projectForm.projectType === 'go')
   const primaryUrl = project.url ? (project.url.startsWith('http') ? project.url : `https://${project.url}`) : domains[0] ? `https://${domains[0]}` : null
   const address = primaryUrl?.replace(/^https?:\/\//, '') || (project.port ? `localhost:${project.port}` : null)
+  // A URL set by hand in Settings counts as a public address even without a managed domain record.
+  const publicHosts = domains.length ? domains : primaryUrl ? [primaryUrl.replace(/^https?:\/\//, '').replace(/\/.*$/, '')] : []
   const mainDatabase = dataServices.find(service => service.application_primary) || dataServices[0]
   const inStack = !!stack?.application_group_id
   const stackSiblings = (stack?.members || []).filter(member => member.environment === project.environment && member.id !== project.id).length
@@ -851,9 +853,9 @@ export default function SitePage() {
                   : <Button variant="outline" size="sm" onClick={() => void handleServiceAction('start')} disabled={actionBusy !== null}><Play className="mr-1.5 h-3.5 w-3.5" />Start</Button>) : undefined}>
                 {project.is_active ? <><span className="font-medium">Running</span><span className="text-muted-foreground"> on port {project.port ?? '—'} as process <span className="font-mono">{project.pm2_name}</span></span></> : <><span className="font-medium">Not running</span><span className="text-muted-foreground"> — {live ? 'start it to serve visitors again' : 'it starts with the first deployment'}</span></>}
               </StatusLine>
-              <StatusLine tone={domains.length ? 'ok' : 'warn'} icon={<Globe2 className="h-3.5 w-3.5" />}
-                action={<Button variant="ghost" size="sm" onClick={() => changeTab('domains')}>{domains.length ? 'Manage' : 'Add domain'}</Button>}>
-                {domains.length ? <><span className="font-medium">Public at </span><a href={`https://${domains[0]}`} target="_blank" rel="noreferrer" className="hover:underline">{domains[0]}</a>{domains.length > 1 && <span className="text-muted-foreground"> and {domains.length - 1} more</span>}</> : <><span className="font-medium">No public domain</span><span className="text-muted-foreground"> — only reachable from the server{project.port ? ` at localhost:${project.port}` : ''}</span></>}
+              <StatusLine tone={publicHosts.length ? 'ok' : 'warn'} icon={<Globe2 className="h-3.5 w-3.5" />}
+                action={<Button variant="ghost" size="sm" onClick={() => changeTab('domains')}>{publicHosts.length ? 'Manage' : 'Add domain'}</Button>}>
+                {publicHosts.length ? <><span className="font-medium">Public at </span><a href={`https://${publicHosts[0]}`} target="_blank" rel="noreferrer" className="hover:underline">{publicHosts[0]}</a>{publicHosts.length > 1 && <span className="text-muted-foreground"> and {publicHosts.length - 1} more</span>}</> : <><span className="font-medium">No public domain</span><span className="text-muted-foreground"> — only reachable from the server{project.port ? ` at localhost:${project.port}` : ''}</span></>}
               </StatusLine>
               <StatusLine tone={browserApp ? 'info' : mainDatabase ? 'ok' : 'off'} icon={<Database className="h-3.5 w-3.5" />}
                 action={!browserApp ? <Button variant="ghost" size="sm" onClick={() => changeTab('storage')}>{mainDatabase ? 'Manage' : 'Add database'}</Button> : undefined}>

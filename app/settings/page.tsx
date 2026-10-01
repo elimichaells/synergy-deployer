@@ -159,7 +159,7 @@ function SettingsWorkspace() {
   </footer>
   const formSubmit = (event: FormEvent) => { event.preventDefault(); void handleSave() }
 
-  return <AppShell title="Settings" subtitle="Host configuration and administration" user={user || undefined}>
+  return <AppShell title="Settings" subtitle="Server paths, connections, notifications, backups and who has access." user={user || undefined}>
     <div className="grid min-w-0 gap-6 lg:grid-cols-[210px_minmax(0,1fr)] lg:gap-8">
       <aside className="min-w-0 lg:border-r lg:border-border lg:pr-5">
         <div className="lg:sticky lg:top-0">

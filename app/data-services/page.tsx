@@ -198,7 +198,7 @@ export default function DataServicesPage() {
   }
 
   return (
-    <AppShell title="Data services" subtitle="Database engines and project-owned resources" user={user || undefined} actions={isAdmin ? <><Button variant="outline" size="sm" onClick={() => { setMigrationOpen(true); setMigrationPreview(null) }} disabled={services.filter((service) => relationalProviders.includes(service.provider)).length < 2}><ArrowRightLeft className="mr-2 h-4 w-4" />Migrate data</Button><Button variant="outline" size="sm" onClick={() => setConnectionOpen(true)}><Server className="mr-2 h-4 w-4" />Add connection</Button></> : undefined}>
+    <AppShell title="Data services" subtitle="Database servers Synergy creates app databases on, and every database it manages." user={user || undefined} actions={isAdmin ? <><Button variant="outline" size="sm" onClick={() => { setMigrationOpen(true); setMigrationPreview(null) }} disabled={services.filter((service) => relationalProviders.includes(service.provider)).length < 2}><ArrowRightLeft className="mr-2 h-4 w-4" />Migrate data</Button><Button variant="outline" size="sm" onClick={() => setConnectionOpen(true)}><Server className="mr-2 h-4 w-4" />Add connection</Button></> : undefined}>
       <div className="space-y-6">
         {notice && <div className="rounded-md border border-border bg-muted/50 px-4 py-3 text-sm">{notice}</div>}
         <section>

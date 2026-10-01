@@ -240,7 +240,7 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
                 <ProviderLogo provider={service.provider} />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="truncate font-mono text-sm font-medium">{service.database_name}</p>
+                    <p className="truncate font-mono text-sm font-medium">{service.provider === 'redis' ? `${service.name} · db ${service.database_name}` : service.database_name}</p>
                     {service.application_primary && <span className="flex items-center gap-1 rounded-full border border-white/15 bg-white/[0.06] px-2 py-px text-[11px] font-medium"><Star className="h-3 w-3" />Main database</span>}
                     {service.options?.ownership === 'shared' && <span className="flex items-center gap-1 rounded-full border border-syn-violet/30 bg-syn-violet/10 px-2 py-px text-[11px] text-violet-200"><Layers className="h-3 w-3" />From {service.shared_from_project_name || 'stack'}</span>}
                     {!!service.shared_with?.length && <span className="flex items-center gap-1 rounded-full border border-syn-cyan/30 bg-syn-cyan/10 px-2 py-px text-[11px] text-cyan-200"><Layers className="h-3 w-3" />Shared with {service.shared_with.join(', ')}</span>}

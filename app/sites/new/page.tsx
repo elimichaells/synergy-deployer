@@ -133,7 +133,11 @@ export default function NewSitePage() {
                 <p className="text-xs text-muted-foreground">Deploying a frontend and its backend separately? Put them in one stack so they can share a database and one domain.</p>
                 <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Stack">
                   <ChoiceCard selected={form.stack === 'standalone'} onSelect={() => setForm({ ...form, stack: 'standalone' })} icon={<AppWindow className="h-4 w-4" />} title="Standalone app" description="Everything lives in this one repository." />
-                  <ChoiceCard selected={form.stack === 'join'} disabled={!applications.length} onSelect={() => setForm({ ...form, stack: 'join', relatedProjectId: form.relatedProjectId || applications[0]?.id || '' })} icon={<Layers className="h-4 w-4" />} title="Part of a stack" description={applications.length ? 'Connect it with an existing frontend, backend or service.' : 'Import the first app of the stack, then come back.'} />
+                  <ChoiceCard selected={form.stack === 'join'} disabled={!applications.length} onSelect={() => {
+                    const relatedProjectId = form.relatedProjectId || applications[0]?.id || ''
+                    const partnerRole = applications.find(app => app.id === relatedProjectId)?.component_role
+                    setForm({ ...form, stack: 'join', relatedProjectId, componentRole: partnerRole === 'frontend' ? 'backend' : partnerRole === 'backend' ? 'frontend' : form.componentRole })
+                  }} icon={<Layers className="h-4 w-4" />} title="Part of a stack" description={applications.length ? 'Connect it with an existing frontend, backend or service.' : 'Import the first app of the stack, then come back.'} />
                 </div>
                 {form.stack === 'join' && (
                   <div className="space-y-4 rounded-lg border border-border p-4">

@@ -243,7 +243,7 @@ export default function AutomationPage() {
   const enabledCron = useMemo(() => cronJobs.filter((job) => job.enabled).length, [cronJobs])
 
   return (
-    <AppShell title={selectedProject ? `${selectedProject.name} / Jobs & workers` : "Jobs & workers"} subtitle="Workspace / Automation" user={{ name: user?.name, role: user?.role }} actions={
+    <AppShell title={selectedProject ? `${selectedProject.name} / Jobs & workers` : "Jobs & workers"} subtitle="Scheduled jobs and always-on background workers for your applications." user={{ name: user?.name, role: user?.role }} actions={
       <Button variant="secondary" size="sm" onClick={() => void refresh()}><RefreshCw className={`mr-2 h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />Refresh</Button>
     }>
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
