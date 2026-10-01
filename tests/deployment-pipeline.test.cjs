@@ -38,6 +38,8 @@ async function pipeline(t, failure, cacheHit = false) {
   await fs.writeFile(path.join(candidate, '.env'), 'APPLICATION_MARKER=fixture');
   await fs.writeFile(path.join(candidate, 'package.json'), '{}');
   await fs.writeFile(path.join(candidate, 'package-lock.json'), '{}');
+  const checkout = failure === 'local-edits' || failure === 'generated-files';
+  if (checkout) { await fs.mkdir(path.join(root, '.git')); await fs.mkdir(path.join(candidate, '.git')); }
   const calls = []; let status = 'online'; let seq = 0; let previewName; let audits = 0; let builds = 0;
   const project = { id: 'fixture-project', name: 'Fixture', root_path: root, project_type: 'angular', repo_url: 'https://github.com/example/fixture',
     default_branch: 'main', install_cmd: null, build_cmd: 'npm run build', start_cmd: null, pm2_name: 'fixture-app', port: 3217 };
@@ -101,6 +103,14 @@ async function pipeline(t, failure, cacheHit = false) {
     '@/lib/deployment-cache': { loadAuditExceptions: () => [], assertAuditPassed: cache.assertAuditPassed, formatAuditFindings: cache.formatAuditFindings, installWithDependencyCache: async options => {
       calls.push({ kind: cacheHit ? 'cache-hit' : 'install' }); return cacheHit ? { code: 0, output: '' } : options.execute(options.command);
     } },
+    '@/lib/deployment-build-changes': {
+      inspectLocalChanges: async () => ({ paths: checkout ? ['public/widget.js'] : [], complex: [], hashes: {}, mtimes: {} }),
+      classifyLocalChanges: () => failure === 'local-edits' ? { generated: [], unexplained: ['public/widget.js'], inferred: false }
+        : { generated: checkout ? ['public/widget.js'] : [], unexplained: [], inferred: false },
+      localChangesMessage: files => 'Local source changes detected: ' + files.join(', '),
+      recordBuildChanges: async () => { calls.push({ kind: 'record-build-changes' }); return {}; },
+      restoreGeneratedFiles: async (_execute, directory, files) => { calls.push({ kind: 'restore-generated', directory, files }); },
+    },
     '@/lib/deployment-build-cache': {
       seedBuildCache: async () => failure === 'build-once' || failure === 'build' ? [path.join(candidate, '.next/cache')] : [],
       discardSeededCaches: async seeded => { calls.push({ kind: 'discard-build-cache', seeded }); },
@@ -147,6 +157,27 @@ test('a build that fails again without the cache still fails and never replaces 
   const { calls, result } = await pipeline(t, 'build');
   assert.equal(result.status, 'failed');
   assert.equal(calls.filter(call => call.kind === 'build-command' && call.cmd === 'npm run build').length, 2);
+  assert.equal(calls.some(call => call.kind === 'activate'), false);
+});
+
+test('files the last build rewrote are regenerated in the candidate only, and the deployment proceeds', async t => {
+  const { calls, result, candidate } = await pipeline(t, 'generated-files');
+  assert.equal(result.status, 'success');
+  const restore = calls.find(call => call.kind === 'restore-generated');
+  assert.equal(restore.directory, candidate);
+  assert.deepEqual(restore.files, ['public/widget.js']);
+  assert.ok(calls.findIndex(call => call.kind === 'restore-generated') < calls.findIndex(call => call.kind === 'build-command' && call.cmd === 'npm run build'));
+  assert.ok(calls.findIndex(call => call.kind === 'record-build-changes') < calls.findIndex(call => call.kind === 'activate'));
+  assert.ok(calls.some(call => call.kind === 'query' && call.sql.includes('SET build_changes')));
+  assert.match(result.log, /rewritten by the last deployment's own install or build/);
+});
+
+test('a hand edit to a committed file still stops the deployment before anything is built', async t => {
+  const { calls, result } = await pipeline(t, 'local-edits');
+  assert.equal(result.status, 'failed');
+  assert.match(result.log, /Local source changes detected/);
+  assert.equal(calls.some(call => call.kind === 'restore-generated'), false);
+  assert.equal(calls.some(call => call.kind === 'build-command'), false);
   assert.equal(calls.some(call => call.kind === 'activate'), false);
 });
 

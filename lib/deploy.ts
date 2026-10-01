@@ -7,6 +7,7 @@ import path from 'path'
 import { DeploymentRelease, sourceFingerprint } from '@/lib/deployment-release'
 import { withInstallationSlot } from '@/lib/deployment-capacity'
 import { discardSeededCaches, seedBuildCache } from '@/lib/deployment-build-cache'
+import { classifyLocalChanges, inspectLocalChanges, localChangesMessage, recordBuildChanges, restoreGeneratedFiles, type BuildChanges } from '@/lib/deployment-build-changes'
 import { installWithDependencyCache, assertAuditPassed, formatAuditFindings, loadAuditExceptions } from '@/lib/deployment-cache'
 import { ensureDeploymentSchema } from '@/lib/deployment-schema'
 import { beginReleaseActivation } from '@/lib/deployment-activation'
@@ -23,7 +24,7 @@ import { projectRuntimeEnvironment } from '@/lib/runtimes'
 import { waitForDeploymentHealth } from '@/lib/deployment-health'
 import { runDeploymentCommand } from '@/lib/deployment-command'
 import { detectGoBuildCommand } from '@/lib/deployment-go'
-import { assertCleanDeploymentCheckout, syncDeploymentCheckout } from '@/lib/deployment-git'
+import { syncDeploymentCheckout } from '@/lib/deployment-git'
 import { defaultInstallCommand, detectCheckoutProjectType, prepareProjectCheckout, prepareProjectParent, resolveCheckoutCommands, runPreparedDeploymentCommand, localNpmInstall } from '@/lib/deployment-preparation'
 import { allocateTemporaryPort } from '@/lib/ports'
 import { updateCaddyDomainsStrict } from '@/lib/caddy'
@@ -472,7 +473,26 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
     await requireGithubToken(project)
     const repoUrl = await withGithubToken(project)
     await prepareProjectParent(project.root_path)
-    if (existsSync(path.join(project.root_path, '.git'))) await assertCleanDeploymentCheckout(command => git(command, project.root_path))
+    // Files the previous deployment's own install or build rewrote are not someone's edits.
+    // Everything else that differs from the commit still stops the deployment.
+    let generated: string[] = []
+    let generatedByTimestamp = false
+    if (existsSync(path.join(project.root_path, '.git'))) {
+      const local = await inspectLocalChanges(command => git(command, project.root_path), project.root_path)
+      if (local.paths.length || local.complex.length) {
+        const { rows: previous } = await query<{ build_changes: BuildChanges | null; started_at: string | null; finished_at: string | null }>(
+          'select d.build_changes,d.started_at,d.finished_at from projects p join deployments d on d.id=p.active_deployment_id where p.id=$1', [project.id])
+        const last = previous[0]
+        const classified = classifyLocalChanges({ paths: local.paths, hashes: local.hashes, mtimes: local.mtimes, manifest: last?.build_changes ?? null,
+          window: last?.started_at && last.finished_at ? { from: Date.parse(last.started_at), to: Date.parse(last.finished_at) } : null })
+        const unexplained = [...local.complex, ...classified.unexplained]
+        if (unexplained.length) throw new Error(localChangesMessage(unexplained))
+        generated = classified.generated
+        generatedByTimestamp = classified.inferred
+        await append(`[checkout] ${generated.length} committed file${generated.length === 1 ? ' was' : 's were'} rewritten by the last deployment's own install or build, not edited by hand: ${generated.slice(0, 8).join(', ')}${generated.length > 8 ? `, and ${generated.length - 8} more` : ''}. This deployment regenerates ${generated.length === 1 ? 'it' : 'them'}
+`)
+      }
+    }
     const originalFingerprint = await sourceFingerprint(project.root_path, git)
     await release.prepare(git)
     await query('UPDATE deployments SET release_path=$1 WHERE id=$2', [release.base, deploymentId])
@@ -484,6 +504,13 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
     // token in the application's .git/config after deployment preparation.
     await loggedGit(`git remote set-url origin "${project.repo_url}"`)
     await stage('checkout')
+    if (generated.length) {
+      // Candidate only: the live checkout keeps its files until the new release is verified.
+      const backup = generatedByTimestamp ? path.join(release.base, 'local-changes') : undefined
+      await restoreGeneratedFiles(command => git(command), root, generated, backup)
+      if (backup) await append(`[checkout] Recognised as build or npm output without a recorded fingerprint. Copies of the current files are kept in ${backup}
+`)
+    }
     await loggedGit(`git fetch "${repoUrl}" "+refs/heads/${branch}:refs/remotes/origin/${branch}"`)
     if (options.commitSha) {
       await loggedGit(`git checkout --no-overwrite-ignore "${options.commitSha}"`)
@@ -598,6 +625,14 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
     if (existsSync(path.join(root, 'composer.lock'))) {
       if ((await inspect('composer audit --locked --no-interaction')).code) throw new Error('Composer security audit failed; release blocked')
       await append('[security] Composer audit passed\n')
+    }
+    // Remember what this deployment's own commands changed, so the next one does not mistake it for local edits.
+    if (existsSync(path.join(root, '.git'))) {
+      const buildChanges = await recordBuildChanges(command => git(command), root)
+      await query('UPDATE deployments SET build_changes=$1 WHERE id=$2', [JSON.stringify(buildChanges), deploymentId])
+      const changed = Object.keys(buildChanges)
+      if (changed.length) await append(`[release] The install or build rewrote ${changed.length} committed file${changed.length === 1 ? '' : 's'} (${changed.slice(0, 8).join(', ')}${changed.length > 8 ? ', …' : ''}). Recorded so the next deployment regenerates ${changed.length === 1 ? 'it' : 'them'} instead of stopping
+`)
     }
     check()
     if (await sourceFingerprint(project.root_path, git) !== originalFingerprint) throw new Error('Live source changed during build; candidate not activated')
