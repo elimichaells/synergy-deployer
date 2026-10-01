@@ -126,6 +126,15 @@ verifies the new login, backs up and rewrites the apps' env files, and restarts
 each app with a health check. If any app does not come back healthy, the env
 files, ownership and user are all put back.
 
+### Warm builds (2.8.1)
+
+Each deployment now starts its build from a copy of the current release's
+framework build cache (`.next/cache` for Next.js, `.angular/cache` for
+Angular), instead of compiling from nothing. The live app is never touched,
+caches containing links or over 3 GB are skipped, and a build that fails with
+the reused cache is retried once from scratch. On synergyOS this cut compile
+time from 79 s to 14 s and the type check from 51 s to 12 s.
+
 ### Everything in reach, in plain words (2.8.0)
 
 A project now has the same tabs as an app, covering all of its apps:
