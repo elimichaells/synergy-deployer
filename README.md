@@ -103,6 +103,20 @@ explorer, domains and DNS, processes, jobs and runtimes) live under the admin
 **Infrastructure** area. Settings is grouped into Personal, Workspace and
 Server sections; runtime management moved to Infrastructure.
 
+### Storage (2.3.0)
+
+**Storage** lists every database apps use, one entry per physical database,
+with size, backups and the apps using it. Databases that apps already point at
+in their env files are discovered and can be linked; a linked database is never
+injected into or written to the app's `.env`. Each database has a page with
+risk warnings (shared control server, superuser accounts, staging sharing
+production, missing backups), connection details (admin reveal is audited),
+backups with restore into a new database, and disconnect. The PostgreSQL server
+holding Synergy's control database is registered as a read-only system server
+and never receives new databases. **Infrastructure > Database servers** shows
+each server's network exposure and can limit PostgreSQL to local connections
+(applied on the service's next restart).
+
 Upgrade an existing server by rebuilding its checkout in place (`npm run
 build`, then `pm2 restart manager`). The setup executable is for new servers:
 it generates new secrets and would make existing encrypted credentials
