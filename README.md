@@ -85,6 +85,29 @@ An application cannot leave its stack while it still shares a database or a
 domain path. Each deployment has its own page with the stage-by-stage pipeline
 parsed from the engine's `[stage]` and `[timing]` log markers.
 
+### Projects and Infrastructure (2.2.0)
+
+Stacks are presented as projects, and every application belongs to one. On
+first use, applications without a project each receive their own (stored as an
+`application_groups` row); a new application either starts a project or joins
+an existing one. An application alone in its project can move into another
+project; projects with several applications are never merged implicitly, and
+moving an application out gives it a new project of its own.
+
+Each project page manages its apps, databases, domains and jobs. **Add
+service** creates a database on a ready server, installs the engine on this
+host when it is missing (MySQL, MariaDB, MongoDB, SQL Server; MySQL registers
+its own provisioning account), or connects a remote server, then shares it
+with the chosen apps. Server-wide pages (database servers, PostgreSQL
+explorer, domains and DNS, processes, jobs and runtimes) live under the admin
+**Infrastructure** area. Settings is grouped into Personal, Workspace and
+Server sections; runtime management moved to Infrastructure.
+
+Upgrade an existing server by rebuilding its checkout in place (`npm run
+build`, then `pm2 restart manager`). The setup executable is for new servers:
+it generates new secrets and would make existing encrypted credentials
+unreadable.
+
 ## Legacy Quick Start
 
 ### One-command bootstrap (new server)
