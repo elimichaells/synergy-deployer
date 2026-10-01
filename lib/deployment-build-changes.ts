@@ -44,6 +44,8 @@ export function parseTrackedChanges(output: string) {
  * while that deployment was running.
  * An npm lockfile that changed while its package.json did not is npm's own output in either case:
  * a person adding a dependency changes package.json too.
+ * A file that differs from the commit only in its line endings is never a person's edit; that
+ * comes from Git's own conversion on Windows or from a tool rewriting the file.
  */
 export function classifyLocalChanges(input: {
   paths: string[]
@@ -51,12 +53,16 @@ export function classifyLocalChanges(input: {
   mtimes: Record<string, number | null>
   manifest: BuildChanges | null
   window: { from: number; to: number } | null
+  /** Files whose content differs from the commit once line endings are ignored. Omit when unknown. */
+  contentChanged?: string[]
 }) {
   const generated: string[] = []
   const unexplained: string[] = []
   // True when a file was recognised without an exact content match, so a copy is kept before it is reset.
   let inferred = false
   const changed = new Set(input.paths)
+  const realContent = input.contentChanged ? new Set(input.contentChanged) : null
+  const lineEndingsOnly = (file: string) => !!realContent && !realContent.has(file) && typeof input.mtimes[file] === 'number'
   const npmOutput = (file: string) => {
     const match = /^(.*\/)?(?:package-lock|npm-shrinkwrap)\.json$/.exec(file.replace(/\\/g, '/'))
     // It must still exist: a deleted lockfile is not something npm install produces.
@@ -67,7 +73,7 @@ export function classifyLocalChanges(input: {
     const written = input.mtimes[file]
     const duringDeployment = !input.manifest && !!input.window && typeof written === 'number'
       && written >= input.window.from - TIMESTAMP_SLACK_MS && written <= input.window.to + TIMESTAMP_SLACK_MS
-    if (duringDeployment || npmOutput(file)) { generated.push(file); inferred = true } else unexplained.push(file)
+    if (duringDeployment || npmOutput(file) || lineEndingsOnly(file)) { generated.push(file); inferred = true } else unexplained.push(file)
   }
   return { generated, unexplained, inferred }
 }
@@ -98,7 +104,11 @@ export async function inspectLocalChanges(execute: Execute, root: string) {
     const result = await fingerprint(root, file)
     hashes[file] = result.hash; mtimes[file] = result.mtime
   }
-  return { paths, complex, hashes, mtimes }
+  // Compared with the commit, ignoring carriage returns at line ends. If this cannot be determined,
+  // every changed file is treated as a real content change.
+  const content = paths.length ? await execute('git diff HEAD --ignore-cr-at-eol --name-only') : { code: 0, output: '' }
+  const contentChanged = content.code === 0 ? content.output.split(/\r?\n/).filter(Boolean) : paths
+  return { paths, complex, hashes, mtimes, contentChanged }
 }
 
 /** What this deployment's own commands changed in the candidate, recorded for the next deployment. */

@@ -477,13 +477,14 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
     // Everything else that differs from the commit still stops the deployment.
     let generated: string[] = []
     let generatedByTimestamp = false
+    let previousRelease: { build_changes: BuildChanges | null; started_at: string | null; finished_at: string | null } | undefined | null = null
+    const lastRelease = async () => previousRelease !== null ? previousRelease : previousRelease = (await query<{ build_changes: BuildChanges | null; started_at: string | null; finished_at: string | null }>(
+      'select d.build_changes,d.started_at,d.finished_at from projects p join deployments d on d.id=p.active_deployment_id where p.id=$1', [project.id])).rows[0]
     if (existsSync(path.join(project.root_path, '.git'))) {
       const local = await inspectLocalChanges(command => git(command, project.root_path), project.root_path)
       if (local.paths.length || local.complex.length) {
-        const { rows: previous } = await query<{ build_changes: BuildChanges | null; started_at: string | null; finished_at: string | null }>(
-          'select d.build_changes,d.started_at,d.finished_at from projects p join deployments d on d.id=p.active_deployment_id where p.id=$1', [project.id])
-        const last = previous[0]
-        const classified = classifyLocalChanges({ paths: local.paths, hashes: local.hashes, mtimes: local.mtimes, manifest: last?.build_changes ?? null,
+        const last = await lastRelease()
+        const classified = classifyLocalChanges({ paths: local.paths, hashes: local.hashes, mtimes: local.mtimes, contentChanged: local.contentChanged, manifest: last?.build_changes ?? null,
           window: last?.started_at && last.finished_at ? { from: Date.parse(last.started_at), to: Date.parse(last.finished_at) } : null })
         const unexplained = [...local.complex, ...classified.unexplained]
         if (unexplained.length) throw new Error(localChangesMessage(unexplained))
@@ -504,11 +505,29 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
     // token in the application's .git/config after deployment preparation.
     await loggedGit(`git remote set-url origin "${project.repo_url}"`)
     await stage('checkout')
+    if (existsSync(path.join(root, '.git'))) {
+      // The candidate is a fresh copy, so Git re-reads every file instead of trusting cached timestamps.
+      // That can reveal differences the live checkout hides, such as corrupted line endings.
+      const copied = await inspectLocalChanges(command => git(command), root)
+      const known = new Set(generated)
+      const revealed = copied.paths.filter(file => !known.has(file))
+      if (revealed.length || copied.complex.length) {
+        // File times were reset by the copy, so only content rules apply here.
+        const classified = classifyLocalChanges({ paths: revealed, hashes: copied.hashes, mtimes: copied.mtimes, contentChanged: copied.contentChanged,
+          manifest: (await lastRelease())?.build_changes ?? null, window: null })
+        const unexplained = [...copied.complex, ...classified.unexplained]
+        if (unexplained.length) throw new Error(localChangesMessage(unexplained))
+        generated = [...generated, ...classified.generated]
+        generatedByTimestamp = generatedByTimestamp || classified.inferred
+        await append(`[checkout] ${classified.generated.length} more committed file${classified.generated.length === 1 ? ' differs' : 's differ'} from the commit only in line endings or as tool output, not by a hand edit: ${classified.generated.slice(0, 8).join(', ')}${classified.generated.length > 8 ? `, and ${classified.generated.length - 8} more` : ''}
+`)
+      }
+    }
     if (generated.length) {
       // Candidate only: the live checkout keeps its files until the new release is verified.
       const backup = generatedByTimestamp ? path.join(release.base, 'local-changes') : undefined
       await restoreGeneratedFiles(command => git(command), root, generated, backup)
-      if (backup) await append(`[checkout] Recognised as build or npm output without a recorded fingerprint. Copies of the current files are kept in ${backup}
+      if (backup) await append(`[checkout] Recognised as build, npm or line-ending output without a recorded fingerprint. Copies of the current files are kept in ${backup}
 `)
     }
     await loggedGit(`git fetch "${repoUrl}" "+refs/heads/${branch}:refs/remotes/origin/${branch}"`)

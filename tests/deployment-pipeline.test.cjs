@@ -104,7 +104,7 @@ async function pipeline(t, failure, cacheHit = false) {
       calls.push({ kind: cacheHit ? 'cache-hit' : 'install' }); return cacheHit ? { code: 0, output: '' } : options.execute(options.command);
     } },
     '@/lib/deployment-build-changes': {
-      inspectLocalChanges: async () => ({ paths: checkout ? ['public/widget.js'] : [], complex: [], hashes: {}, mtimes: {} }),
+      inspectLocalChanges: async () => ({ paths: checkout ? ['public/widget.js'] : [], complex: [], hashes: {}, mtimes: {}, contentChanged: [] }),
       classifyLocalChanges: () => failure === 'local-edits' ? { generated: [], unexplained: ['public/widget.js'], inferred: false }
         : { generated: checkout ? ['public/widget.js'] : [], unexplained: [], inferred: false },
       localChangesMessage: files => 'Local source changes detected: ' + files.join(', '),

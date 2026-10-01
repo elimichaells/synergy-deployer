@@ -102,3 +102,46 @@ test('a real checkout: build output is recorded, recognised, backed up and reset
   await assert.rejects(restoreGeneratedFiles(execute, repo, ['../outside']), /unsafe name/)
   assert.equal(existsSync(path.join(base, 'outside')), false)
 })
+
+test('a file that differs only in line endings is not a hand edit; one whose content changed is', () => {
+  const result = classifyLocalChanges({ paths: ['sdk/core.pom', 'sdk/core.module', 'src/app.ts', 'gone.pom'], hashes: {}, manifest: null, window: null,
+    mtimes: { 'sdk/core.pom': 1, 'sdk/core.module': 1, 'src/app.ts': 1, 'gone.pom': null }, contentChanged: ['src/app.ts', 'gone.pom'] })
+  assert.deepEqual(result.generated, ['sdk/core.pom', 'sdk/core.module'])
+  assert.deepEqual(result.unexplained, ['src/app.ts', 'gone.pom'])
+  assert.equal(result.inferred, true)
+  // When line-ending information is unavailable, nothing is assumed.
+  assert.deepEqual(classifyLocalChanges({ paths: ['sdk/core.pom'], hashes: {}, manifest: null, window: null, mtimes: { 'sdk/core.pom': 1 } }).unexplained, ['sdk/core.pom'])
+})
+
+test('a real checkout: Windows line endings on a file Git compares byte for byte are reset, a content edit is not', async t => {
+  const base = await mkdtemp(path.join(os.tmpdir(), 'manager-eol-changes-'))
+  t.after(() => rm(base, { recursive: true, force: true }))
+  const repo = path.join(base, 'app')
+  await mkdir(path.join(repo, 'sdk'), { recursive: true })
+  const git = (...args: string[]) => execFileSync('git', ['-c', 'core.autocrlf=false', '-c', 'user.name=Test', '-c', 'user.email=test@example.test', ...args], { cwd: repo, encoding: 'utf8' })
+  const execute = async (command: string) => {
+    try { return { code: 0, output: execFileSync(command, { cwd: repo, encoding: 'utf8', shell: true }) } } catch (error) { return { code: 1, output: String((error as Error).message) } }
+  }
+  git('init', '-q')
+  // The rule that made the server's files look modified: compare these paths exactly, with no line-ending conversion.
+  await writeFile(path.join(repo, '.gitattributes'), 'sdk/** -text\n')
+  await writeFile(path.join(repo, 'sdk/core.pom'), '<project>\n  <name>core</name>\n</project>\n')
+  await writeFile(path.join(repo, 'sdk/other.pom'), '<project>\n  <name>other</name>\n</project>\n')
+  git('add', '-A'); git('commit', '-q', '-m', 'initial')
+
+  // The working copy has Windows line endings; a person edited the other file's content.
+  await writeFile(path.join(repo, 'sdk/core.pom'), '<project>\r\n  <name>core</name>\r\n</project>\r\n')
+  await writeFile(path.join(repo, 'sdk/other.pom'), '<project>\n  <name>edited by a person</name>\n</project>\n')
+  const local = await inspectLocalChanges(execute, repo)
+  assert.deepEqual(local.paths.sort(), ['sdk/core.pom', 'sdk/other.pom'])
+  assert.deepEqual(local.contentChanged, ['sdk/other.pom'])
+  const classified = classifyLocalChanges({ ...local, manifest: null, window: null })
+  assert.deepEqual(classified.generated, ['sdk/core.pom'])
+  assert.deepEqual(classified.unexplained, ['sdk/other.pom'])
+
+  const backup = path.join(base, 'backup')
+  await restoreGeneratedFiles(execute, repo, classified.generated, backup)
+  assert.equal(await readFile(path.join(repo, 'sdk/core.pom'), 'utf8'), '<project>\n  <name>core</name>\n</project>\n')
+  assert.equal(await readFile(path.join(backup, 'sdk/core.pom'), 'utf8'), '<project>\r\n  <name>core</name>\r\n</project>\r\n')
+  assert.deepEqual((await inspectLocalChanges(execute, repo)).paths, ['sdk/other.pom'])
+})
