@@ -12,6 +12,9 @@ import { Section } from '@/components/app/section'
 import { ProviderLogo, providerMeta, type Provider } from '@/components/app/providers'
 import { Flag, serverRoleLabel } from '@/components/storage/bits'
 import { DedicatedUserSheet } from '@/components/storage/dedicated-user-sheet'
+import { DataTab } from '@/components/storage/data-tab'
+import { SqlTab } from '@/components/storage/sql-tab'
+import { ScheduleSheet, type ScheduleValues } from '@/components/storage/schedule-sheet'
 import { relativeTime } from '@/lib/deployment-stages'
 import { formatBytes } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -20,12 +23,13 @@ interface App { serviceId: string; projectId: string; name: string; environment:
 interface Detail {
   id: string; database: string; engine: Provider; serverId: string; serverName: string; serverRole: 'system' | 'apps' | 'external'; host: string; port: number
   sizeBytes: number | null; tableCount: number | null; ownership: string; apps: App[]; warnings: string[]
-  backup: { scheduleId: string; frequency: string; enabled: boolean; lastStatus: string; lastFinishedAt: string | null; nextRunAt: string | null } | null
+  backup: (ScheduleValues & { scheduleId: string; lastStatus: string; lastFinishedAt: string | null; nextRunAt: string | null }) | null
   backups: { file: string; serviceId: string; sizeBytes: number; createdAt: string }[]
 }
 interface Engine { id: string; listen: string | null; localOnly: boolean | null; remoteRules: number | null; ssl: boolean | null; pendingRestart: boolean }
 
-const TABS = ['overview', 'connect', 'backups', 'settings'] as const
+const TABS = ['overview', 'data', 'sql', 'backups', 'connect', 'settings'] as const
+const TAB_LABELS: Record<string, string> = { overview: 'Overview', data: 'Data', sql: 'SQL', backups: 'Backups', connect: 'Connection', settings: 'Settings' }
 const ownershipLabel: Record<string, string> = { manager: 'Created by Synergy', shared: 'Shared in its project', adopted: 'Configured in the app\'s .env', external: 'Connected existing database' }
 
 export default function DatabasePage() {
@@ -40,6 +44,7 @@ export default function DatabasePage() {
   const [revealed, setRevealed] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [dedicatedOpen, setDedicatedOpen] = useState(false)
+  const [scheduleOpen, setScheduleOpen] = useState(false)
   const [now, setNow] = useState(() => Date.now())
 
   const load = useCallback(async () => {
@@ -110,11 +115,13 @@ export default function DatabasePage() {
   if (database.warnings.some(warning => warning.includes('Staging'))) recommendations.push({ title: 'Give staging its own database', body: 'Testing on staging currently changes production data. Add a separate database to the staging app and copy production data into it when you need realistic data.' })
   if (!database.backup && isPostgres && database.serverRole !== 'external') recommendations.push({ title: 'Turn on backups', body: 'Nothing is backing this database up yet.', action: <Button size="sm" onClick={() => void enableBackups()} disabled={!access.isAdmin || busy !== null}>{busy === 'schedule' ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />}Turn on daily backups</Button> })
 
+  const canBrowse = isPostgres && database.serverRole !== 'external' && access.isAdmin
+  const visibleTabs = TABS.filter(value => canBrowse || (value !== 'data' && value !== 'sql'))
   const tabs = (
     <TabsList className="scrollbar-none h-auto min-h-0 w-full justify-start gap-0 overflow-x-auto border-0 bg-transparent p-0">
-      {TABS.map(value => (
+      {visibleTabs.map(value => (
         <TabsTrigger key={value} value={value} className="group relative min-h-0 rounded-none border-0 px-1 pb-3 pt-1 text-[13px] font-normal text-muted-foreground data-[state=active]:text-foreground">
-          <span className="rounded-md px-2.5 py-1.5 capitalize transition-colors group-hover:bg-white/[0.06]">{value}</span>
+          <span className="rounded-md px-2.5 py-1.5 transition-colors group-hover:bg-white/[0.06]">{TAB_LABELS[value]}</span>
           <span className="absolute inset-x-2 bottom-0 hidden h-[2px] rounded-full bg-foreground group-data-[state=active]:block" aria-hidden="true" />
         </TabsTrigger>
       ))}
@@ -128,7 +135,7 @@ export default function DatabasePage() {
         back={{ href: '/storage', label: 'Storage' }}
         subtitle={<span className="flex flex-wrap items-center gap-2"><ProviderLogo provider={database.engine} size="sm" />{providerMeta[database.engine]?.label} · {formatBytes(database.sizeBytes)}<span className={cn('rounded-full border px-2 py-px text-[11px]', role.className)}>{role.label}</span></span>}
         tabs={tabs}
-        actions={browserUrl && database.serverRole !== 'external' ? <Button asChild variant="outline" size="sm" disabled={!access.isAdmin}><a href={browserUrl} target="_blank" rel="noreferrer"><Database className="mr-1.5 h-3.5 w-3.5" />Browse data<ArrowUpRight className="ml-1 h-3.5 w-3.5" /></a></Button> : undefined}
+        actions={browserUrl && !isPostgres && database.serverRole !== 'external' ? <Button asChild variant="outline" size="sm" disabled={!access.isAdmin}><a href={browserUrl} target="_blank" rel="noreferrer"><Database className="mr-1.5 h-3.5 w-3.5" />Open in phpMyAdmin<ArrowUpRight className="ml-1 h-3.5 w-3.5" /></a></Button> : undefined}
       >
         {error && <div role="alert" className="notice-error">{error}</div>}
         {notice && <p role="status" className="mb-5 rounded-md border border-status-ready/25 bg-status-ready/5 px-4 py-3 text-sm text-emerald-200">{notice}</p>}
@@ -168,6 +175,9 @@ export default function DatabasePage() {
             </div>
           </Section>
         </TabsContent>
+
+        {canBrowse && <TabsContent value="data" className="mt-0"><DataTab serviceId={database.id} /></TabsContent>}
+        {canBrowse && <TabsContent value="sql" className="mt-0"><SqlTab serviceId={database.id} database={database.database} /></TabsContent>}
 
         <TabsContent value="connect" className="mt-0 space-y-6">
           <Section title="Connection details" description={database.ownership === 'adopted' ? 'The app reads these from its own environment file. Synergy shows them here; it never changes them.' : 'Synergy gives these to the app as environment variables at every deployment.'}
@@ -218,12 +228,13 @@ export default function DatabasePage() {
                 action={database.backup
                   ? <Button size="sm" onClick={() => void backupNow()} disabled={!access.isAdmin || busy !== null || database.backup.lastStatus === 'running'}>{busy === 'backup' ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Play className="mr-1.5 h-3.5 w-3.5" />}Back up now</Button>
                   : <Button size="sm" onClick={() => void enableBackups()} disabled={!access.isAdmin || busy !== null}><ShieldCheck className="mr-1.5 h-3.5 w-3.5" />Turn on daily backups</Button>}
-                footer={<span>Change the time, frequency or how many are kept in <Link href="/data-services" className="text-foreground underline-offset-4 hover:underline">Infrastructure &gt; Database servers</Link>.</span>}>
+                footer={database.backup ? <><span>Backups are stored on this server and the oldest are deleted automatically.</span><Button size="sm" variant="outline" onClick={() => setScheduleOpen(true)} disabled={!access.isAdmin}>Edit schedule</Button></> : undefined}>
                 {database.backup ? (
                   <dl className="summary-list">
                     <div><dt>Frequency</dt><dd className="capitalize">{database.backup.frequency}{database.backup.enabled ? '' : ' (paused)'}</dd></div>
                     <div><dt>Last backup</dt><dd>{database.backup.lastFinishedAt ? `${relativeTime(database.backup.lastFinishedAt, now)} · ${database.backup.lastStatus}` : database.backup.lastStatus === 'running' ? 'Running now' : 'Not run yet'}</dd></div>
                     <div><dt>Next backup</dt><dd>{database.backup.nextRunAt ? new Date(database.backup.nextRunAt).toLocaleString() : '—'}</dd></div>
+                    <div><dt>Keeps</dt><dd>{database.backup.retentionCount} backups</dd></div>
                   </dl>
                 ) : <p className="text-sm text-muted-foreground">No backups are scheduled for this database.</p>}
               </Section>
@@ -260,6 +271,7 @@ export default function DatabasePage() {
           </Section>
         </TabsContent>
       </AppShell>
+      <ScheduleSheet serviceId={database.id} initial={database.backup} open={scheduleOpen} onOpenChange={setScheduleOpen} onSaved={() => void load().catch(() => undefined)} />
       <DedicatedUserSheet serviceId={database.id} open={dedicatedOpen} onOpenChange={setDedicatedOpen} onDone={() => { setRevealed(null); void load().catch(() => undefined) }} />
     </Tabs>
   )

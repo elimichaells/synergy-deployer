@@ -13,7 +13,7 @@ export const navItems = [
 /** Server-level areas, shown in the Infrastructure side menu. */
 export const infrastructureItems = [
   { href: '/data-services', label: 'Database servers', icon: HardDrive, description: 'Engines, network exposure, backups and migrations' },
-  { href: '/database', label: 'PostgreSQL explorer', icon: Database, description: 'Browse data, run SQL, back up and restore' },
+  { href: '/database', label: 'Unlinked databases', icon: Database, description: 'Databases on the server that no app uses (advanced)' },
   { href: '/domains', label: 'Domains & DNS', icon: Globe2, description: 'Cloudflare accounts and every public address' },
   { href: '/services', label: 'Processes', icon: Cpu, description: 'Running processes and the Caddy web server' },
   { href: '/automation', label: 'Jobs & workers', icon: Workflow, description: 'Scheduled jobs and background workers' },

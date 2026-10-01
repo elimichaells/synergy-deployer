@@ -33,16 +33,32 @@ export function connectionConfig(database: string) {
   }
 }
 
-function getPool(database: string): Pool {
-  let pool = pools.get(database)
+/** A specific PostgreSQL server and database to explore, instead of the control server. */
+export interface ExplorerTarget {
+  host: string
+  port: number
+  user?: string
+  password?: string
+  database: string
+  ssl?: boolean
+}
+
+function getPool(database: string, target?: ExplorerTarget): Pool {
+  const key = target ? `${target.host}:${target.port}/${target.user ?? ''}/${target.database}` : database
+  let pool = pools.get(key)
   if (!pool) {
     pool = new Pool({
-      ...connectionConfig(database),
+      ...(target
+        ? { host: target.host, port: target.port, user: target.user, password: target.password, database: target.database, ssl: target.ssl ? { rejectUnauthorized: false } : false }
+        : connectionConfig(database)),
       max: 3,
       idleTimeoutMillis: 30_000,
       statement_timeout: QUERY_TIMEOUT_MS,
     })
-    pools.set(database, pool)
+    // An idle connection can be cut by a server restart or a dropped database. Without a handler
+    // Node treats that as fatal and takes the whole process down; discard the pool instead.
+    pool.on('error', () => { if (pools.get(key) === pool) pools.delete(key) })
+    pools.set(key, pool)
   }
   return pool
 }
@@ -115,9 +131,9 @@ export interface TableInfo {
   size_pretty: string
 }
 
-export async function listTables(database: string): Promise<TableInfo[]> {
-  await assertDatabase(database)
-  const pool = getPool(database)
+export async function listTables(database: string, target?: ExplorerTarget): Promise<TableInfo[]> {
+  if (!target) await assertDatabase(database)
+  const pool = getPool(database, target)
   const { rows } = await pool.query<TableInfo>(
     `select n.nspname as schema,
             c.relname as name,
@@ -156,10 +172,11 @@ export async function getTableRows(
   schema: string,
   table: string,
   page = 1,
-  pageSize = 50
+  pageSize = 50,
+  target?: ExplorerTarget
 ): Promise<TableRowsResult> {
-  await assertDatabase(database)
-  const pool = getPool(database)
+  if (!target) await assertDatabase(database)
+  const pool = getPool(database, target)
 
   // Validate the table exists before interpolating identifiers
   const check = await pool.query(
@@ -299,9 +316,9 @@ export async function dropDatabase(name: string) {
  * Run arbitrary SQL against a database. When readOnly is true the statement
  * runs inside a READ ONLY transaction, so any write attempt errors out.
  */
-export async function runSql(database: string, sql: string, readOnly: boolean): Promise<SqlResult> {
-  await assertDatabase(database)
-  const pool = getPool(database)
+export async function runSql(database: string, sql: string, readOnly: boolean, target?: ExplorerTarget): Promise<SqlResult> {
+  if (!target) await assertDatabase(database)
+  const pool = getPool(database, target)
   const client = await pool.connect()
   const started = Date.now()
 

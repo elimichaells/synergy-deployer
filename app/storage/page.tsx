@@ -10,6 +10,7 @@ import { relativeTime } from '@/lib/deployment-stages'
 import { formatBytes } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { Flag, serverRoleLabel } from '@/components/storage/bits'
+import { AddDatabaseSheet } from '@/components/storage/add-database-sheet'
 
 interface StorageApp { serviceId: string; projectId: string; name: string; environment: string; groupId: string | null; groupName: string | null; ownership: string }
 interface StorageDatabase { key: string; id: string; database: string; engine: Provider; serverName: string; serverRole: 'system' | 'apps' | 'external'; sizeBytes: number | null; apps: StorageApp[]; backup: { lastStatus: string; lastFinishedAt: string | null; enabled: boolean; frequency: string } | null; warnings: string[] }
@@ -24,6 +25,7 @@ export default function StoragePage() {
   const [search, setSearch] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
+  const [addOpen, setAddOpen] = useState(false)
 
   const load = async () => {
     setError('')
@@ -65,7 +67,7 @@ export default function StoragePage() {
       subtitle={databases ? `${databases.length} databases · ${formatBytes(total)}${atRisk ? ` · ${atRisk} need attention` : ''}` : 'Every database your apps use.'}
       actions={<>
         <Button variant="outline" size="sm" onClick={() => void load()}><RefreshCw className="mr-1.5 h-3.5 w-3.5" />Refresh</Button>
-        <Button asChild size="sm"><Link href="/projects"><Plus className="mr-1.5 h-4 w-4" />Add database</Link></Button>
+        <Button size="sm" onClick={() => setAddOpen(true)}><Plus className="mr-1.5 h-4 w-4" />Add database</Button>
       </>}
     >
       {error && <div role="alert" className="notice-error">{error}</div>}
@@ -149,6 +151,7 @@ export default function StoragePage() {
         </div>
       )}
       {atRisk > 0 && <p className="mt-4 flex items-center gap-1.5 text-xs text-muted-foreground"><ShieldAlert className="h-3.5 w-3.5" />Databases marked with a warning sign have a risk worth fixing. Open one to see what and how.</p>}
+      <AddDatabaseSheet open={addOpen} onOpenChange={setAddOpen} unlinked={found.length} />
     </AppShell>
   )
 }

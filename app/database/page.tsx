@@ -568,7 +568,7 @@ export default function DatabasePage() {
 
   if (userLoaded && user?.role !== 'admin') {
     return (
-      <AppShell area="infrastructure" title="PostgreSQL explorer" subtitle="Browse and query every Postgres database on this server." user={{ name: user?.name, role: user?.role }}>
+      <AppShell area="infrastructure" title="Unlinked databases" subtitle="Browse and query every Postgres database on this server." user={{ name: user?.name, role: user?.role }}>
         <Card className="mx-auto max-w-md text-center">
           <CardHeader>
             <Lock className="mx-auto mb-2 h-8 w-8 text-muted-foreground" />
@@ -582,7 +582,7 @@ export default function DatabasePage() {
 
   return (
     <AppShell area="infrastructure"
-      title="PostgreSQL explorer"
+      title="Unlinked databases"
       subtitle="Browse and query every Postgres database on this server."
       user={{ name: user?.name, role: user?.role }}
       actions={
@@ -603,6 +603,8 @@ export default function DatabasePage() {
           {error}
         </div>
       )}
+
+      <p className="mb-6 rounded-xl border border-border bg-white/[0.02] px-4 py-3 text-sm text-muted-foreground">Databases your apps use now have their own page in <Link href="/storage" className="text-foreground underline-offset-4 hover:underline">Storage</Link>, with data, SQL, backups and connection details together. This page remains for databases on the server that no app uses.</p>
 
       <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
         {/* Left rail: databases + tables */}

@@ -201,7 +201,7 @@ export interface StorageDatabase {
   sizeBytes: number | null
   ownership: string
   apps: { serviceId: string; projectId: string; name: string; environment: string; groupId: string | null; groupName: string | null; ownership: string; username: string | null }[]
-  backup: { scheduleId: string; frequency: string; enabled: boolean; lastStatus: string; lastFinishedAt: string | null; nextRunAt: string | null } | null
+  backup: BackupSummary | null
   warnings: string[]
 }
 
@@ -211,6 +211,16 @@ function serverRole(connection: { options: Record<string, unknown>; purpose: str
 }
 
 /** One entry per physical database, with every app that uses it. */
+export interface BackupSummary {
+  scheduleId: string; frequency: string; enabled: boolean; lastStatus: string; lastFinishedAt: string | null; nextRunAt: string | null
+  timeOfDay: string; timezone: string; dayOfWeek: number; dayOfMonth: number; monthOfYear: number; retentionCount: number
+}
+
+function backupSummary(row: { schedule_id: string | null; frequency: string | null; enabled: boolean | null; last_status: string | null; last_finished_at: string | null; next_run_at: string | null; time_of_day: string | null; timezone: string | null; day_of_week: number | null; day_of_month: number | null; month_of_year: number | null; retention_count: number | null }): BackupSummary {
+  return { scheduleId: row.schedule_id!, frequency: row.frequency!, enabled: !!row.enabled, lastStatus: row.last_status!, lastFinishedAt: row.last_finished_at, nextRunAt: row.next_run_at,
+    timeOfDay: row.time_of_day || '03:00', timezone: row.timezone || 'UTC', dayOfWeek: row.day_of_week ?? 0, dayOfMonth: row.day_of_month ?? 1, monthOfYear: row.month_of_year ?? 1, retentionCount: row.retention_count ?? 30 }
+}
+
 export async function listStorage() {
   await ensureSystemServer()
   const { ensureDataServiceBackupSchema } = await import('@/lib/data-service-backups')
@@ -220,9 +230,11 @@ export async function listStorage() {
     connection_id: string; connection_name: string; provider: string; host: string; port: number; connection_options: Record<string, unknown>; purpose: string
     project_name: string; environment: string; group_id: string | null; group_name: string | null
     schedule_id: string | null; frequency: string | null; enabled: boolean | null; last_status: string | null; last_finished_at: string | null; next_run_at: string | null
+    time_of_day: string | null; timezone: string | null; day_of_week: number | null; day_of_month: number | null; month_of_year: number | null; retention_count: number | null
   }>(`select s.id,s.project_id,s.name,s.database_name,s.username,s.options,s.connection_id,dc.name as connection_name,dc.provider,dc.host,dc.port,
             dc.options as connection_options,dc.purpose,p.name as project_name,p.environment,g.id as group_id,g.name as group_name,
-            bs.id as schedule_id,bs.frequency,bs.enabled,bs.last_status,bs.last_finished_at,bs.next_run_at
+            bs.id as schedule_id,bs.frequency,bs.enabled,bs.last_status,bs.last_finished_at,bs.next_run_at,
+            bs.time_of_day,bs.timezone,bs.day_of_week,bs.day_of_month,bs.month_of_year,bs.retention_count
        from project_data_services s join data_connections dc on dc.id=s.connection_id join projects p on p.id=s.project_id
        left join application_groups g on g.id=p.application_group_id left join data_service_backup_schedules bs on bs.service_id=s.id
       order by p.name`)
@@ -235,14 +247,14 @@ export async function listStorage() {
     if (existing) {
       existing.apps.push(app)
       if (existing.ownership === 'shared' && app.ownership !== 'shared') Object.assign(existing, { id: row.id, ownership: app.ownership })
-      if (!existing.backup && row.schedule_id) existing.backup = { scheduleId: row.schedule_id, frequency: row.frequency!, enabled: !!row.enabled, lastStatus: row.last_status!, lastFinishedAt: row.last_finished_at, nextRunAt: row.next_run_at }
+      if (!existing.backup && row.schedule_id) existing.backup = backupSummary(row)
       continue
     }
     groups.set(key, {
       key, id: row.id, name: row.name, database: row.database_name, engine: row.provider, serverId: row.connection_id, serverName: row.connection_name,
       serverRole: serverRole({ options: row.connection_options, purpose: row.purpose, host: row.host }), host: row.host, port: row.port, sizeBytes: null,
       ownership: app.ownership, apps: [app],
-      backup: row.schedule_id ? { scheduleId: row.schedule_id, frequency: row.frequency!, enabled: !!row.enabled, lastStatus: row.last_status!, lastFinishedAt: row.last_finished_at, nextRunAt: row.next_run_at } : null,
+      backup: row.schedule_id ? backupSummary(row) : null,
       warnings: [],
     })
   }
@@ -441,4 +453,13 @@ export async function restrictToLocalhost(connectionId: string) {
   await adminQuery(connectionId, `alter system set listen_addresses = 'localhost'`)
   await adminQuery(connectionId, 'select pg_reload_conf()')
   return { pendingRestart: true }
+}
+
+/** Where to connect to browse a database, using its server's admin account. PostgreSQL only. */
+export async function explorerTarget(serviceId: string) {
+  const database = await getStorageDatabase(serviceId)
+  if (database.engine !== 'postgresql') throw new ApiError('Browsing and SQL are available for PostgreSQL databases. Use the engine\'s own tool for others.', 409)
+  const connection = await getSecretConnection(database.serverId)
+  if (!connection.username) throw new ApiError('Synergy has no admin sign-in for this server, so it can\'t browse this database', 409)
+  return { database: database.database, target: { host: connection.host, port: connection.port, user: connection.username, password: connectionPassword(connection), database: database.database, ssl: connection.tls_enabled } }
 }
