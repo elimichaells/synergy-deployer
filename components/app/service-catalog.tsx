@@ -9,7 +9,7 @@ import { ProviderLogo, providerMeta } from './providers'
 
 export type Engine = 'postgresql' | 'mysql' | 'mariadb' | 'mongodb' | 'sqlserver' | 'redis'
 
-export interface ServerConnection { id: string; name: string; provider: Engine; host: string; port: number; last_status: string; is_default: boolean; provisioning_enabled: boolean }
+export interface ServerConnection { id: string; name: string; provider: Engine; host: string; port: number; last_status: string; is_default: boolean; provisioning_enabled: boolean; purpose?: string; options?: { system?: boolean } }
 interface Runtime { id: string; installed: boolean; canInstall: boolean; activeJob: { id: string } | null }
 interface Job { id: string; status: 'queued' | 'running' | 'success' | 'failed'; log: string; error: string | null }
 
@@ -45,7 +45,9 @@ export function ServiceCatalog({ role, selectedConnectionId, onSelect }: {
 
   const load = useCallback(async () => {
     const [connectionRes, runtimeRes] = await Promise.all([fetch('/api/data/connections', { cache: 'no-store' }), fetch('/api/system/runtimes', { cache: 'no-store' })])
-    const loaded: ServerConnection[] = connectionRes.ok ? (await connectionRes.json()).connections || [] : []
+    // Synergy's own server and reference-only external servers never receive new databases.
+    const loaded: ServerConnection[] = (connectionRes.ok ? (await connectionRes.json()).connections || [] : [])
+      .filter((connection: ServerConnection) => connection.options?.system !== true && connection.purpose !== 'external_service')
     setConnections(loaded)
     if (runtimeRes.ok) setRuntimes((await runtimeRes.json()).runtimes || [])
     return loaded

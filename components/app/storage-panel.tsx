@@ -30,7 +30,7 @@ interface Service {
   backup_status?: string | null
   shared_from_project_name?: string | null
   shared_with?: string[] | null
-  options: { ownership?: 'manager' | 'external' | 'shared' }
+  options: { ownership?: 'manager' | 'external' | 'shared' | 'adopted' }
 }
 
 interface Connection { id: string; name: string; provider: Provider; host: string; port: number; last_status: string; is_default: boolean; provisioning_enabled: boolean }
@@ -63,6 +63,7 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
   const [connections, setConnections] = useState<Connection[]>([])
   const [shareable, setShareable] = useState<Shareable[]>([])
   const [legacy, setLegacy] = useState<LegacyDatabase | null>(null)
+  const [found, setFound] = useState<{ source: string; engine: string; database: string; host: string; port: number; connectionName: string | null; superuser: boolean }[]>([])
   const [notice, setNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [open, setOpen] = useState(false)
@@ -85,6 +86,8 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
     if (connectionsRes.ok) setConnections((await connectionsRes.json()).connections || [])
     if (shareableRes.ok) setShareable((await shareableRes.json()).services || [])
     if (legacyRes.ok) setLegacy((await legacyRes.json()).database || null)
+    const discoverRes = await fetch(`/api/storage/discover?project=${projectId}`, { cache: 'no-store' }).catch(() => null)
+    setFound(discoverRes?.ok ? (await discoverRes.json()).discovered || [] : [])
   }, [projectId])
 
   useEffect(() => { void load().catch(error => setNotice({ tone: 'error', text: error.message })) }, [load])
@@ -132,6 +135,14 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
       setNotice({ tone: 'error', text: error instanceof Error ? error.message : 'Operation failed' })
     } finally { setBusy(false) }
   }
+
+  const link = (source: string) => run(async () => {
+    const response = await fetch('/api/storage/adopt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId, source }) })
+    const body = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(body.error || 'The database could not be linked')
+    await refresh()
+    return `Linked ${body.database}. The app keeps using its own settings; Synergy now tracks it for backups and status.`
+  })
 
   const syncEnv = () => run(async () => {
     const body = await confirmAndSync()
@@ -207,6 +218,19 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
   return (
     <div className="space-y-4">
       {intro}
+      {found.length > 0 && (
+        <div className="rounded-xl border border-status-building/30 bg-status-building/[0.04] p-4">
+          <p className="text-sm font-medium">{found.length === 1 ? "This app already uses a database Synergy doesn't track" : `This app already uses ${found.length} databases Synergy doesn't track`}</p>
+          <p className="mt-1 text-xs text-muted-foreground">Found in its environment file. Linking adds it to Storage for backups, browsing and status. The app keeps its current settings; nothing is changed.</p>
+          <div className="mt-3 space-y-2">{found.map(item => (
+            <div key={item.source} className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 text-sm">
+              <ProviderLogo provider={item.engine as Provider} size="sm" />
+              <span className="min-w-0 flex-1"><span className="block truncate font-mono">{item.database}</span><span className="block truncate text-xs text-muted-foreground">{item.connectionName || `:`} · {item.source}{item.superuser ? ' · superuser account' : ''}</span></span>
+              <Button size="sm" variant="outline" disabled={!isAdmin || busy} onClick={() => void link(item.source)}>Link</Button>
+            </div>
+          ))}</div>
+        </div>
+      )}
       <Section
         title="Databases"
         description={<>Databases connected to this application. Synergy keeps their credentials encrypted and injects them as environment variables on every deployment.</>}
@@ -235,6 +259,7 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
                     {service.options?.ownership === 'shared' && <span className="flex items-center gap-1 rounded-full border border-syn-violet/30 bg-syn-violet/10 px-2 py-px text-[11px] text-violet-200"><Layers className="h-3 w-3" />From {service.shared_from_project_name || 'project'}</span>}
                     {!!service.shared_with?.length && <span className="flex items-center gap-1 rounded-full border border-syn-cyan/30 bg-syn-cyan/10 px-2 py-px text-[11px] text-cyan-200"><Layers className="h-3 w-3" />Shared with {service.shared_with.join(', ')}</span>}
                     {service.options?.ownership === 'external' && <span className="rounded-full border border-border px-2 py-px text-[11px] text-muted-foreground">External</span>}
+                    {service.options?.ownership === 'adopted' && <span className="rounded-full border border-border px-2 py-px text-[11px] text-muted-foreground" title="Synergy tracks this database; the app keeps its own settings in .env">Configured in the app&apos;s .env</span>}
                   </div>
                   <p className="mt-1 truncate text-xs text-muted-foreground">{providerMeta[service.provider]?.label} on {service.connection_name} · env <span className="font-mono">{envLabel(service, projectType)}</span></p>
                 </div>
@@ -244,7 +269,7 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
                     <DropdownMenu.Trigger asChild><button type="button" className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-white/[0.07] hover:text-foreground" aria-label={`Actions for ${service.database_name}`}><MoreHorizontal className="h-4 w-4" /></button></DropdownMenu.Trigger>
                     <DropdownMenu.Portal>
                       <DropdownMenu.Content align="end" sideOffset={6} className="z-50 w-56 rounded-lg border border-white/10 bg-popover p-1 shadow-2xl shadow-black/60">
-                        <DropdownMenu.Item className={menuItem} disabled={service.application_primary || role === 'viewer'} onSelect={() => void makePrimary(service)}><Star className="h-3.5 w-3.5" />Make main database</DropdownMenu.Item>
+                        <DropdownMenu.Item className={menuItem} disabled={service.application_primary || role === 'viewer' || service.options?.ownership === 'adopted'} onSelect={() => void makePrimary(service)}><Star className="h-3.5 w-3.5" />Make main database</DropdownMenu.Item>
                         <DropdownMenu.Item className={menuItem} disabled={!isAdmin || !!service.options?.ownership && service.options.ownership !== 'manager' || service.provider === 'redis'} onSelect={() => { setPasswordFor(service); setPassword({ value: '', confirm: '' }) }}><KeyRound className="h-3.5 w-3.5" />Change password</DropdownMenu.Item>
                         {['mysql', 'mariadb'].includes(service.provider) && <DropdownMenu.Item asChild className={menuItem}><a href="/mysql/" target="_blank" rel="noreferrer"><ArrowUpRight className="h-3.5 w-3.5" />Open phpMyAdmin</a></DropdownMenu.Item>}
                         <DropdownMenu.Item asChild className={menuItem}><Link href={`/data-services?project=${projectId}`}><Database className="h-3.5 w-3.5" />Backups & advanced</Link></DropdownMenu.Item>

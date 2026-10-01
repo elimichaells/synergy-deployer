@@ -62,7 +62,7 @@ export interface ProjectDataService {
   updated_at: string
 }
 
-interface SecretConnection extends DataConnection {
+export interface SecretConnection extends DataConnection {
   password_ciphertext: string | null
 }
 
@@ -151,7 +151,7 @@ function assertPurpose(value: unknown): asserts value is DataConnectionPurpose {
   if (!DATA_CONNECTION_PURPOSES.includes(value as DataConnectionPurpose)) throw new ApiError('Unsupported connection purpose', 400)
 }
 
-function normalizedHost(value: string) {
+export function normalizedHost(value: string) {
   const host = value.trim().toLowerCase()
   return ['localhost', '::1', '[::1]'].includes(host) ? '127.0.0.1' : host
 }
@@ -165,19 +165,19 @@ function assertNotControlPlane(provider: DataProvider, host: string, port: numbe
   }
 }
 
-function requiredText(value: unknown, label: string) {
+export function requiredText(value: unknown, label: string) {
   const text = typeof value === 'string' ? value.trim() : ''
   if (!text) throw new ApiError(`${label} is required`, 400)
   return text
 }
 
-function safeName(value: string, max = 63) {
+export function safeName(value: string, max = 63) {
   const normalized = value.toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '')
   if (!normalized) throw new ApiError('Name must contain letters or numbers', 400)
   return (/^[a-z_]/.test(normalized) ? normalized : `app_${normalized}`).slice(0, max)
 }
 
-function envPrefix(value: string) {
+export function envPrefix(value: string) {
   const prefix = value.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '')
   if (!prefix) throw new ApiError('Environment prefix is required', 400)
   return prefix.slice(0, 40)
@@ -199,7 +199,7 @@ function sqlLiteral(value: string) {
   return value.replace(/'/g, "''")
 }
 
-async function getSecretConnection(id: string): Promise<SecretConnection> {
+export async function getSecretConnection(id: string): Promise<SecretConnection> {
   await ensureDataServicesSchema()
   const { rows } = await query<SecretConnection>(
     `select dc.*, count(pds.id)::int as service_count
@@ -211,7 +211,7 @@ async function getSecretConnection(id: string): Promise<SecretConnection> {
   return rows[0]
 }
 
-function connectionPassword(connection: SecretConnection) {
+export function connectionPassword(connection: SecretConnection) {
   return connection.password_ciphertext ? decryptSecret(connection.password_ciphertext) : ''
 }
 
@@ -467,7 +467,7 @@ async function provisionProviderDatabase(connection: SecretConnection, databaseN
   }
 }
 
-async function testProjectServiceCredential(connection: SecretConnection, databaseName: string, username: string | null, password: string) {
+export async function testProjectServiceCredential(connection: SecretConnection, databaseName: string, username: string | null, password: string) {
   if (connection.provider === 'postgresql') {
     const { Client } = await import('pg')
     const client = new Client({ host: connection.host, port: connection.port, user: username || undefined, password, database: databaseName, ssl: connection.tls_enabled ? { rejectUnauthorized: false } : false, connectionTimeoutMillis: 10_000 })
@@ -766,6 +766,7 @@ export async function rotateProjectDataServicePassword(projectId: string, servic
   if (!service) throw new ApiError('Project data service not found', 404)
   if (service.options?.ownership === 'external') throw new ApiError('Manager cannot rotate credentials owned by an external database', 409)
   if (service.options?.ownership === 'shared') throw new ApiError('Rotate this password from the application that owns the database; every stack application using it is updated', 409)
+  if (service.options?.ownership === 'adopted') throw new ApiError("This database keeps its credentials in the app's own .env file. Change them there, or give it a dedicated user from its Storage page", 409)
   const connection = await getSecretConnection(service.connection_id)
   const previousPassword = service.password_ciphertext ? decryptSecret(service.password_ciphertext) : ''
   await setProjectServicePassword(connection, service, password)
@@ -797,6 +798,8 @@ export async function getProjectDataServiceEnv(projectId: string) {
   )
   const env: Record<string, string> = {}
   for (const service of rows) {
+    // Databases linked from an app's existing .env stay configured there; Synergy never overrides them.
+    if (service.options?.ownership === 'adopted') continue
     const password = service.password_ciphertext ? decryptSecret(service.password_ciphertext) : ''
     const url = serviceUrl(service, password)
     // Secondary services stay namespaced. The active application database uses

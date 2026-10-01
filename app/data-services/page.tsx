@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
 import { ServiceCatalog } from '@/components/app/service-catalog'
+import { EnginesPanel } from '@/components/storage/engines-panel'
 
 type Provider = 'postgresql' | 'mysql' | 'mariadb' | 'sqlserver' | 'mongodb' | 'redis'
 type ConnectionPurpose = 'shared_application' | 'dedicated_application' | 'external_service'
@@ -206,6 +207,7 @@ export default function DataServicesPage() {
     <AppShell area="infrastructure" title="Database servers" subtitle="The database engines on this server (or elsewhere) that apps get their databases from." user={user || undefined} actions={isAdmin ? <><Button variant="outline" size="sm" onClick={() => { setMigrationOpen(true); setMigrationPreview(null) }} disabled={services.filter((service) => relationalProviders.includes(service.provider)).length < 2}><ArrowRightLeft className="mr-2 h-4 w-4" />Migrate data</Button><Button size="sm" onClick={() => setCatalogOpen(true)}><Server className="mr-2 h-4 w-4" />Add database server</Button></> : undefined}>
       <div className="space-y-6">
         {notice && <div className="rounded-md border border-border bg-muted/50 px-4 py-3 text-sm">{notice}</div>}
+        <EnginesPanel />
         <section>
           <div className="mb-3 flex items-center justify-between"><div><h2 className="text-sm font-semibold">Database servers</h2><p className="text-xs text-muted-foreground">Synergy signs in with each server&apos;s admin account (stored encrypted) only to check its health and to create a separate database and user for each app.</p></div><Button variant="ghost" size="sm" onClick={() => void refresh()} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></Button></div>
           <div className="grid gap-3 lg:grid-cols-2">

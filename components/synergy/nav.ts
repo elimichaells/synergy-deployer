@@ -4,6 +4,7 @@ import { Boxes, Cpu, Database, Gauge, Globe2, HardDrive, Rocket, Server, Setting
 export const navItems = [
   { href: '/', label: 'Overview', icon: Gauge, description: 'Workspace health', matches: ['/'] },
   { href: '/projects', label: 'Projects', icon: Boxes, description: 'Your apps, grouped by product', matches: ['/projects', '/sites'] },
+  { href: '/storage', label: 'Storage', icon: Database, description: 'Every database your apps use', matches: ['/storage'] },
   { href: '/deployments', label: 'Deployments', icon: Rocket, description: 'Release history and logs', matches: ['/deployments'] },
   { href: '/infrastructure', label: 'Infrastructure', icon: Server, description: 'Server-level services (admins)', matches: ['/infrastructure', '/data-services', '/database', '/domains', '/services', '/automation'] },
   { href: '/settings', label: 'Settings', icon: Settings, description: 'Account, team and integrations', matches: ['/settings'] },
@@ -11,7 +12,7 @@ export const navItems = [
 
 /** Server-level areas, shown in the Infrastructure side menu. */
 export const infrastructureItems = [
-  { href: '/data-services', label: 'Database servers', icon: HardDrive, description: 'Engines apps get databases from, backups and migrations' },
+  { href: '/data-services', label: 'Database servers', icon: HardDrive, description: 'Engines, network exposure, backups and migrations' },
   { href: '/database', label: 'PostgreSQL explorer', icon: Database, description: 'Browse data, run SQL, back up and restore' },
   { href: '/domains', label: 'Domains & DNS', icon: Globe2, description: 'Cloudflare accounts and every public address' },
   { href: '/services', label: 'Processes', icon: Cpu, description: 'Running processes and the Caddy web server' },
