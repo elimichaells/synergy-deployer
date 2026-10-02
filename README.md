@@ -126,6 +126,18 @@ verifies the new login, backs up and rewrites the apps' env files, and restarts
 each app with a health check. If any app does not come back healthy, the env
 files, ownership and user are all put back.
 
+### Safer promotion (2.8.4)
+
+**Promote to production** now releases the exact commit staging is running,
+not the newest commit on its branch, and never moves production backwards.
+On separate branches that commit is merged into the production branch; on a
+shared branch production moves to it. The production branch on GitHub is
+checked with a dry-run push before the build and updated only after production
+is live and healthy. Before confirming, a sheet lists the commits going out
+and warns about database changes or a failed latest staging deployment; the
+request carries the reviewed commit, so nothing else can be released. A push
+webhook for a commit an app already runs no longer redeploys it.
+
 ### Line endings are not a local edit (2.8.3)
 
 A file whose working copy has Windows line endings while the commit has Unix
