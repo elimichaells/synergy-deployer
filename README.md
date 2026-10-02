@@ -126,6 +126,20 @@ verifies the new login, backs up and rewrites the apps' env files, and restarts
 each app with a health check. If any app does not come back healthy, the env
 files, ownership and user are all put back.
 
+### Deploying past the security gate (2.9.0)
+
+When the security gate stops a release, the deployment page lists the affected
+packages with their advisories and offers two paths. **Fix it** gives the
+commands to run, then commit the lockfile and push. **Deploy anyway**, for
+administrators only, explains what is being risked and needs a written reason
+and an acknowledgement; it applies to that one deployment, to the app for 7 or
+30 days, or until someone turns the gate back on. The same switch is under the
+app's Settings > Security gate, and the app page shows a banner while it is off.
+The audit still runs under an override: findings and the reason are written to
+the deployment log, the release is marked "Released with known vulnerabilities",
+and the decision is recorded in the audit log. See
+[docs/release-pipeline.md](docs/release-pipeline.md#deploying-past-the-gate).
+
 ### Safer promotion (2.8.4)
 
 **Promote to production** now releases the exact commit staging is running,
