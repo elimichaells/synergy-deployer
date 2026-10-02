@@ -82,6 +82,8 @@ export interface DeployOptions {
   commitSha?: string
   /** When promoting, the staging branch to merge into the production branch */
   mergeBranch?: string
+  /** When promoting, the exact commit staging is running. Merged instead of the newest commit on mergeBranch. */
+  mergeCommit?: string
 }
 
 export interface DeployResult {
@@ -459,6 +461,7 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
     if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(branch) || branch.includes('..')) throw new Error('Invalid deployment branch')
     if (options.commitSha && !/^[a-fA-F0-9]{7,40}$/.test(options.commitSha)) throw new Error('Invalid deployment commit')
     if (options.mergeBranch && (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(options.mergeBranch) || options.mergeBranch.includes('..'))) throw new Error('Invalid promotion branch')
+    if (options.mergeCommit && !/^[a-fA-F0-9]{7,40}$/.test(options.mergeCommit)) throw new Error('Invalid promotion commit')
     if (!/^[A-Za-z0-9._-]+$/.test(project.pm2_name)) throw new Error('Invalid PM2 application name')
     if (path.resolve(project.root_path).toLowerCase() === path.resolve(MANAGER_ROOT).toLowerCase()) {
       throw new Error('Manager must be upgraded with its verified release installer, not its own application deployer')
@@ -532,6 +535,17 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
     }
     await loggedGit(`git fetch "${repoUrl}" "+refs/heads/${branch}:refs/remotes/origin/${branch}"`)
     if (options.commitSha) {
+      if (options.trigger === 'promote') {
+        // Staging and production share a branch, so production moves to exactly the commit staging ran.
+        // The candidate still points at the commit production runs now; never move production backwards.
+        if ((await git(`git merge-base --is-ancestor "${options.commitSha}" "origin/${branch}"`)).code) {
+          throw new Error(`The commit staging is running is not on ${branch}. Redeploy staging, then promote again`)
+        }
+        if ((await git(`git merge-base --is-ancestor "${options.commitSha}" HEAD`)).code === 0) {
+          throw new Error('Production already includes the commit staging is running; there is nothing to promote')
+        }
+        await append(`[checkout] Promoting ${options.commitSha.slice(0, 7)}, the commit staging is running\n`)
+      }
       await loggedGit(`git checkout --no-overwrite-ignore "${options.commitSha}"`)
     } else {
       await loggedGit(`git checkout --no-overwrite-ignore "${branch}"`)
@@ -539,7 +553,16 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
       if (options.mergeBranch) {
         const mergeBranch = options.mergeBranch
         await loggedGit(`git fetch "${repoUrl}" "+refs/heads/${mergeBranch}:refs/remotes/origin/${mergeBranch}"`)
-        const merged = await git(`git merge "origin/${mergeBranch}" --no-autostash --no-overwrite-ignore --no-edit -m "Promote ${mergeBranch} to ${branch}"`)
+        // Promote what was tested: the commit staging is running, not whatever is newest on its branch.
+        if (options.mergeCommit) {
+          if ((await git(`git merge-base --is-ancestor "${options.mergeCommit}" "origin/${mergeBranch}"`)).code) {
+            throw new Error(`The commit staging is running is no longer on ${mergeBranch}. Redeploy staging, then promote again`)
+          }
+          await append(`[checkout] Promoting ${options.mergeCommit.slice(0, 7)}, the commit staging is running, not the newest commit on ${mergeBranch}\n`)
+        }
+        const mergeTarget = options.mergeCommit || `origin/${mergeBranch}`
+        const mergeLabel = options.mergeCommit ? `${mergeBranch} (${options.mergeCommit.slice(0, 7)})` : mergeBranch
+        const merged = await git(`git merge "${mergeTarget}" --no-autostash --no-overwrite-ignore --no-edit -m "Promote ${mergeLabel} to ${branch}"`)
         await append(merged.output)
         if (merged.code) { await git('git merge --abort'); throw new Error('Promotion merge conflict; resolve the branches before retrying') }
       }
@@ -657,7 +680,9 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
     if (await sourceFingerprint(project.root_path, git) !== originalFingerprint) throw new Error('Live source changed during build; candidate not activated')
     if (initialFileEnv !== JSON.stringify(loadProjectEnvFile(project.root_path, project.project_type))) throw new Error('Application environment changed during build; retry with the current configuration')
     if (initialFileEnv !== '{}' && initialFileEnv !== JSON.stringify(loadProjectEnvFile(root, project.project_type))) throw new Error('Deployment commands changed private environment files. Apply environment changes in Manager before rebuilding')
-    if (options.mergeBranch) await loggedGit(`git push "${repoUrl}" "${branch}"`)
+    // Check that GitHub would accept the promotion, without moving the branch yet. The real push
+    // happens only once production is live and healthy, so a failed start never leaves GitHub ahead.
+    if (options.mergeBranch) await loggedGit(`git push --dry-run "${repoUrl}" "${branch}"`)
 
     // Prove that the built candidate can actually boot and answer HTTP before
     // changing the live directory or stopping the current process.
@@ -786,6 +811,15 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
     }
     await pm2('pm2 save')
     await append('[release] Active on original port; previous source retained at ' + release.previous + '\n')
+    if (options.mergeBranch) {
+      // Production is live and healthy; now make the branch on GitHub match it. The deployment is still
+      // marked as running, so the push webhook cannot start a second deployment of the same commit.
+      const pushed = await runCommand(`git push "${repoUrl}" "${branch}"`, project.root_path, GIT_NETWORK_TIMEOUT, undefined, undefined, false)
+      await append(pushed.output)
+      await append(pushed.code === 0
+        ? `[release] ${branch} on GitHub now matches what production runs\n`
+        : `[release] WARNING: production is live on the promoted code, but GitHub did not accept the push to ${branch}. Push ${branch} from ${project.root_path} before anyone else pushes to it; otherwise the next deployment will not include this promotion\n`)
+    }
     await flush()
     await query("UPDATE deployments SET status='success',phase='complete',finished_at=now(),log=$1 WHERE id=$2", [log, deploymentId])
     void notifyDeploy({ projectName: project.name, status: 'success', trigger: options.trigger, durationMs: Date.now() - started, commitSha: sha })

@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { PromoteSheet } from '@/components/app/promote-sheet'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import {
   ArrowRight, ArrowUpRight, Boxes, ExternalLink, GitBranch, Layers, LayoutGrid, List, MoreHorizontal, Pin, Plus, RefreshCw, Rocket, Search, Zap,
@@ -76,6 +78,7 @@ export function AppsView({ onSummary }: { onSummary?: (text: string) => void }) 
   const [discovering, setDiscovering] = useState(false)
   const [deployingId, setDeployingId] = useState<string | null>(null)
   const [promotingId, setPromotingId] = useState<string | null>(null)
+  const router = useRouter()
   const [autoDeployBusyId, setAutoDeployBusyId] = useState<string | null>(null)
   const [pinBusyId, setPinBusyId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -163,23 +166,6 @@ export function AppsView({ onSummary }: { onSummary?: (text: string) => void }) 
     }
   }
 
-  const handlePromote = async (id: string) => {
-    if (!canWrite) return
-    setError(null)
-    setPromotingId(id)
-    try {
-      const res = await fetch(`/api/sites/${id}/promote`, { method: 'POST' })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.error || 'Promotion failed')
-      }
-      await refresh()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Promotion failed')
-    } finally {
-      setPromotingId(null)
-    }
-  }
 
   const handleAutoDeploy = async (project: Project) => {
     if (!canWrite || autoDeployBusyId) return
@@ -297,7 +283,7 @@ export function AppsView({ onSummary }: { onSummary?: (text: string) => void }) 
       <DropdownMenu.Portal>
         <DropdownMenu.Content align="end" sideOffset={6} className="z-50 w-56 rounded-lg border border-white/10 bg-popover p-1 shadow-2xl shadow-black/60 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95">
           <DropdownMenu.Item className={menuItem} disabled={!canWrite || busy || project.setup_required} onSelect={() => void handleDeploy(project.id)}><Rocket className="h-3.5 w-3.5" />{project.setup_required ? 'Finish setup to deploy' : 'Deploy now'}</DropdownMenu.Item>
-          {project.environment === 'staging' && <DropdownMenu.Item className={menuItem} disabled={!canWrite || busy || project.setup_required || promotingId === project.id} onSelect={() => void handlePromote(project.id)}><ArrowUpRight className="h-3.5 w-3.5" />Promote to production</DropdownMenu.Item>}
+          {project.environment === 'staging' && <DropdownMenu.Item className={menuItem} disabled={!canWrite || busy || project.setup_required || promotingId === project.id} onSelect={() => setPromotingId(project.id)}><ArrowUpRight className="h-3.5 w-3.5" />Promote to production</DropdownMenu.Item>}
           <DropdownMenu.Item className={menuItem} disabled={!canWrite || autoDeployBusyId === project.id || project.setup_required} onSelect={() => void handleAutoDeploy(project)}><Zap className="h-3.5 w-3.5" />{project.auto_deploy ? 'Turn off auto-deploy' : 'Turn on auto-deploy'}</DropdownMenu.Item>
           <DropdownMenu.Item className={menuItem} disabled={pinBusyId === project.id} onSelect={() => void handlePin(project)}><Pin className="h-3.5 w-3.5" />{project.pinned ? 'Unpin' : 'Pin to top'}</DropdownMenu.Item>
           <DropdownMenu.Separator className="my-1 h-px bg-border" />
@@ -437,6 +423,7 @@ export function AppsView({ onSummary }: { onSummary?: (text: string) => void }) 
           {renderGroup(pinnedProjects.length ? 'All applications' : 'Applications', otherProjects)}
         </>
       )}
+      {promotingId && <PromoteSheet stagingId={promotingId} open onOpenChange={open => { if (!open) setPromotingId(null) }} onStarted={deploymentId => { setPromotingId(null); router.push(`/deployments/${deploymentId}`) }} />}
     </>
   )
 }

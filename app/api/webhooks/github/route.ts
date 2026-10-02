@@ -112,9 +112,14 @@ export async function POST(request: Request) {
     const commitSha = payload.head_commit?.id || 'unknown'
     const commitMsg = payload.head_commit?.message || ''
 
+    // A promotion pushes the branch only after production is already live on that commit.
+    // Deploying it again would rebuild the same code for nothing.
+    const { rows: live } = await query<{ id: string; commit_sha: string | null }>(
+      'select p.id, d.commit_sha from projects p join deployments d on d.id=p.active_deployment_id where p.id = any($1::uuid[])', [targetProjects.map(p => p.id)])
+    const liveCommit = new Map(live.map(row => [row.id, row.commit_sha]))
     const results = await Promise.all(targetProjects.map(async (project) => ({
       project: project.name,
-      deploymentId: await startDeploy(project, { trigger: 'webhook' }),
+      deploymentId: commitSha !== 'unknown' && liveCommit.get(project.id) === commitSha ? null : await startDeploy(project, { trigger: 'webhook' }),
     })))
     const deployments = results.filter((result) => result.deploymentId)
     const skipped = results.filter((result) => !result.deploymentId).map((result) => result.project)

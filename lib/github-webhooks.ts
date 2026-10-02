@@ -148,3 +148,16 @@ export async function removeGitHubWebhook(projectId: string) {
   if (!response.ok && response.status !== 404) throw new ApiError(`GitHub webhook removal failed with HTTP ${response.status}`, 502)
   return { status: 'removed' as const, hookId: hook.id }
 }
+
+/**
+ * Asks GitHub how two commits of a project's repository relate. Read-only.
+ * Returns null when the comparison is unavailable (no token, not on GitHub, API error).
+ */
+export async function compareGitHubCommits(projectId: string, base: string, head: string): Promise<unknown | null> {
+  if (!/^[a-f0-9]{7,40}$/i.test(base) || !/^[a-f0-9]{7,40}$/i.test(head)) return null
+  try {
+    const { repository, token } = await projectAndToken(projectId)
+    const response = await githubFetch(token, `/repos/${repository.owner}/${repository.repo}/compare/${base}...${head}?per_page=100`)
+    return response.ok ? await response.json() : null
+  } catch { return null }
+}

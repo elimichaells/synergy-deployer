@@ -10,6 +10,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { AppToolGrid } from '@/components/app/app-tools'
+import { PromoteSheet } from '@/components/app/promote-sheet'
 import { AppShell } from '@/components/layout/app-shell'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { EnvEditor } from '@/components/env-editor'
@@ -136,7 +137,7 @@ export default function SitePage() {
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
   const [deploying, setDeploying] = useState(false)
-  const [promoting, setPromoting] = useState(false)
+  const [promoteOpen, setPromoteOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [envFile, setEnvFile] = useState('.env')
   const [envContent, setEnvContent] = useState('')
@@ -327,23 +328,6 @@ export default function SitePage() {
       setError(err instanceof Error ? err.message : 'Deployment failed')
     } finally {
       setDeploying(false)
-    }
-  }
-
-  const handlePromote = async () => {
-    if (!siteId) return
-    setPromoting(true)
-    setError(null)
-    try {
-      const res = await fetch(`/api/sites/${siteId}/promote`, { method: 'POST' })
-      const body = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(body.error || 'Promotion failed')
-      if (body.productionId) router.push(`/sites/${body.productionId}`)
-      else await refresh()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Promotion failed')
-    } finally {
-      setPromoting(false)
     }
   }
 
@@ -788,8 +772,8 @@ export default function SitePage() {
           </label>}
           {primaryUrl && <Button asChild variant="outline" size="sm"><a href={primaryUrl} target="_blank" rel="noreferrer">Visit<ArrowUpRight className="ml-1.5 h-3.5 w-3.5" /></a></Button>}
           {project.environment === 'staging' && (
-            <Button variant="outline" size="sm" onClick={() => void handlePromote()} disabled={!canWrite || promoting || sameAsProduction} title={sameAsProduction ? 'Production already runs this commit' : 'Merge into production and deploy it'}>
-              <ArrowUpRight className="mr-1.5 h-3.5 w-3.5" />{promoting ? 'Promoting…' : 'Promote to production'}
+            <Button variant="outline" size="sm" onClick={() => setPromoteOpen(true)} disabled={!canWrite || sameAsProduction} title={sameAsProduction ? 'Production already runs this commit' : 'Review what would be released, then promote it'}>
+              <ArrowUpRight className="mr-1.5 h-3.5 w-3.5" />Promote to production
             </Button>
           )}
           <Button size="sm" onClick={() => void handleDeploy()} disabled={!canWrite || deploying || hasRunningDeploy || project.setup_required} title={project.setup_required ? 'Finish setup first' : undefined}>
@@ -1139,6 +1123,7 @@ export default function SitePage() {
           )}
         </TabsContent>
       </AppShell>
+      {project.environment === 'staging' && <PromoteSheet stagingId={project.id} open={promoteOpen} onOpenChange={setPromoteOpen} onStarted={deploymentId => { setPromoteOpen(false); router.push(`/deployments/${deploymentId}`) }} />}
     </Tabs>
   )
 }

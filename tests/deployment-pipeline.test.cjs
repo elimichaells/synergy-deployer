@@ -29,7 +29,7 @@ test('cancelled installation queue never starts work or leaks a connection', asy
   assert.equal(connections, 0);
 });
 
-async function pipeline(t, failure, cacheHit = false) {
+async function pipeline(t, failure, cacheHit = false, options = { trigger: 'manual' }, notAncestor = false) {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'manager-pipeline-test-'));
   t.after(async () => { assert.ok(base.startsWith(path.resolve(os.tmpdir()) + path.sep)); await fs.rm(base, { recursive: true, force: true }); });
   const root = path.join(base, 'live'); const candidate = path.join(base, 'candidate');
@@ -59,6 +59,8 @@ async function pipeline(t, failure, cacheHit = false) {
     if (cmd.startsWith('pm2 delete') && cmd.includes(':candidate:')) previewName = undefined;
     if (cmd.startsWith('pm2 delete') && !cmd.includes(':candidate:')) status = 'missing';
     if (cmd.startsWith('pm2 start') && !cmd.includes(':candidate:')) status = 'online';
+    // For the shared-branch promotion check: production does not yet contain the staging commit.
+    if (notAncestor && /^git merge-base --is-ancestor "[a-f0-9]+" HEAD$/.test(cmd)) return { code: 1, output: '' };
     return { code: 0, output: cmd === 'git rev-parse HEAD' ? 'a'.repeat(40) : '' };
   };
   const prep = {
@@ -123,7 +125,7 @@ async function pipeline(t, failure, cacheHit = false) {
     '@/lib/project-setup': { assertProjectSetupComplete: async () => {} },
     '@/lib/project-operation': { acquireProjectOperation: async () => async () => {} },
   });
-  const result = await api.runDeploy(project, { trigger: 'manual' });
+  const result = await api.runDeploy(project, options);
   return { calls, result, root, candidate };
 }
 
@@ -177,6 +179,56 @@ test('a hand edit to a committed file still stops the deployment before anything
   assert.equal(result.status, 'failed');
   assert.match(result.log, /Local source changes detected/);
   assert.equal(calls.some(call => call.kind === 'restore-generated'), false);
+  assert.equal(calls.some(call => call.kind === 'build-command'), false);
+  assert.equal(calls.some(call => call.kind === 'activate'), false);
+});
+
+const promoted = 'b'.repeat(40);
+const gitCommands = calls => calls.filter(call => call.kind === 'command' && call.cmd.startsWith('git ')).map(call => call.cmd);
+
+test('promotion merges the exact commit staging ran and updates GitHub only after production is healthy', async t => {
+  const { calls, result, root } = await pipeline(t, undefined, false, { trigger: 'promote', mergeBranch: 'dev', mergeCommit: promoted });
+  assert.equal(result.status, 'success');
+  const git = gitCommands(calls);
+  assert.ok(git.some(cmd => cmd.startsWith('git merge-base --is-ancestor "' + promoted + '" "origin/dev"')));
+  const merge = git.find(cmd => cmd.startsWith('git merge "'));
+  assert.ok(merge.startsWith('git merge "' + promoted + '"'), merge);
+  assert.ok(merge.includes('Promote dev (bbbbbbb) to main'), merge);
+  assert.equal(git.some(cmd => cmd.startsWith('git merge "origin/dev"')), false);
+  const index = predicate => calls.findIndex(predicate);
+  const dryRun = index(call => call.kind === 'command' && call.cmd.startsWith('git push --dry-run'));
+  const push = index(call => call.kind === 'command' && call.cmd.startsWith('git push "'));
+  const activate = index(call => call.kind === 'activate');
+  const lastHealth = calls.map((call, i) => call.kind === 'health' ? i : -1).filter(i => i >= 0).pop();
+  assert.ok(dryRun >= 0 && dryRun < activate, 'the dry run happens before activation');
+  assert.ok(push > activate && push > lastHealth, 'the real push happens after activation and the final health check');
+  assert.equal(calls[push].cwd, root, 'the push runs from the live checkout');
+  assert.equal(calls.filter(call => call.kind === 'command' && call.cmd.startsWith('git push "')).length, 1);
+  assert.match(result.log, /main on GitHub now matches what production runs/);
+});
+
+test('a promotion that fails its test start never moves the branch on GitHub', async t => {
+  const { calls, result } = await pipeline(t, 'health', false, { trigger: 'promote', mergeBranch: 'dev', mergeCommit: promoted });
+  assert.equal(result.status, 'failed');
+  assert.ok(calls.some(call => call.kind === 'command' && call.cmd.startsWith('git push --dry-run')));
+  assert.equal(calls.some(call => call.kind === 'command' && call.cmd.startsWith('git push "')), false);
+  assert.equal(calls.some(call => call.kind === 'activate'), false);
+});
+
+test('a shared-branch promotion moves production to the tested commit and pushes nothing', async t => {
+  const { calls, result } = await pipeline(t, undefined, false, { trigger: 'promote', commitSha: promoted }, true);
+  assert.equal(result.status, 'success');
+  const git = gitCommands(calls);
+  assert.ok(git.includes('git checkout --no-overwrite-ignore "' + promoted + '"'));
+  assert.equal(git.some(cmd => cmd.startsWith('git push')), false);
+  assert.equal(git.some(cmd => cmd.startsWith('git merge "')), false);
+  assert.match(result.log, /Promoting bbbbbbb, the commit staging is running/);
+});
+
+test('a shared-branch promotion is refused when production already includes the staging commit', async t => {
+  const { calls, result } = await pipeline(t, undefined, false, { trigger: 'promote', commitSha: promoted });
+  assert.equal(result.status, 'failed');
+  assert.match(result.log, /already includes the commit staging is running/);
   assert.equal(calls.some(call => call.kind === 'build-command'), false);
   assert.equal(calls.some(call => call.kind === 'activate'), false);
 });
