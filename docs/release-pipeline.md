@@ -74,6 +74,22 @@ This is an example, not an enabled exception. Review the complete candidate audi
 
 Remove entries or replace the file contents with `[]` to revoke exceptions for subsequent checks. Expiration does not stop or repair an already running application. Upgrade dependencies, test, commit the lockfile, and redeploy to remove the exposure.
 
+### Deploying past the gate
+
+When the gate stops a release, the deployment page lists the affected packages, their advisories and the commands that fix them. Fixing the packages and pushing is the recommended path and needs no special permission.
+
+An administrator can instead choose **Deploy anyway**. This asks for a written reason and an explicit acknowledgement, and for how long it applies:
+
+- **This deployment only.** The next deployment is checked and blocked as usual.
+- **This app, for 7 or 30 days.** Every deployment of that app in the period, including automatic ones, goes live regardless. The gate comes back on by itself.
+- **This app, until someone turns the gate back on.**
+
+The same switch is under the app's Settings > Security gate. Turning the gate off needs an administrator; operators can turn it back on. While it is off, the app page shows a banner with who turned it off, when, why and until when.
+
+An override does not skip the audit. Both audits still run, every finding is written to the deployment log, and `[security] OVERRIDE` lines record the reason and whether it came from the deployment or the app. Such a release is stored with security status `overridden` and shown as "Released with known vulnerabilities"; a release with nothing to block is still `passed` even while the gate is off. The decision is written to the audit log (`deployment.security_gate_overridden`, `security_gate.turned_off`, `security_gate.turned_on`). A missing lockfile, a failed build and a failed test start still stop the release. A promotion that was stopped is re-run as the same promotion, with the staging commit confirmed again.
+
+An override does not make the application safe. Prefer a per-advisory exception when one specific finding has been reviewed, and prefer the shortest period that covers the planned fix.
+
 For every application repository, add the audit command to pull-request CI and a daily scheduled workflow, followed by its clean-install build and meaningful tests. Dependency update automation should open reviewed pull requests rather than force major upgrades during deployment. These repository checks must be configured in each application's own CI; Manager's release gate remains the final check.
 
 Deployment history reports the current phase, security failures, and an explicit active-release marker. A failed build does not replace that marker.

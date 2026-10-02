@@ -10,6 +10,7 @@ import { discardSeededCaches, seedBuildCache } from '@/lib/deployment-build-cach
 import { classifyLocalChanges, inspectLocalChanges, localChangesMessage, recordBuildChanges, restoreGeneratedFiles, type BuildChanges } from '@/lib/deployment-build-changes'
 import { installWithDependencyCache, assertAuditPassed, formatAuditFindings, loadAuditExceptions } from '@/lib/deployment-cache'
 import { ensureDeploymentSchema } from '@/lib/deployment-schema'
+import { cleanReason } from '@/lib/security-gate-policy'
 import { beginReleaseActivation } from '@/lib/deployment-activation'
 import { captureProjectProcesses, stopProjectProcesses } from '@/lib/deployment-processes'
 import { recoverProjectTerminalLocks } from '@/lib/deployment-terminals'
@@ -84,6 +85,8 @@ export interface DeployOptions {
   mergeBranch?: string
   /** When promoting, the exact commit staging is running. Merged instead of the newest commit on mergeBranch. */
   mergeCommit?: string
+  /** An administrator chose to deploy this one release even if the dependency security gate would block it. */
+  acceptSecurityRisk?: { reason: string }
 }
 
 export interface DeployResult {
@@ -585,11 +588,31 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
       runDeploymentCommand(command, cwd, env, chunk => { void append(chunk).catch(() => {}) }, check)
     const inspect = (command: string) => runDeploymentCommand(command, root, { ...projectEnv, NODE_ENV: 'development' },
       () => {}, check, 0)
+    // An administrator can deliberately deploy past the gate: for this one deployment, or for
+    // this app for a period. The audit still runs and every finding is still logged.
+    const gate = (await query<{ off: boolean | null; reason: string | null }>(
+      'select (security_gate_off_until > now()) as off, security_gate_off_reason as reason from projects where id=$1', [project.id])).rows[0]
+    const riskAccepted = options.acceptSecurityRisk ? { reason: cleanReason(options.acceptSecurityRisk.reason), source: 'this deployment' }
+      : gate?.off ? { reason: cleanReason(gate.reason), source: 'this app' } : null
+    let securityOverridden = false
+    const overrideGate = async (problem: string) => {
+      securityOverridden = true
+      await append(`[security] OVERRIDE: ${problem.replace(/\s*Review npm audit and update dependencies$/, '')}\n`
+        + `[security] OVERRIDE: continuing because an administrator turned the security gate off for ${riskAccepted!.source}. Reason given: ${riskAccepted!.reason || 'none recorded'}\n`
+        + '[security] OVERRIDE: whatever the audit reported above goes online with this release. Update the packages and redeploy to remove the exposure\n')
+    }
     const checkAudit = async (audit: { code: number; output: string }) => {
       const accepted: string[] = []
-      const counts = assertAuditPassed(audit, 'production dependencies', { projectId: project.id,
-        exceptions: loadAuditExceptions(), accepted: entry => accepted.push(
-          `[security] EXCEPTION: ${entry.package} ${entry.advisory}; expires ${entry.expiresAt}; reason: ${entry.reason}\n`) })
+      let counts: Record<string, number>
+      try {
+        counts = assertAuditPassed(audit, 'production dependencies', { projectId: project.id,
+          exceptions: loadAuditExceptions(), accepted: entry => accepted.push(
+            `[security] EXCEPTION: ${entry.package} ${entry.advisory}; expires ${entry.expiresAt}; reason: ${entry.reason}\n`) })
+      } catch (error) {
+        if (!riskAccepted) throw error
+        await overrideGate((error as Error).message)
+        return { low: 0, moderate: 0, high: 0, critical: 0 } as Record<string, number>
+      }
       for (const message of accepted) await append(message)
       if (accepted.length) await append(`[security] Accepted findings: ${counts.exceptedHigh} high, ${counts.exceptedCritical} critical; vulnerable dependencies remain present\n`)
       return counts
@@ -603,7 +626,9 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
       const findings = formatAuditFindings(audit.output)
       if (findings) await append(findings)
       await checkAudit(audit)
-      await append('[security] Committed dependency audit passed; final candidate will be checked again\n')
+      await append(securityOverridden
+        ? '[security] Committed dependency audit did not pass; continuing under the override. The final candidate is checked again\n'
+        : '[security] Committed dependency audit passed; final candidate will be checked again\n')
     }
     const prepared = async (command: string) => {
       const run = (cmd: string) => runPreparedDeploymentCommand(cmd, root,
@@ -657,16 +682,26 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
       const audit = await inspect('npm audit --json --package-lock-only --omit=dev --audit-level=high')
       const findings = formatAuditFindings(audit.output)
       if (findings) await append(findings)
+      const overriddenBefore = securityOverridden
+      securityOverridden = false
       const counts = await checkAudit(audit)
-      await append(`[security] Production dependency audit ${counts.exceptedHigh || counts.exceptedCritical ? 'approved with exceptions' : 'passed'}: ${counts.low} low, ${counts.moderate} moderate, 0 unaccepted high/critical\n`)
-      await query("UPDATE deployments SET security_status='passed' WHERE id=$1", [deploymentId])
+      const finalOverridden = securityOverridden
+      securityOverridden = overriddenBefore || finalOverridden
+      await append(finalOverridden
+        ? '[security] Production dependency audit did NOT pass; released anyway under the override\n'
+        : `[security] Production dependency audit ${counts.exceptedHigh || counts.exceptedCritical ? 'approved with exceptions' : 'passed'}: ${counts.low} low, ${counts.moderate} moderate, 0 unaccepted high/critical\n`)
+      // 'overridden' means the release went out with findings the gate would have blocked.
+      await query('UPDATE deployments SET security_status=$1 WHERE id=$2', [finalOverridden ? 'overridden' : 'passed', deploymentId])
     } else {
       await query("UPDATE deployments SET security_status='not_applicable' WHERE id=$1", [deploymentId])
       await append('[security] npm audit not applicable: no Node dependency manifest\n')
     }
     if (existsSync(path.join(root, 'composer.lock'))) {
-      if ((await inspect('composer audit --locked --no-interaction')).code) throw new Error('Composer security audit failed; release blocked')
-      await append('[security] Composer audit passed\n')
+      if ((await inspect('composer audit --locked --no-interaction')).code) {
+        if (!riskAccepted) throw new Error('Composer security audit failed; release blocked')
+        await overrideGate('Composer security audit failed.')
+        await query("UPDATE deployments SET security_status='overridden' WHERE id=$1", [deploymentId])
+      } else await append('[security] Composer audit passed\n')
     }
     // Remember what this deployment's own commands changed, so the next one does not mistake it for local edits.
     if (existsSync(path.join(root, '.git'))) {

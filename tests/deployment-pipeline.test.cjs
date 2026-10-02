@@ -29,7 +29,7 @@ test('cancelled installation queue never starts work or leaks a connection', asy
   assert.equal(connections, 0);
 });
 
-async function pipeline(t, failure, cacheHit = false, options = { trigger: 'manual' }, notAncestor = false) {
+async function pipeline(t, failure, cacheHit = false, options = { trigger: 'manual' }, notAncestor = false, gateOffReason = null) {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'manager-pipeline-test-'));
   t.after(async () => { assert.ok(base.startsWith(path.resolve(os.tmpdir()) + path.sep)); await fs.rm(base, { recursive: true, force: true }); });
   const root = path.join(base, 'live'); const candidate = path.join(base, 'candidate');
@@ -47,6 +47,7 @@ async function pipeline(t, failure, cacheHit = false, options = { trigger: 'manu
     calls.push({ kind: 'query', sql, values });
     if (sql.includes('INSERT INTO deployments')) return { rows: [{ id: 'fixture-' + (++seq) }] };
     if (sql.includes('select hostname from project_domains')) return { rows: [{ hostname: 'fixture.example.com' }] };
+    if (sql.includes('security_gate_off_until')) return { rows: [{ off: gateOffReason ? true : null, reason: gateOffReason }] };
     return { rows: [] };
   };
   const command = async (cmd, cwd, _timeout, _stream, env) => {
@@ -119,6 +120,7 @@ async function pipeline(t, failure, cacheHit = false, options = { trigger: 'manu
     },
     '@/lib/deployment-capacity': { withInstallationSlot: async work => { calls.push({ kind: 'capacity' }); return work(); } },
     '@/lib/deployment-schema': { ensureDeploymentSchema: async () => {} },
+    '@/lib/security-gate-policy': require('../lib/security-gate-policy.ts'),
     '@/lib/ports': { allocateTemporaryPort: async () => 43217 },
     '@/lib/caddy': { updateCaddyDomainsStrict: async (hostnames, port) => { calls.push({ kind: 'caddy', hostnames, port }); } },
     '@/lib/deployment-activation': { beginReleaseActivation: async () => { calls.push({ kind: 'activation-admission' }); } },
@@ -243,6 +245,42 @@ test('known vulnerabilities fail before installation or building, with branch an
   const commitIndex = calls.findIndex(call => call.kind === 'query' && call.sql.includes('SET commit_sha'));
   const auditIndex = calls.findIndex(call => call.kind === 'build-command' && call.cmd.startsWith('npm audit'));
   assert.ok(commitIndex >= 0 && commitIndex < auditIndex);
+});
+
+const securityStatuses = calls => calls.filter(call => call.kind === 'query' && call.sql.includes('SET security_status')).map(call => call.sql.includes("'overridden'") ? 'overridden' : call.sql.includes("'not_applicable'") ? 'not_applicable' : call.values[0]);
+
+test('an administrator can deploy one release past the security gate; findings are still logged and the release is marked', async t => {
+  const { calls, result } = await pipeline(t, 'audit', false, { trigger: 'manual', acceptSecurityRisk: { reason: 'Launch today; upgrade is booked for Monday' } });
+  assert.equal(result.status, 'success');
+  assert.ok(calls.some(call => call.kind === 'activate'));
+  assert.equal(calls.filter(call => call.kind === 'build-command' && call.cmd.startsWith('npm audit')).length, 2, 'both audits still run');
+  assert.match(result.log, /high: fixture-package/);
+  assert.match(result.log, /OVERRIDE: Security gate blocked release: 1 high and 0 critical/);
+  assert.match(result.log, /turned the security gate off for this deployment. Reason given: Launch today; upgrade is booked for Monday/);
+  assert.match(result.log, /did NOT pass; released anyway under the override/);
+  assert.doesNotMatch(result.log, /audit passed/);
+  assert.deepEqual(securityStatuses(calls), ['overridden']);
+});
+
+test('an app whose gate is switched off deploys past findings without a per-deployment choice', async t => {
+  const { calls, result } = await pipeline(t, 'final-audit', false, { trigger: 'webhook' }, false, 'Vendor fix expected next week');
+  assert.equal(result.status, 'success');
+  assert.match(result.log, /turned the security gate off for this app. Reason given: Vendor fix expected next week/);
+  assert.deepEqual(securityStatuses(calls), ['overridden']);
+});
+
+test('a clean release is recorded as passed even while the gate is off', async t => {
+  const { calls, result } = await pipeline(t, undefined, false, { trigger: 'manual' }, false, 'Vendor fix expected next week');
+  assert.equal(result.status, 'success');
+  assert.doesNotMatch(result.log, /OVERRIDE/);
+  assert.deepEqual(securityStatuses(calls), ['passed']);
+});
+
+test('without an override the gate still blocks and the release is recorded as failed', async t => {
+  const { calls, result } = await pipeline(t, 'audit');
+  assert.equal(result.status, 'failed');
+  assert.doesNotMatch(result.log, /OVERRIDE/);
+  assert.deepEqual(securityStatuses(calls), [], 'nothing marks the release as passed or overridden');
 });
 
 test('cached deployments still audit, build separately, then activate on the assigned port', async t => {

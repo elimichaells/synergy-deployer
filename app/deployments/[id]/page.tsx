@@ -10,6 +10,7 @@ import {
 import { AppShell } from '@/components/layout/app-shell'
 import { Button } from '@/components/ui/button'
 import { PipelineRail } from '@/components/synergy/pipeline'
+import { SecurityGateBlocked, SecurityGateOverridden } from '@/components/app/security-gate'
 import { EnvironmentBadge, StatusLabel, type DeployStatus } from '@/components/synergy/status'
 import { FrameworkAvatar } from '@/components/synergy/framework-logo'
 import { SynergyMark } from '@/components/synergy/brand'
@@ -42,6 +43,8 @@ interface Project {
   environment: 'production' | 'staging'
   port: number | null
   url: string | null
+  default_branch?: string | null
+  auto_deploy?: boolean
 }
 
 interface SessionUser { name: string; role: 'admin' | 'operator' | 'viewer' }
@@ -277,9 +280,9 @@ export default function DeploymentPage() {
           <div className="sm:col-span-2">
             <dt className="eyebrow">Release guarantees</dt>
             <dd className="flex flex-wrap gap-2">
-              <span className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs', deployment.security_status === 'passed' ? 'border-status-ready/30 text-status-ready' : deployment.security_status === 'failed' ? 'border-status-failed/40 text-status-failed' : 'border-border text-muted-foreground')}>
-                {deployment.security_status === 'failed' ? <ShieldAlert className="h-3.5 w-3.5" /> : <ShieldCheck className="h-3.5 w-3.5" />}
-                {deployment.security_status === 'passed' ? 'Dependency audit passed' : deployment.security_status === 'failed' ? 'Blocked by security gate' : deployment.security_status === 'not_applicable' ? 'Audit not applicable' : 'Security gate pending'}
+              <span className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs', deployment.security_status === 'passed' ? 'border-status-ready/30 text-status-ready' : deployment.security_status === 'failed' ? 'border-status-failed/40 text-status-failed' : deployment.security_status === 'overridden' ? 'border-status-building/40 text-amber-200' : 'border-border text-muted-foreground')}>
+                {deployment.security_status === 'failed' || deployment.security_status === 'overridden' ? <ShieldAlert className="h-3.5 w-3.5" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                {deployment.security_status === 'passed' ? 'Dependency audit passed' : deployment.security_status === 'failed' ? 'Blocked by security gate' : deployment.security_status === 'overridden' ? 'Released with known vulnerabilities' : deployment.security_status === 'not_applicable' ? 'Audit not applicable' : 'Security gate pending'}
               </span>
               <span className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs', pipeline.zeroDowntime ? 'border-syn-cyan/30 text-syn-cyan' : 'border-border text-muted-foreground')}>
                 <Zap className="h-3.5 w-3.5" />{pipeline.zeroDowntime ? 'Zero-downtime preflight verified' : project?.port ? 'Preflight pending' : 'No preflight (no port)'}
@@ -289,6 +292,12 @@ export default function DeploymentPage() {
           </div>
         </dl>
       </section>
+
+      {deployment.status === 'failed' && deployment.security_status === 'failed' && (
+        <SecurityGateBlocked deploymentId={deployment.id} appName={deployment.project_name} branch={project?.default_branch || deployment.branch || 'main'} log={deployment.log || ''}
+          role={user?.role} autoDeploy={project?.auto_deploy} onStarted={next => router.push(`/deployments/${next}`)} />
+      )}
+      {deployment.security_status === 'overridden' && !live && <SecurityGateOverridden log={deployment.log || ''} branch={project?.default_branch || deployment.branch || 'main'} />}
 
       {/* Pipeline */}
       <section className="mt-6 rounded-xl border border-border bg-card">

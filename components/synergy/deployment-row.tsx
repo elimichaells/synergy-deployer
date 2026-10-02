@@ -86,6 +86,7 @@ export function DeploymentRow({ deployment, now, showProject = true, compact = f
           <span className="flex min-w-0 items-center gap-1"><GitBranch className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{deployment.branch || '—'}</span></span>
           <span className="flex items-center gap-1 font-mono"><GitCommitHorizontal className="h-3.5 w-3.5" />{deployment.commit_sha?.slice(0, 7) || 'pending'}</span>
           {deployment.security_status === 'passed' && <span className="flex items-center gap-1 text-status-ready/90" title="Security gate passed"><ShieldCheck className="h-3.5 w-3.5" />Audited</span>}
+          {deployment.security_status === 'overridden' && <span className="flex items-center gap-1 text-amber-200" title="Released past the security gate with known vulnerabilities"><ShieldAlert className="h-3.5 w-3.5" />Known vulnerabilities</span>}
           {deployment.security_status === 'failed' && <span className="flex items-center gap-1 text-status-failed" title="Security gate blocked this release"><ShieldAlert className="h-3.5 w-3.5" />Blocked</span>}
         </div>
       </div>

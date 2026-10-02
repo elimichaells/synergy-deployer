@@ -93,7 +93,7 @@ export function lineTone(line: string): LineTone {
   const lower = line.toLowerCase()
   // Engine status lines describe what Synergy did, not build output; "failed candidate retained" is reassurance.
   if (/^\[(release|preflight|handoff|activation|security|rollback|worker|cache|health)\]/.test(lower) && !/^\[error\]/.test(lower)) {
-    return /requires attention|blocked|failed/.test(lower) && !/^\[release\]/.test(lower) ? 'warning' : /\bok\b|passed|verified|active on/.test(lower) ? 'success' : 'info'
+    return /requires attention|blocked|failed|override|did not pass/.test(lower) && !/^\[release\]/.test(lower) ? 'warning' : /\bok\b|passed|verified|active on/.test(lower) ? 'success' : 'info'
   }
   if (/^\[error\]|\b(error|fatal|exception|elifecycle|failed)\b/.test(lower) && !/\b0 (errors?|failed)\b/.test(lower)) return 'error'
   if (/^\[cancelled\]|\bwarn(ing)?\b|deprecat/.test(lower)) return 'warning'

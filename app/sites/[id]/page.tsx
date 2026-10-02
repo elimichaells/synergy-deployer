@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { AppToolGrid } from '@/components/app/app-tools'
 import { PromoteSheet } from '@/components/app/promote-sheet'
+import { SecurityGateBanner, SecurityGateSetting, useSecurityGate } from '@/components/app/security-gate'
 import { AppShell } from '@/components/layout/app-shell'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { EnvEditor } from '@/components/env-editor'
@@ -186,6 +187,7 @@ export default function SitePage() {
   const [deleting, setDeleting] = useState(false)
 
   const canWrite = userRole === 'admin' || userRole === 'operator'
+  const securityGate = useSecurityGate(siteId)
 
   useEffect(() => {
     let current = true
@@ -782,6 +784,7 @@ export default function SitePage() {
         </>}
       >
         {error && <div role="alert" className="notice-error">{error}</div>}
+        <SecurityGateBanner projectId={project.id} gate={securityGate.gate} canWrite={canWrite} onChanged={securityGate.setGate} />
 
         <TabsContent value="setup" className="mt-0">
           <ProjectSetup key={project.id} projectId={project.id} onChanged={() => void refresh()} onDeploy={() => void handleDeploy()} deploying={deploying || hasRunningDeploy} />
@@ -1042,6 +1045,10 @@ export default function SitePage() {
                 {githubConnections.map(connection => <option key={connection.id} value={connection.id}>{connection.name} (@{connection.account_login})</option>)}
               </select></label>
             </div>
+          </Section>
+
+          <Section title="Security gate" description="Stops a release that would put packages with serious known vulnerabilities online.">
+            <SecurityGateSetting projectId={project.id} appName={project.name} gate={securityGate.gate} canTurnOff={securityGate.canTurnOff} canWrite={canWrite} onChanged={securityGate.setGate} />
           </Section>
 
           <Section title="Git & automatic deploys" description={project.environment === 'staging' ? `Pushes to ${project.default_branch} deploy this staging copy. The GitHub webhook is managed on the production application.` : 'Connect a GitHub webhook so pushes trigger deployments.'}>
