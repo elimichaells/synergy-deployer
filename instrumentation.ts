@@ -84,6 +84,14 @@ export async function register() {
       console.error('[System] Failed to refresh Manager proxy routes:', err)
     }
 
+    // A database move cut short by a restart is marked so its page says what to check.
+    try {
+      const { recoverInterruptedMoves } = await import('@/lib/database-move')
+      await recoverInterruptedMoves()
+    } catch (err) {
+      console.error('[System] Failed to check database moves:', err)
+    }
+
     // Memory is sampled every minute for the Memory page, its history and its warnings.
     try {
       const { ensureServerMemorySchema, memorySamplerTick } = await import('@/lib/server-memory')

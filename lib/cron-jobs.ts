@@ -95,6 +95,9 @@ export async function executeCronJob(id: string, trigger: 'schedule' | 'manual')
        set last_status = 'running', last_started_at = now(), last_finished_at = null,
            last_exit_code = null, last_output = '', next_run_at = $1, updated_at = now()
      where id = $2 and last_status <> 'running'
+       and not exists (select 1 from database_moves m where m.status = 'running'
+         and (cron_jobs.project_id = any(m.project_ids)
+              or exists (select 1 from projects p where p.id = any(m.project_ids) and lower(p.root_path) = lower(cron_jobs.working_directory))))
        and not exists (select 1 from deployments d join projects p on p.id=d.project_id
          where d.status='running' and d.phase in ('activate','health')
            and (d.project_id=cron_jobs.project_id or lower(p.root_path)=lower(cron_jobs.working_directory)))

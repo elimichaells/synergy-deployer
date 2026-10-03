@@ -53,6 +53,8 @@ function getPool(database: string, target?: ExplorerTarget): Pool {
         : connectionConfig(database)),
       max: 3,
       idleTimeoutMillis: 30_000,
+      // Named so a database move can close the manager's own browsing connections.
+      application_name: 'synergy-manager',
       statement_timeout: QUERY_TIMEOUT_MS,
     })
     // An idle connection can be cut by a server restart or a dropped database. Without a handler

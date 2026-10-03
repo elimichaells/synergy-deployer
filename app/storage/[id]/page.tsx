@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
-import { ArrowUpRight, Check, Copy, Database, Eye, HardDriveDownload, Layers, Loader2, Lock, Play, RotateCcw, ShieldCheck, AlertTriangle } from 'lucide-react'
+import { ArrowUpRight, Check, Copy, Database, Eye, HardDriveDownload, Layers, Loader2, Lock, Play, RotateCcw, ShieldCheck, AlertTriangle, Truck } from 'lucide-react'
 import { AppShell } from '@/components/layout/app-shell'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -12,6 +12,7 @@ import { Section } from '@/components/app/section'
 import { ProviderLogo, providerMeta, type Provider } from '@/components/app/providers'
 import { Flag, serverRoleLabel } from '@/components/storage/bits'
 import { DedicatedUserSheet } from '@/components/storage/dedicated-user-sheet'
+import { MoveDatabaseSheet } from '@/components/storage/move-database-sheet'
 import { DataTab } from '@/components/storage/data-tab'
 import { SqlTab } from '@/components/storage/sql-tab'
 import { ScheduleSheet, type ScheduleValues } from '@/components/storage/schedule-sheet'
@@ -45,6 +46,7 @@ export default function DatabasePage() {
   const [revealed, setRevealed] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [dedicatedOpen, setDedicatedOpen] = useState(false)
+  const [moveOpen, setMoveOpen] = useState(false)
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const [now, setNow] = useState(() => Date.now())
 
@@ -111,8 +113,11 @@ export default function DatabasePage() {
   const browserUrl = isPostgres ? `/postgres/connect/svc-${database.id}` : ['mysql', 'mariadb'].includes(database.engine) ? '/mysql/' : null
   const role = serverRoleLabel[database.serverRole]
   const recommendations: { title: string; body: string; action?: React.ReactNode }[] = []
-  if (database.serverRole === 'system') recommendations.push({ title: 'Move it off Synergy\'s own server', body: 'This database lives on the same PostgreSQL server as Synergy\'s control database. A problem in one affects the other. Create a database for the app on the apps server, copy the data across, then switch the app over.', action: <Button asChild size="sm" variant="outline"><Link href={`/sites/${owner.projectId}?tab=storage`}>Open the app&apos;s storage</Link></Button> })
-  if (database.warnings.some(warning => warning.includes('superuser'))) recommendations.push({ title: 'Stop using a superuser account', body: 'The app signs in as a superuser, which can read and change every database on the server, including Synergy\'s, and run commands on the machine. Give it a user that can only reach this database; the data stays where it is.', action: <Button size="sm" onClick={() => setDedicatedOpen(true)} disabled={!access.isAdmin}><ShieldCheck className="mr-1.5 h-3.5 w-3.5" />Give it a dedicated user</Button> })
+  if (database.serverRole === 'system') recommendations.push(isPostgres
+    ? { title: 'Move it off Synergy\'s own server', body: 'This database lives on the same PostgreSQL server as Synergy\'s control database, so a problem in one affects the other. Moving it makes an exact copy on the apps server with its own login, then switches the app over; its apps are stopped for a few minutes.', action: <Button size="sm" onClick={() => setMoveOpen(true)}><Truck className="mr-1.5 h-3.5 w-3.5" />Plan the move</Button> }
+    : { title: 'Move it off Synergy\'s own server', body: 'This database lives on the same server as Synergy\'s control database. A problem in one affects the other.', action: <Button asChild size="sm" variant="outline"><Link href={`/sites/${owner.projectId}?tab=storage`}>Open the app&apos;s storage</Link></Button> })
+  // Moving also gives the database its own login, so this only matters where it stays put.
+  if (database.serverRole !== 'system' && database.warnings.some(warning => warning.includes('superuser'))) recommendations.push({ title: 'Stop using a superuser account', body: 'The app signs in as a superuser, which can read and change every database on the server, including Synergy\'s, and run commands on the machine. Give it a user that can only reach this database; the data stays where it is.', action: <Button size="sm" onClick={() => setDedicatedOpen(true)} disabled={!access.isAdmin}><ShieldCheck className="mr-1.5 h-3.5 w-3.5" />Give it a dedicated user</Button> })
   if (database.warnings.some(warning => warning.includes('Staging'))) recommendations.push({ title: 'Give staging its own database', body: 'Testing on staging currently changes production data. Add a separate database to the staging app and copy production data into it when you need realistic data.' })
   if (!database.backup && isPostgres && database.serverRole !== 'external') recommendations.push({ title: 'Turn on backups', body: 'Nothing is backing this database up yet.', action: <Button size="sm" onClick={() => void enableBackups()} disabled={!access.isAdmin || busy !== null}>{busy === 'schedule' ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />}Turn on daily backups</Button> })
 
@@ -259,6 +264,8 @@ export default function DatabasePage() {
         </TabsContent>
 
         <TabsContent value="settings" className="mt-0 space-y-6">
+          {isPostgres && database.serverRole !== 'external' && <Section title="Move to another server" description="Make an exact copy on another PostgreSQL server on this machine with its own login, check it, and switch the apps over. The original is kept until you remove it."
+            action={<Button size="sm" variant="outline" onClick={() => setMoveOpen(true)}><Truck className="mr-1.5 h-3.5 w-3.5" />Plan the move</Button>} />}
           <Section title="Copy data to another database" description="Move this database to another server or engine, for example from Synergy's system server to the apps server. The copy is checked table by table and nothing here is changed.">
             <Button asChild size="sm" variant="outline"><Link href={`/sites/${owner.projectId}?tab=storage`}>Open {owner.name}&apos;s storage to start</Link></Button>
           </Section>
@@ -275,6 +282,7 @@ export default function DatabasePage() {
         </TabsContent>
       </AppShell>
       <ScheduleSheet target={{ kind: 'service', serviceId: database.id }} initial={database.backup} open={scheduleOpen} onOpenChange={setScheduleOpen} onSaved={() => void load().catch(() => undefined)} />
+      {isPostgres && <MoveDatabaseSheet serviceId={database.id} open={moveOpen} onOpenChange={setMoveOpen} onDone={() => void load().catch(() => undefined)} />}
       <DedicatedUserSheet serviceId={database.id} open={dedicatedOpen} onOpenChange={setDedicatedOpen} onDone={() => { setRevealed(null); void load().catch(() => undefined) }} />
     </Tabs>
   )
