@@ -126,6 +126,17 @@ verifies the new login, backs up and rewrites the apps' env files, and restarts
 each app with a health check. If any app does not come back healthy, the env
 files, ownership and user are all put back.
 
+### Move a database to another server (2.14.0)
+
+A PostgreSQL database's Storage page can plan and run a move to another
+PostgreSQL server on the machine, such as off Synergy's own server onto the
+apps server. Its apps and workers are stopped, an exact copy is made with its
+own limited login and checked table by table, the apps' env files are switched
+and the apps restarted and health-checked. Any failure returns the apps to the
+untouched original. The copy is kept as a backup and the original stays until
+you remove it. See
+[docs/release-pipeline.md](docs/release-pipeline.md#moving-a-database-to-another-server).
+
 ### Install anywhere on Windows (2.13.0)
 
 The manager no longer assumes C:\web. Apps, tools, backups, helper scripts and
