@@ -4,6 +4,7 @@ import { runCommand } from '@/lib/exec'
 import { sendNotification } from '@/lib/notify'
 import { buildLimit, buildMemoryFloorMb } from '@/lib/deployment-capacity'
 import { attributeMemory, downsample, evaluateMemory, lowMemoryThreshold, type AlertCondition, type MemorySample, type ProcessRow } from '@/lib/server-memory-policy'
+import { engineFromServicePath } from '@/lib/database-tuning-policy'
 
 const MB = 1024 * 1024
 
@@ -35,7 +36,13 @@ export interface MemorySnapshot {
   others: { name: string; count: number; privateMb: number }[]
   /** Local ports with an open inbound connection; null where this cannot be read. */
   activePorts: number[] | null
+  /** Database servers running as services on this machine. */
+  databases: DatabaseUsage[]
 }
+
+export interface DatabaseUsage { service: string; engine: string; privateMb: number; processes: number; ports: number[] }
+
+const DB_PREFIX = 'service:'
 
 // One CIM query gives every process with its parent, private bytes and start time.
 const WINDOWS_SNAPSHOT = [
@@ -47,10 +54,20 @@ const WINDOWS_SNAPSHOT = [
   '$p = @(Get-CimInstance Win32_Process | ForEach-Object { ,@([int64]$_.ProcessId, [int64]$_.ParentProcessId, [string]$_.Name, [int64]$_.PrivatePageCount, [int64]$_.WorkingSetSize, $(if ($_.CreationDate) { [int64]($_.CreationDate.ToUniversalTime() - $epoch).TotalMilliseconds } else { 0 }), [bool]([string]$_.CommandLine -match "pm2-runner\.js|npm-cli\.js|[\\/]cross-env[\\/]")) })',
   // Ports with an open inbound connection show which apps are in use (for sleeping staging apps).
   '$ports = @(Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue | ForEach-Object { [int]$_.LocalPort } | Sort-Object -Unique)',
-  "[pscustomobject]@{ ports = $ports; totalKb = [int64]$os.TotalVisibleMemorySize; freeKb = [int64]$os.FreePhysicalMemory; commitLimitKb = [int64]$os.TotalVirtualMemorySize; commitFreeKb = [int64]$os.FreeVirtualMemory; pageFileMb = [int64](($pf | Measure-Object AllocatedBaseSize -Sum).Sum); pageFileUsedMb = [int64](($pf | Measure-Object CurrentUsage -Sum).Sum); p = $p } | ConvertTo-Json -Compress -Depth 4",
+  // Database servers run as Windows services; their process trees and listening ports identify them.
+  '$svc = @(Get-CimInstance Win32_Service | Where-Object { $_.ProcessId -and $_.PathName -match "mysqld|mariadbd|pg_ctl|postgres|memurai|redis-server|mongod" } | ForEach-Object { ,@([int64]$_.ProcessId, [string]$_.Name, [string]$_.PathName) })',
+  '$listen = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | ForEach-Object { ,@([int]$_.LocalPort, [int64]$_.OwningProcess) })',
+  "[pscustomobject]@{ services = $svc; listen = $listen; ports = $ports; totalKb = [int64]$os.TotalVisibleMemorySize; freeKb = [int64]$os.FreePhysicalMemory; commitLimitKb = [int64]$os.TotalVirtualMemorySize; commitFreeKb = [int64]$os.FreeVirtualMemory; pageFileMb = [int64](($pf | Measure-Object AllocatedBaseSize -Sum).Sum); pageFileUsedMb = [int64](($pf | Measure-Object CurrentUsage -Sum).Sum); p = $p } | ConvertTo-Json -Compress -Depth 4",
 ].join('; ')
 
-interface RawHost { totalMb: number; availableMb: number; commitMb: number | null; commitLimitMb: number | null; pageFileMb: number | null; pageFileUsedMb: number | null; processes: ProcessRow[]; activePorts: number[] | null }
+interface RawHost {
+  totalMb: number; availableMb: number; commitMb: number | null; commitLimitMb: number | null; pageFileMb: number | null; pageFileUsedMb: number | null
+  processes: ProcessRow[]; activePorts: number[] | null
+  services: { pid: number; name: string; engine: string }[]
+  listeners: { port: number; pid: number }[]
+}
+
+const pairs = (value: unknown): unknown[][] => Array.isArray(value) ? (value.length && !Array.isArray(value[0]) ? [value] : value.filter(Array.isArray)) : []
 
 async function readHost(): Promise<RawHost> {
   if (process.platform === 'win32') {
@@ -63,6 +80,8 @@ async function readHost(): Promise<RawHost> {
       commitLimitMb: Math.round(raw.commitLimitKb / 1024), commitMb: Math.round((raw.commitLimitKb - raw.commitFreeKb) / 1024),
       pageFileMb: raw.pageFileMb ?? null, pageFileUsedMb: raw.pageFileUsedMb ?? null,
       activePorts: Array.isArray(raw.ports) ? raw.ports.map(Number) : typeof raw.ports === 'number' ? [raw.ports] : [],
+      services: pairs(raw.services).map(row => ({ pid: Number(row[0]), name: String(row[1]), engine: engineFromServicePath(String(row[2])) || 'database' })),
+      listeners: pairs(raw.listen).map(row => ({ port: Number(row[0]), pid: Number(row[1]) })),
       processes: rows.filter(row => Array.isArray(row) && row.length >= 6).map(row => ({
         pid: Number(row[0]), ppid: Number(row[1]), name: String(row[2]), privateBytes: Number(row[3]) || 0, workingBytes: Number(row[4]) || 0, started: Number(row[5]) || undefined, launcher: row[6] === true })),
     }
@@ -71,7 +90,7 @@ async function readHost(): Promise<RawHost> {
   const result = await runCommand({ file: 'ps', args: ['-A', '-o', 'pid=,ppid=,rss=,comm='] }, undefined, 30_000, undefined, undefined, true)
   const processes = result.code ? [] : result.output.split('\n').map(line => /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+)$/.exec(line)).filter(Boolean)
     .map(match => ({ pid: Number(match![1]), ppid: Number(match![2]), name: match![4].trim().split('/').pop()!, privateBytes: Number(match![3]) * 1024, workingBytes: Number(match![3]) * 1024 }))
-  return { totalMb: Math.round(os.totalmem() / MB), availableMb: Math.round(os.freemem() / MB), commitMb: null, commitLimitMb: null, pageFileMb: null, pageFileUsedMb: null, processes, activePorts: null }
+  return { totalMb: Math.round(os.totalmem() / MB), availableMb: Math.round(os.freemem() / MB), commitMb: null, commitLimitMb: null, pageFileMb: null, pageFileUsedMb: null, processes, activePorts: null, services: [], listeners: [] }
 }
 
 async function readPm2Roots() {
@@ -92,8 +111,18 @@ async function readPm2Roots() {
 
 export async function readMemorySnapshot(): Promise<MemorySnapshot> {
   const [host, { roots, runners }] = await Promise.all([readHost(), readPm2Roots()])
-  const { apps, others } = attributeMemory(host.processes.map(row => runners.has(row.pid) ? { ...row, launcher: true } : row), roots)
+  // Database services are attributed like apps, under a name PM2 can never use.
+  const allRoots = new Map(roots)
+  for (const service of host.services) allRoots.set(service.pid, `${DB_PREFIX}${service.name}`)
+  const attributed = attributeMemory(host.processes.map(row => runners.has(row.pid) ? { ...row, launcher: true } : row), allRoots)
+  const apps = attributed.apps.filter(app => !app.name.startsWith(DB_PREFIX))
+  const others = attributed.others
   const runnerNames = new Set([...runners].map(pid => roots.get(pid)))
+  const databases: DatabaseUsage[] = host.services.map(service => {
+    const usage = attributed.apps.find(app => app.name === `${DB_PREFIX}${service.name}`)
+    const ports = [...new Set(host.listeners.filter(listener => attributed.ownerOf(listener.pid) === `${DB_PREFIX}${service.name}`).map(listener => listener.port))].sort((a, b) => a - b)
+    return { service: service.name, engine: service.engine, privateMb: usage?.privateMb ?? 0, processes: usage?.processes ?? 0, ports }
+  }).sort((a, b) => b.privateMb - a.privateMb)
   await ensureServerMemorySchema()
   const { rows: projects } = await query<{ id: string; name: string; environment: string | null; pm2_name: string; memory_limit_mb: number | null }>(
     'select id, name, environment, pm2_name, memory_limit_mb from projects')
@@ -107,6 +136,7 @@ export async function readMemorySnapshot(): Promise<MemorySnapshot> {
       return { ...app, runner: runnerNames.has(app.name), projectId: project?.id ?? null, label: project?.name ?? app.name, environment: project?.environment ?? null, limitMb: project?.memory_limit_mb ?? null }
     }),
     others,
+    databases,
   }
 }
 

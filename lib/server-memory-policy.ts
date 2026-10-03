@@ -62,6 +62,8 @@ export function attributeMemory(processes: ProcessRow[], roots: Map<number, stri
   return {
     apps: [...apps.values()].map(round).sort((a, b) => b.privateMb - a.privateMb),
     others: [...others.values()].map(round).sort((a, b) => b.privateMb - a.privateMb).slice(0, otherLimit),
+    /** Which root a process belongs to, for example to find the server behind a listening port. */
+    ownerOf: owner,
   }
 }
 

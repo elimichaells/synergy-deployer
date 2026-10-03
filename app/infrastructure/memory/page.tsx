@@ -6,6 +6,7 @@ import { AlertTriangle, ArrowUpRight, CheckCircle2, Info, Loader2, Moon, Refresh
 import { AppShell } from '@/components/layout/app-shell'
 import { Section } from '@/components/app/section'
 import { SleepSelect, WakeButton } from '@/components/app/staging-sleep'
+import { DatabaseServers } from '@/components/infrastructure/database-servers'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
@@ -222,6 +223,8 @@ export default function MemoryPage() {
           {(snapshot.apps.length > 12) && <Button variant="ghost" size="sm" className="mt-3" onClick={() => setShowAll(value => !value)}>{showAll ? 'Show fewer' : `Show all ${snapshot.apps.length} apps`}</Button>}
           <p className="mt-4 flex items-start gap-2 text-xs leading-5 text-muted-foreground"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />A limit caps a Node.js app&apos;s heap, so a leak restarts that one app instead of starving the server. Synergy also warns when an app goes over its limit or keeps growing for hours.</p>
         </Section>
+
+        <DatabaseServers />
 
         {startMethods.length > 0 && <Section title="Start apps without extra processes"
           description={<>Apps started through the manager&apos;s runner also run a launcher, two shells and often npm: memory the app itself does not need. Apps with a simple start can run directly under PM2 instead{eligibleMb > 0 ? <>, which would free about <span className="text-foreground">{gb(eligibleMb)}</span> now</> : null}. Switching restarts the app once; if it does not come back healthy, it is started again the way it was. Later deployments keep the app&apos;s method.</>}>

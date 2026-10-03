@@ -68,6 +68,12 @@ Nothing changes until an app is switched on Infrastructure > Memory. Switching s
 
 A staging app can sleep after 30 minutes to 8 hours without use (app Settings > Sleep when idle, or Infrastructure > Memory). Use is read once a minute from open inbound connections on the app's port; a deployment also counts. A sleeping app is stopped with PM2 and wakes when it is deployed, when someone presses Wake now, or when someone opens its address: its Caddy site gets a `handle_errors` block that sends a 502 to the manager's public `/api/wake` page, which starts the app and shows a "starting up" page that reloads itself. That page needs no session; it only acts on host names of staging apps with sleeping turned on, and it starts at most one wake per app every 90 seconds. Production apps never sleep.
 
+### Database server memory
+
+Infrastructure > Memory shows each database server on the machine (found through its Windows service, matched to the manager's saved connection by port): its memory, data size, open and idle connections, the apps linked to it, and logins holding many idle connections. Inspection uses the saved admin connection and only reads.
+
+For MySQL and MariaDB it recommends memory settings: turning off performance_schema (its measured memory), turning off the X protocol when nothing has used it since startup (MySQL only), and a 16 MB innodb_log_buffer_size. An administrator chooses which to apply. `scripts/tune-database-memory.ps1` saves the current file as `my.ini.before-tuning-<time>`, writes the settings (prefixing X protocol options with `loose-` when it is turned off), has MySQL check the file with `--validate-config` before anything restarts, restarts the service and waits for its port. If the server does not come back, the previous file is restored and the server restarted again. Apps lose their database connection while it restarts, usually 10 to 30 seconds. PostgreSQL servers are shown but not tuned; their settings are already modest, and idle connections are the cost to look at.
+
 ### Temporary advisory exceptions
 
 Manager administrators can create `security-exceptions.json` in Manager's working directory, or set `MANAGER_SECURITY_EXCEPTIONS_FILE` in Manager's own environment to an absolute file path and restart Manager. Protect this file with administrator-only write access. Never place it in an application's checkout. The default file is Git-ignored. An absent file means no exceptions; malformed configuration blocks deployment.
