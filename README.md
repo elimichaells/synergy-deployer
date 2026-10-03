@@ -126,6 +126,21 @@ verifies the new login, backs up and rewrites the apps' env files, and restarts
 each app with a health check. If any app does not come back healthy, the env
 files, ownership and user are all put back.
 
+### Memory management (2.10.0)
+
+**Infrastructure > Memory** shows what uses the server's memory: free memory and
+how much Windows has promised to programs, a 24-hour chart sampled every minute,
+each app's real usage (its whole process tree, not just the PM2 runner) with its
+24-hour peak, and the largest programs that are not apps. Warnings are raised,
+and sent to the notification webhook, when free memory stays low, when commit
+nears its limit, when an app stays over its limit, or when an app keeps growing
+over six hours. Builds now take turns and wait for free memory before starting,
+so deployments cannot starve running apps. Each app's Settings has a Memory
+section with its usage, a suggested limit, and a limit that caps a Node.js app's
+heap so a leak restarts that app instead of the whole server running out. The
+Processes page now reports whole-tree memory too. See
+[docs/release-pipeline.md](docs/release-pipeline.md#builds-and-memory).
+
 ### Deploying past the security gate (2.9.0)
 
 When the security gate stops a release, the deployment page lists the affected
