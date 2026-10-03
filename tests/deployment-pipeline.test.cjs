@@ -29,7 +29,49 @@ test('cancelled installation queue never starts work or leaks a connection', asy
   assert.equal(connections, 0);
 });
 
-async function pipeline(t, failure, cacheHit = false, options = { trigger: 'manual' }, notAncestor = false, gateOffReason = null) {
+function lockDb(state) {
+  return { db: { connect: async () => {
+    const client = new EventEmitter();
+    client.query = async (sql, values) => {
+      const key = String(values && values[0]);
+      if (sql.includes('try_advisory')) { const acquired = !state.held.has(key); if (acquired) state.held.add(key); return { rows: [{ locked: acquired }] }; }
+      state.held.delete(key); return { rows: [] };
+    };
+    client.release = () => {}; return client;
+  } } };
+}
+
+test('a build waits for free memory, then runs, and only one build runs at a time', async () => {
+  const state = { held: new Set() };
+  const api = load('lib/deployment-capacity.ts', { '@/lib/db': lockDb(state) });
+  const log = [];
+  const free = [900, 1200, 4096, 4096, 4096, 4096, 4096, 4096];
+  let reads = 0;
+  const available = () => free[Math.min(reads++, free.length - 1)];
+  let running = 0; let maximum = 0;
+  const work = async () => { running++; maximum = Math.max(maximum, running); await new Promise(resolve => setTimeout(resolve, 40)); running--; return 'built'; };
+  const results = await Promise.all([
+    api.withBuildSlot(work, message => log.push(message), () => {}, available, 5),
+    api.withBuildSlot(work, message => log.push(message), () => {}, available, 5),
+  ]);
+  assert.deepEqual(results, ['built', 'built']);
+  assert.equal(maximum, 1, 'builds take turns');
+  assert.ok(log.some(line => /Waiting for memory before building: 0\.9 GB free, builds need 2\.0 GB/.test(line)), log.join(''));
+  assert.ok(log.some(line => /Build slot 1\/1 acquired with 4\.0 GB memory free/.test(line)));
+  assert.equal(state.held.size, 0, 'the slot is released');
+  assert.equal(api.buildLimit(), 1);
+  assert.equal(api.buildMemoryFloorMb(), 2048);
+  for (const value of ['0', '5', '1.5']) assert.throws(() => api.buildLimit(value));
+  assert.throws(() => api.buildMemoryFloorMb('-1'));
+});
+
+test('a cancelled deployment stops waiting for memory without building', async () => {
+  const api = load('lib/deployment-capacity.ts', { '@/lib/db': lockDb({ held: new Set() }) });
+  let checks = 0;
+  await assert.rejects(api.withBuildSlot(async () => assert.fail('must not build'), () => {}, () => { if (++checks > 2) throw new Error('cancelled'); }, () => 100, 5), /cancelled/);
+});
+
+async function pipeline(t, failure, cacheHit = false, options = { trigger: 'manual' }, notAncestor = false, gateOffReason = null, memoryLimit = null) {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'manager-pipeline-test-'));
   t.after(async () => { assert.ok(base.startsWith(path.resolve(os.tmpdir()) + path.sep)); await fs.rm(base, { recursive: true, force: true }); });
   const root = path.join(base, 'live'); const candidate = path.join(base, 'candidate');
@@ -47,6 +89,7 @@ async function pipeline(t, failure, cacheHit = false, options = { trigger: 'manu
     calls.push({ kind: 'query', sql, values });
     if (sql.includes('INSERT INTO deployments')) return { rows: [{ id: 'fixture-' + (++seq) }] };
     if (sql.includes('select hostname from project_domains')) return { rows: [{ hostname: 'fixture.example.com' }] };
+    if (sql.includes('select memory_limit_mb from projects')) return { rows: [{ memory_limit_mb: memoryLimit }] };
     if (sql.includes('security_gate_off_until')) return { rows: [{ off: gateOffReason ? true : null, reason: gateOffReason }] };
     return { rows: [] };
   };
@@ -118,7 +161,8 @@ async function pipeline(t, failure, cacheHit = false, options = { trigger: 'manu
       seedBuildCache: async () => failure === 'build-once' || failure === 'build' ? [path.join(candidate, '.next/cache')] : [],
       discardSeededCaches: async seeded => { calls.push({ kind: 'discard-build-cache', seeded }); },
     },
-    '@/lib/deployment-capacity': { withInstallationSlot: async work => { calls.push({ kind: 'capacity' }); return work(); } },
+    '@/lib/deployment-capacity': { withInstallationSlot: async work => { calls.push({ kind: 'capacity' }); return work(); }, withBuildSlot: async work => { calls.push({ kind: 'build-slot' }); return work(); } },
+    '@/lib/server-memory-policy': require('../lib/server-memory-policy.ts'),
     '@/lib/deployment-schema': { ensureDeploymentSchema: async () => {} },
     '@/lib/security-gate-policy': require('../lib/security-gate-policy.ts'),
     '@/lib/ports': { allocateTemporaryPort: async () => 43217 },
@@ -245,6 +289,22 @@ test('known vulnerabilities fail before installation or building, with branch an
   const commitIndex = calls.findIndex(call => call.kind === 'query' && call.sql.includes('SET commit_sha'));
   const auditIndex = calls.findIndex(call => call.kind === 'build-command' && call.cmd.startsWith('npm audit'));
   assert.ok(commitIndex >= 0 && commitIndex < auditIndex);
+});
+
+test('every build runs inside a build slot, including the retry from scratch', async t => {
+  const { calls } = await pipeline(t, 'build-once');
+  const builds = calls.map((call, index) => call.kind === 'build-command' && call.cmd === 'npm run build' ? index : -1).filter(index => index >= 0);
+  assert.equal(builds.length, 2);
+  for (const index of builds) assert.equal(calls[index - 1].kind, 'build-slot', 'the slot is taken right before each build');
+});
+
+test('an app memory limit caps the Node heap for the test start and the live start, keeping the app\'s own options', async t => {
+  const { calls, root, candidate } = await pipeline(t, undefined, false, { trigger: 'manual' }, false, null, 1024);
+  const starts = calls.filter(call => call.kind === 'command' && call.cmd.startsWith('pm2 start'));
+  assert.ok(starts.some(call => call.cwd === candidate) && starts.some(call => call.cwd === root));
+  for (const start of starts) assert.equal(start.env.NODE_OPTIONS, '--max-old-space-size=768');
+  const { calls: unlimited } = await pipeline(t, undefined);
+  for (const start of unlimited.filter(call => call.kind === 'command' && call.cmd.startsWith('pm2 start'))) assert.equal(start.env.NODE_OPTIONS, undefined);
 });
 
 const securityStatuses = calls => calls.filter(call => call.kind === 'query' && call.sql.includes('SET security_status')).map(call => call.sql.includes("'overridden'") ? 'overridden' : call.sql.includes("'not_applicable'") ? 'not_applicable' : call.values[0]);

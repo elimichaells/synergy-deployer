@@ -52,6 +52,12 @@ Application repositories should also audit with `--include=dev --audit-level=hig
 
 Audit findings can change without source changes. See [npm audit](https://docs.npmjs.com/cli/v11/commands/npm-audit/).
 
+### Builds and memory
+
+Builds take turns and wait for free memory. Each build first needs a build slot (`MANAGER_BUILD_CONCURRENCY`, default 1, at most 4) and at least `MANAGER_BUILD_MIN_FREE_MB` of available memory (default 2048). While waiting, the log shows how much is free and what is needed, and the live release stays online. After 30 minutes of waiting the deployment fails without touching the live app. The retry from scratch after a failed cached build also waits for a slot. Custom deployment scripts are not gated, because install and build happen inside them.
+
+An app can have a memory limit (app Settings > Memory). For Node.js apps it becomes `--max-old-space-size` at three quarters of the limit, added to the app's own `NODE_OPTIONS` and replacing any earlier heap cap; the test start and the live start both use it. A limit applies the next time the app starts. For every app, the manager warns when the app's whole process tree stays over its limit.
+
 ### Temporary advisory exceptions
 
 Manager administrators can create `security-exceptions.json` in Manager's working directory, or set `MANAGER_SECURITY_EXCEPTIONS_FILE` in Manager's own environment to an absolute file path and restart Manager. Protect this file with administrator-only write access. Never place it in an application's checkout. The default file is Git-ignored. An absent file means no exceptions; malformed configuration blocks deployment.

@@ -5,7 +5,8 @@ import { existsSync, readFileSync } from 'fs'
 import { rm, writeFile } from 'fs/promises'
 import path from 'path'
 import { DeploymentRelease, sourceFingerprint } from '@/lib/deployment-release'
-import { withInstallationSlot } from '@/lib/deployment-capacity'
+import { withBuildSlot, withInstallationSlot } from '@/lib/deployment-capacity'
+import { withHeapLimit } from '@/lib/server-memory-policy'
 import { discardSeededCaches, seedBuildCache } from '@/lib/deployment-build-cache'
 import { classifyLocalChanges, inspectLocalChanges, localChangesMessage, recordBuildChanges, restoreGeneratedFiles, type BuildChanges } from '@/lib/deployment-build-changes'
 import { installWithDependencyCache, assertAuditPassed, formatAuditFindings, loadAuditExceptions } from '@/lib/deployment-cache'
@@ -60,6 +61,8 @@ function loadProjectEnvFile(rootPath: string, projectType?: ProjectType | null):
 
 export interface DeployProject {
   id: string
+  /** Memory limit in MB; Node apps get a matching heap cap. Loaded by the engine itself. */
+  memory_limit_mb?: number | null
   name: string
   repo_url: string
   default_branch: string
@@ -212,9 +215,12 @@ function getPm2StartCommand(project: DeployProject, rootPath: string) {
 
 function getRuntimeEnv(project: DeployProject, rootPath: string, databaseEnv: Record<string, string> = {}): Record<string, string> {
   const startCmd = getStartCommand(project)
+  const projectEnv = loadProjectEnvFile(rootPath, project.project_type)
   return {
     ...Object.fromEntries(CONTROL_PLANE_ENV_KEYS.map((key) => [key, ''])),
-    ...loadProjectEnvFile(rootPath, project.project_type),
+    ...projectEnv,
+    // A memory limit caps Node's heap, so a leak restarts this app instead of starving the server.
+    ...(project.memory_limit_mb ? { NODE_OPTIONS: withHeapLimit(projectEnv.NODE_OPTIONS, project.memory_limit_mb) } : {}),
     ...databaseEnv,
     ...projectRuntimeEnvironment(project.runtime_versions),
     HOSTNAME: normalizeProjectType(project.project_type) === 'angular' ? '127.0.0.1' : '0.0.0.0',
@@ -347,6 +353,7 @@ export async function restartWithFreshEnvironment(projectId: string, onProgress?
   const project = rows[0]
   if (!project) throw new Error('Application not found')
   if (!/^[A-Za-z0-9._-]+$/.test(project.pm2_name)) throw new Error('Invalid PM2 application name')
+  project.memory_limit_mb = await memoryLimitOf(project.id)
   const databaseEnv = { ...await getProjectDatabaseEnv(project.id), ...await getProjectDataServiceEnv(project.id) }
   const env = getRuntimeEnv(project, project.root_path, databaseEnv)
   if (normalizeProjectType(project.project_type) === 'laravel') {
@@ -390,7 +397,16 @@ export async function startDeploy(project: DeployProject, options: DeployOptions
   return id
 }
 
+/** The app's memory limit, or none if it is not set or cannot be read. */
+async function memoryLimitOf(projectId: string) {
+  try {
+    const { rows } = await query<{ memory_limit_mb: number | null }>('select memory_limit_mb from projects where id=$1', [projectId])
+    return rows[0]?.memory_limit_mb ?? null
+  } catch { return null }
+}
+
 async function runDeployAsync(project: DeployProject, options: DeployOptions, deploymentId: string): Promise<DeployResult> {
+  project = { ...project, memory_limit_mb: await memoryLimitOf(project.id) }
   activeDeployments.add(deploymentId)
   const started = Date.now()
   let log = '[system] Starting isolated deployment; current release stays online during build\n'
@@ -664,11 +680,12 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
       if (build) {
         // Start from the current release's framework build cache; it is many times faster than a cold build.
         const seeded = await seedBuildCache(project.root_path, root, append)
-        let built = await execute(build)
+        // Builds take turns and wait for free memory, so they cannot starve the running apps.
+        let built = await withBuildSlot(() => execute(build), append, check)
         if (built.code && seeded.length) {
           await append('[build] Build failed with the reused cache; retrying once from scratch\n')
           await discardSeededCaches(seeded)
-          built = await execute(build)
+          built = await withBuildSlot(() => execute(build), append, check)
         }
         if (built.code) throw new Error('Build failed')
       }

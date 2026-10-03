@@ -8,6 +8,7 @@ export function ensureDeploymentSchema() {
     alter table deployments add column if not exists release_path text;
     alter table deployments add column if not exists build_changes jsonb;
     alter table projects add column if not exists security_gate_off_until timestamptz;
+    alter table projects add column if not exists memory_limit_mb integer;
     alter table projects add column if not exists security_gate_off_reason text;
     alter table projects add column if not exists security_gate_off_by uuid;
     alter table projects add column if not exists security_gate_off_at timestamptz;

@@ -84,6 +84,16 @@ export async function register() {
       console.error('[System] Failed to refresh Manager proxy routes:', err)
     }
 
+    // Memory is sampled every minute for the Memory page, its history and its warnings.
+    try {
+      const { ensureServerMemorySchema, memorySamplerTick } = await import('@/lib/server-memory')
+      await ensureServerMemorySchema()
+      setInterval(() => void memorySamplerTick(), 60_000)
+      setTimeout(() => void memorySamplerTick(), 15_000)
+    } catch (err) {
+      console.error('[System] Failed to start memory sampling:', err)
+    }
+
     try {
       const { cronSchedulerTick, recoverInterruptedCronJobs } = await import('@/lib/cron-jobs')
       await recoverInterruptedCronJobs()

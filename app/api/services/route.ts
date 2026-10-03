@@ -5,6 +5,7 @@ import { query } from '@/lib/db'
 import { getSessionFromCookie } from '@/lib/auth'
 import { requireRole } from '@/lib/rbac'
 import { jsonError } from '@/lib/api'
+import { currentMemorySnapshot } from '@/lib/server-memory'
 
 const execAsync = promisify(exec)
 
@@ -33,6 +34,9 @@ export async function GET() {
     })
 
     const pm2List: PM2Process[] = JSON.parse(stdout)
+    // PM2 only measures the process it launched; apps started through the runner are a chain of
+    // processes, so memory comes from the whole tree when it can be read.
+    const treeMemory = new Map((await currentMemorySnapshot(60_000).catch(() => null))?.apps.map(app => [app.name, app.privateMb]) ?? [])
 
     const { rows: projects } = await query<{
       id: string
@@ -71,7 +75,7 @@ export async function GET() {
         pm2Process.pm2_env.status === 'errored' ? 'errored' : 'stopped'
 
       const cpu = Math.round(pm2Process.monit?.cpu || 0)
-      const memory = Math.round((pm2Process.monit?.memory || 0) / 1024 / 1024)
+      const memory = treeMemory.get(app.pm2_name) ?? Math.round((pm2Process.monit?.memory || 0) / 1024 / 1024)
 
       return {
         id: app.id,

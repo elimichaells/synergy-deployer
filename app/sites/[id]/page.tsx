@@ -12,6 +12,7 @@ import { Switch } from '@/components/ui/switch'
 import { AppToolGrid } from '@/components/app/app-tools'
 import { PromoteSheet } from '@/components/app/promote-sheet'
 import { SecurityGateBanner, SecurityGateSetting, useSecurityGate } from '@/components/app/security-gate'
+import { MemorySetting } from '@/components/app/memory-setting'
 import { AppShell } from '@/components/layout/app-shell'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { EnvEditor } from '@/components/env-editor'
@@ -1045,6 +1046,10 @@ export default function SitePage() {
                 {githubConnections.map(connection => <option key={connection.id} value={connection.id}>{connection.name} (@{connection.account_login})</option>)}
               </select></label>
             </div>
+          </Section>
+
+          <Section id="memory" title="Memory" description="How much memory this app uses, and a limit so a leak cannot starve the whole server.">
+            <MemorySetting projectId={project.id} canWrite={canWrite} />
           </Section>
 
           <Section title="Security gate" description="Stops a release that would put packages with serious known vulnerabilities online.">
