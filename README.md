@@ -126,6 +126,15 @@ verifies the new login, backs up and rewrites the apps' env files, and restarts
 each app with a health check. If any app does not come back healthy, the env
 files, ownership and user are all put back.
 
+### Install anywhere on Windows (2.13.0)
+
+The manager no longer assumes C:\web. Apps, tools, backups, helper scripts and
+Caddy logs all follow the folders chosen at install time (MANAGER_WEB_ROOT, or
+the folder above the manager), and PostgreSQL and MySQL are found wherever they
+are installed. The installer records the chosen web root and a Caddy log folder
+and runs on Windows Server and Windows 10/11. Existing installs keep their
+current locations without any change.
+
 ### Database server memory (2.12.0)
 
 Infrastructure > Memory shows each database server on the machine with its
