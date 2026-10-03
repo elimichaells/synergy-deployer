@@ -4,7 +4,9 @@ const path = require('path')
 
 const managerRoot = process.env.MANAGER_ROOT || path.resolve(__dirname, '..')
 require('dotenv').config({ path: path.join(managerRoot, '.env.local'), quiet: true })
-const executable = process.env.PGWEB_EXE || 'C:\\web\\tools\\pgweb\\pgweb.exe'
+// The tools folder sits beside the manager folder unless configured otherwise.
+const webRoot = process.env.MANAGER_WEB_ROOT || process.env.CADDY_PATH || path.dirname(managerRoot)
+const executable = process.env.PGWEB_EXE || path.join(process.env.MANAGER_TOOLS_ROOT || path.join(webRoot, 'tools'), 'pgweb', 'pgweb.exe')
 const secret = process.env.JWT_SECRET
 const pgwebPort = process.env.PGWEB_PORT || '8432'
 const managerPort = process.env.MANAGER_PORT || '4000'

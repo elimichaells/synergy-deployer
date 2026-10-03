@@ -1,4 +1,6 @@
+import path from 'path'
 import { query } from '@/lib/db'
+import { backupsRoot, postgresBin, webRoot } from '@/lib/paths'
 
 export type SettingKey =
   | 'PRODUCTION_PATH'
@@ -13,18 +15,19 @@ export type SettingKey =
   | 'BACKUP_LAST_RUN'
   | 'PG_BIN_PATH'
 
+// Defaults follow the install folders, so a manager installed elsewhere needs no extra settings.
 const DEFAULTS: Record<SettingKey, string> = {
-  PRODUCTION_PATH: 'C:\\web\\production',
-  STAGING_PATH: 'C:\\web\\staging',
-  LOGS_PATH: 'C:\\web\\logs',
-  CADDY_PATH: 'C:\\web',
+  PRODUCTION_PATH: path.join(webRoot(), 'production'),
+  STAGING_PATH: path.join(webRoot(), 'staging'),
+  LOGS_PATH: path.join(webRoot(), 'logs'),
+  CADDY_PATH: webRoot(),
   GITHUB_TOKEN: '',
   NOTIFY_WEBHOOK_URL: '',
-  BACKUP_DIR: 'C:\\web\\backups\\postgres',
+  BACKUP_DIR: path.join(backupsRoot(), 'postgres'),
   BACKUP_ENABLED: 'false',
   BACKUP_RETENTION_DAYS: '14',
   BACKUP_LAST_RUN: '',
-  PG_BIN_PATH: 'C:\\Program Files\\PostgreSQL\\18\\bin',
+  PG_BIN_PATH: postgresBin() ?? 'C:\\Program Files\\PostgreSQL\\18\\bin',
 }
 
 // In-memory cache with TTL

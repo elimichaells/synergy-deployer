@@ -1,4 +1,12 @@
 import { spawn, execSync } from 'child_process'
+import { toolPathEntries } from './paths'
+
+// Installed tools rarely change while the manager runs; look them up once a minute at most.
+let toolPathCache: { at: number; entries: string[] } | null = null
+function toolPaths() {
+  if (!toolPathCache || Date.now() - toolPathCache.at > 60_000) toolPathCache = { at: Date.now(), entries: toolPathEntries() }
+  return toolPathCache.entries
+}
 
 export interface CommandResult {
   code: number
@@ -68,13 +76,8 @@ export function runCommand(
       resolve({ code: 1, output })
       return
     }
-    const pathEntries = [
-      'C:\\Program Files\\Go\\bin',
-      'C:\\Program Files\\PostgreSQL\\18\\bin',
-      'C:\\ProgramData\\chocolatey\\bin',
-      'C:\\tools\\mysql\\current\\bin',
-      process.env.APPDATA ? `${process.env.APPDATA}\\npm` : '',
-    ].filter(Boolean)
+    // Go, PostgreSQL, Chocolatey, MySQL and npm tools, wherever they are installed on this machine.
+    const pathEntries = toolPaths()
     const requestedPath = env?.Path || env?.PATH || ''
     const managedPath = [requestedPath, ...pathEntries, process.env.Path || process.env.PATH || ''].filter(Boolean).join(';')
     const systemEnv: NodeJS.ProcessEnv = { NODE_ENV: process.env.NODE_ENV || 'production' }

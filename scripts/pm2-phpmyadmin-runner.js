@@ -8,7 +8,11 @@ const envFile = path.join(managerRoot, '.env.local')
 const managerConfig = fs.existsSync(envFile) ? require('dotenv').parse(fs.readFileSync(envFile)) : {}
 
 const php = process.env.PHPMYADMIN_PHP || 'php.exe'
-const root = process.env.PHPMYADMIN_ROOT || 'C:/web/tools/phpmyadmin'
+// Tools and temporary files sit beside the manager folder unless configured otherwise.
+const webRoot = managerConfig.MANAGER_WEB_ROOT || managerConfig.CADDY_PATH || process.env.MANAGER_WEB_ROOT || process.env.CADDY_PATH || path.dirname(managerRoot)
+const root = process.env.PHPMYADMIN_ROOT || managerConfig.PHPMYADMIN_ROOT || path.join(managerConfig.MANAGER_TOOLS_ROOT || path.join(webRoot, 'tools'), 'phpmyadmin')
+const tempDir = path.join(webRoot, 'temp', 'phpmyadmin')
+const sessionDir = path.join(webRoot, 'temp', 'phpmyadmin-sessions')
 const port = process.env.PHPMYADMIN_PORT || '8433'
 const managerDomain = managerConfig.MANAGER_DOMAIN || process.env.MANAGER_DOMAIN || 'deploy.smartcloudgh.com'
 const secret = managerConfig.JWT_SECRET || process.env.JWT_SECRET
@@ -18,7 +22,7 @@ if (!secret || !fs.existsSync(path.join(root, 'index.php'))) {
   process.exit(1)
 }
 
-for (const directory of ['C:/web/temp/phpmyadmin', 'C:/web/temp/phpmyadmin-sessions']) {
+for (const directory of [tempDir, sessionDir]) {
   fs.mkdirSync(directory, { recursive: true })
 }
 
@@ -36,8 +40,9 @@ const child = spawn(php, ['-S', `127.0.0.1:${port}`, '-t', root], {
     PATH: process.env.Path || process.env.PATH,
     PHPMYADMIN_BLOWFISH_SECRET: createHmac('sha256', secret).update('manager:phpmyadmin').digest('hex'),
     PHPMYADMIN_PUBLIC_URL: `https://${managerDomain}/mysql/`,
-    PHPMYADMIN_TEMP_DIR: 'C:/web/temp/phpmyadmin',
-    PHPMYADMIN_SESSION_DIR: 'C:/web/temp/phpmyadmin-sessions',
+    // phpMyAdmin's config reads these with forward slashes.
+    PHPMYADMIN_TEMP_DIR: tempDir.split(path.sep).join('/'),
+    PHPMYADMIN_SESSION_DIR: sessionDir.split(path.sep).join('/'),
     PHPMYADMIN_DB_HOST: managerConfig.PHPMYADMIN_DB_HOST || process.env.PHPMYADMIN_DB_HOST || '127.0.0.1',
     PHPMYADMIN_DB_PORT: managerConfig.PHPMYADMIN_DB_PORT || process.env.PHPMYADMIN_DB_PORT || '3306',
   },

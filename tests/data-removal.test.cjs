@@ -79,7 +79,7 @@ test('real PostgreSQL: removal eligibility, foreign keys and concurrent operatio
     const database = { db: pool, query: (sql, params) => pool.query(sql, params) };
     const projectOperation = load('lib/project-operation.ts', { '@/lib/db': database, '@/lib/api': { ApiError } });
     const migrations = load('lib/data-migrations.ts', {
-      '@/lib/api': { ApiError }, '@/lib/db': database, '@/lib/exec': {}, '@/lib/secret-crypto': {}, '@/lib/data-removal-policy': policy,
+      '@/lib/api': { ApiError }, '@/lib/db': database, '@/lib/exec': {}, '@/lib/secret-crypto': {}, '@/lib/data-removal-policy': policy, '@/lib/paths': require('../lib/paths.ts'),
     });
     const services = load('lib/data-services.ts', {
       '@/lib/api': { ApiError }, '@/lib/db': database, '@/lib/secret-crypto': {}, '@/lib/data-removal-policy': policy,

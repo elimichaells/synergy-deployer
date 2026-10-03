@@ -2,8 +2,9 @@ import { mkdtemp, readFile, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import path from 'path'
 import { runCommand } from './exec'
+import { caddyLogDir, webRoot } from './paths'
 
-const CADDY_ROOT = process.env.CADDY_PATH || 'c:\\web'
+const CADDY_ROOT = process.env.CADDY_PATH || webRoot()
 const CADDYFILE_PATH = process.env.CADDYFILE_PATH || path.join(CADDY_ROOT, 'Caddyfile')
 const CADDY_EXE = process.env.CADDY_EXE || path.join(CADDY_ROOT, 'caddy.exe')
 
@@ -121,7 +122,7 @@ function renderWakeHandler() {
 }
 
 export function renderCaddyBlock(domain: string, port: number, stackRoutes: StackDomainRoute[] = [], wake = false) {
-    const logFile = `C:\\Caddy\\logs\\${domain.replace(/\./g, '-')}-error.log`
+    const logFile = path.join(caddyLogDir(), `${domain.replace(/\./g, '-')}-error.log`)
     const stack = [...stackRoutes]
         .sort((a, b) => b.path_prefix.length - a.path_prefix.length || a.path_prefix.localeCompare(b.path_prefix))
         .map((route, index): CaddyProxyRoute => ({
@@ -144,7 +145,7 @@ ${domain} {
 ${proxyBlock}
 ${wake ? renderWakeHandler() : ''}
 \tlog {
-\t\toutput file ${logFile} {
+\t\toutput file ${/\s/.test(logFile) ? `"${logFile}"` : logFile} {
 \t\t\troll_size 10MB
 \t\t\troll_keep 5
 \t\t}

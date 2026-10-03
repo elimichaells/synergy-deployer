@@ -1,10 +1,10 @@
 [CmdletBinding()]
-param([switch]$Latest)
+param([switch]$Latest, [string]$ToolsRoot = 'C:\web\tools')
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-$installRoot = 'C:\web\tools\phpmyadmin'
-$toolsRoot = [IO.Path]::GetFullPath('C:\web\tools')
+$installRoot = Join-Path $ToolsRoot 'phpmyadmin'
+$toolsRoot = [IO.Path]::GetFullPath($ToolsRoot)
 $targetRoot = [IO.Path]::GetFullPath($installRoot)
 if (-not $targetRoot.StartsWith($toolsRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Invalid phpMyAdmin installation path' }
 

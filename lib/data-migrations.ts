@@ -9,6 +9,7 @@ import { killProcessTree } from '@/lib/exec'
 import { decryptSecret } from '@/lib/secret-crypto'
 import type { DataProvider } from '@/lib/data-services'
 import { migrationRemovalReason } from '@/lib/data-removal-policy'
+import { toolsRoot } from '@/lib/paths'
 
 export const RELATIONAL_MIGRATION_PROVIDERS = ['postgresql', 'mysql', 'mariadb', 'sqlserver'] as const
 type RelationalProvider = typeof RELATIONAL_MIGRATION_PROVIDERS[number]
@@ -259,7 +260,7 @@ export async function deleteDataMigration(id: string) {
 }
 
 function slingExecutable() {
-  const configured = process.env.SLING_EXE || 'C:\\web\\tools\\sling\\sling.exe'
+  const configured = process.env.SLING_EXE || path.join(toolsRoot(), 'sling', 'sling.exe')
   if (!existsSync(configured)) throw new ApiError('Install the Sling migration engine from Settings before starting a migration', 409)
   return configured
 }

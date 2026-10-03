@@ -3,7 +3,7 @@ const test = require('node:test');
 const load = require('./server-module.cjs');
 
 test('a sleeping staging site sends Caddy errors to the wake page; other sites are unchanged', () => {
-  const caddy = load('lib/caddy.ts', { './exec': { runCommand: async () => ({ code: 0, output: '' }) } });
+  const caddy = load('lib/caddy.ts', { './exec': { runCommand: async () => ({ code: 0, output: '' }) }, './paths': require('../lib/paths.ts') });
   const plain = caddy.renderCaddyBlock('staging.example.com', 4002);
   const asleep = caddy.renderCaddyBlock('staging.example.com', 4002, [], true);
   assert.ok(!plain.includes('handle_errors'));

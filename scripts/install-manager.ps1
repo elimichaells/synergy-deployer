@@ -197,7 +197,7 @@ $script:Config = if ($ConfigPath) {
     Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
 } else { [pscustomobject]@{} }
 
-Write-Host 'Manager for Windows Server' -ForegroundColor White
+Write-Host 'Manager for Windows Server and Windows 10/11' -ForegroundColor White
 Write-Host 'Preflight, installation, configuration, and verification wizard' -ForegroundColor DarkGray
 
 $managerDomain = [string](Get-Setting 'ManagerDomain' $null -Required)
@@ -232,6 +232,8 @@ $installPhpMyAdmin = @($optionalEngines | Where-Object { $_ -in @('mysql','maria
 $postgresPackage = [string](Get-Setting 'PostgreSqlPackage' 'postgresql18')
 $caddyExe = Join-Path $webRoot 'caddy.exe'
 $caddyfile = Join-Path $webRoot 'Caddyfile'
+# Earlier installs logged to C:\Caddy\logs; keep using it there so existing sites stay consistent.
+$caddyLogDir = [string](Get-Setting 'CaddyLogDir' $(if (Test-Path -LiteralPath 'C:\Caddy\logs') { 'C:\Caddy\logs' } else { Join-Path $webRoot 'logs\caddy' }))
 $pm2Home = Join-Path $env:ProgramData 'Manager\pm2'
 $reportPath = Join-Path $env:ProgramData 'Manager\install-report.json'
 if ($Plan -and -not $adminPassword) { $adminPassword = 'PLAN_ONLY' }
@@ -328,7 +330,7 @@ if ($optionalEngines -contains 'redis') {
 if (-not (Test-Command 'pm2.cmd')) { Invoke-Native 'npm.cmd' @('install','--global','pm2') 'Install PM2' }
 
 Write-Step 'Preparing directories and application files'
-@($webRoot,$managerRoot,(Join-Path $webRoot 'production'),(Join-Path $webRoot 'staging'),(Join-Path $webRoot 'logs'),(Join-Path $webRoot 'tools'),(Join-Path $env:ProgramData 'Manager'),$pm2Home,'C:\Caddy\logs') |
+@($webRoot,$managerRoot,(Join-Path $webRoot 'production'),(Join-Path $webRoot 'staging'),(Join-Path $webRoot 'logs'),(Join-Path $webRoot 'tools'),(Join-Path $env:ProgramData 'Manager'),$pm2Home,$caddyLogDir) |
     ForEach-Object { New-Item -ItemType Directory -Force -Path $_ | Out-Null }
 if ([IO.Path]::GetFullPath($packageRoot).TrimEnd('\') -ne [IO.Path]::GetFullPath($managerRoot).TrimEnd('\')) {
     & robocopy.exe $packageRoot $managerRoot /MIR /XD .git node_modules .next packages /XF .env.local *.log /NFL /NDL /NJH /NJS
@@ -381,6 +383,8 @@ try {
         'STAGING_PATH=' + (Join-Path $webRoot 'staging').Replace('\','\\')
         'LOGS_PATH=' + (Join-Path $webRoot 'logs').Replace('\','\\')
         'CADDY_PATH=' + $webRoot.Replace('\','\\')
+        'MANAGER_WEB_ROOT=' + $webRoot.Replace('\','\\')
+        'CADDY_LOG_DIR=' + $caddyLogDir.Replace('\','\\')
         'CADDYFILE_PATH=' + $caddyfile.Replace('\','\\')
         'CADDY_EXE=' + $caddyExe.Replace('\','\\')
         'PGWEB_EXE=' + (Join-Path $webRoot 'tools\pgweb\pgweb.exe').Replace('\','\\')
@@ -442,7 +446,7 @@ $managerRoutes
         }
     }
     log {
-        output file C:\Caddy\logs\$($managerDomain.Replace('.','-'))-error.log {
+        output file "$(Join-Path $caddyLogDir ($managerDomain.Replace('.','-') + '-error.log'))" {
             roll_size 10MB
             roll_keep 5
         }

@@ -3,6 +3,11 @@ import path from 'path'
 import { db, query } from '@/lib/db'
 import { runCommand } from '@/lib/exec'
 import { ApiError } from '@/lib/api'
+import { managerScript, mysqlBin, postgresBin, toolsRoot, webRoot } from '@/lib/paths'
+
+/** A PowerShell helper from the manager's scripts folder, wherever the manager is installed. */
+const managerPowerShell = (script: string, args = '') => `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "${managerScript(script)}"${args}`
+const toolPath = (...parts: string[]) => path.join(toolsRoot(), ...parts)
 
 export type RuntimeId = 'git' | 'node' | 'go' | 'python' | 'angular' | 'php' | 'composer' | 'postgresql' | 'caddy' | 'sling' | 'mysql' | 'mariadb' | 'sqlserver' | 'mongodb' | 'redis' | 'phpmyadmin'
 export type VersionedRuntimeId = 'node' | 'php' | 'go'
@@ -42,11 +47,11 @@ const definitions: RuntimeDefinition[] = [
   { id: 'angular', name: 'Angular CLI', purpose: 'Host convenience CLI; project-local Angular remains preferred', command: 'ng', versionCommand: 'ng version', installCommand: 'cmd /c npm.cmd install -g @angular/cli', updateCommand: 'cmd /c npm.cmd install -g @angular/cli@latest', candidates: [process.env.APPDATA ? `${process.env.APPDATA}\\npm\\ng.cmd` : ''] },
   { id: 'php', name: 'PHP', purpose: 'Host default for Laravel and PHP applications', command: 'php', versionCommand: 'php --version', packageName: 'php', installCommand: 'choco install php -y', updateCommand: 'choco upgrade php -y' },
   { id: 'composer', name: 'Composer', purpose: 'PHP dependency management', command: 'composer', versionCommand: 'composer --version', packageName: 'composer', installCommand: 'choco install composer -y', updateCommand: 'choco upgrade composer -y' },
-  { id: 'postgresql', name: 'PostgreSQL tools', purpose: 'psql, pg_dump, and pg_restore', command: 'psql', versionCommand: 'psql --version', installCommand: null, updateCommand: null, candidates: ['C:\\Program Files\\PostgreSQL\\18\\bin\\psql.exe'] },
-  { id: 'caddy', name: 'Caddy', purpose: 'Reverse proxy and automatic TLS', command: 'caddy', versionCommand: 'caddy version', packageName: 'caddy', installCommand: 'choco install caddy -y', updateCommand: 'choco upgrade caddy -y', candidates: [process.env.CADDY_EXE || 'C:\\web\\caddy.exe'] },
-  { id: 'sling', name: 'Sling migration engine', purpose: 'Verified cross-provider database transfer runtime', command: 'sling', versionCommand: 'sling --version', installCommand: 'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "C:\\web\\manager\\scripts\\install-sling.ps1"', updateCommand: 'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "C:\\web\\manager\\scripts\\install-sling.ps1" -Latest', candidates: [process.env.SLING_EXE || 'C:\\web\\tools\\sling\\sling.exe'] },
-  { id: 'mysql', name: 'MySQL', purpose: 'Project database engine with secured phpMyAdmin access', command: 'mysql', versionCommand: 'mysql --version', packageName: 'mysql', installCommand: 'choco install mysql -y', updateCommand: 'choco upgrade mysql -y', candidates: ['C:\\tools\\mysql\\current\\bin\\mysql.exe'] },
-  { id: 'phpmyadmin', name: 'phpMyAdmin', purpose: 'Admin-only web client for MySQL and MariaDB', command: 'manager-phpmyadmin', versionCommand: `powershell.exe -NoLogo -NoProfile -Command "Get-Content -LiteralPath 'C:\\web\\tools\\phpmyadmin\\VERSION' -TotalCount 1"`, installCommand: 'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "C:\\web\\manager\\scripts\\install-phpmyadmin.ps1"', updateCommand: 'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "C:\\web\\manager\\scripts\\install-phpmyadmin.ps1" -Latest' },
+  { id: 'postgresql', name: 'PostgreSQL tools', purpose: 'psql, pg_dump, and pg_restore', command: 'psql', versionCommand: 'psql --version', installCommand: null, updateCommand: null, candidates: [path.join(postgresBin() ?? 'C:\\Program Files\\PostgreSQL\\18\\bin', 'psql.exe')] },
+  { id: 'caddy', name: 'Caddy', purpose: 'Reverse proxy and automatic TLS', command: 'caddy', versionCommand: 'caddy version', packageName: 'caddy', installCommand: 'choco install caddy -y', updateCommand: 'choco upgrade caddy -y', candidates: [process.env.CADDY_EXE || path.join(webRoot(), 'caddy.exe')] },
+  { id: 'sling', name: 'Sling migration engine', purpose: 'Verified cross-provider database transfer runtime', command: 'sling', versionCommand: 'sling --version', installCommand: managerPowerShell('install-sling.ps1', ` -InstallDirectory "${toolPath('sling')}"`), updateCommand: managerPowerShell('install-sling.ps1', ` -InstallDirectory "${toolPath('sling')}" -Latest`), candidates: [process.env.SLING_EXE || toolPath('sling', 'sling.exe')] },
+  { id: 'mysql', name: 'MySQL', purpose: 'Project database engine with secured phpMyAdmin access', command: 'mysql', versionCommand: 'mysql --version', packageName: 'mysql', installCommand: 'choco install mysql -y', updateCommand: 'choco upgrade mysql -y', candidates: [path.join(mysqlBin() ?? 'C:\\tools\\mysql\\current\\bin', 'mysql.exe')] },
+  { id: 'phpmyadmin', name: 'phpMyAdmin', purpose: 'Admin-only web client for MySQL and MariaDB', command: 'manager-phpmyadmin', versionCommand: `powershell.exe -NoLogo -NoProfile -Command "Get-Content -LiteralPath '${toolPath('phpmyadmin', 'VERSION')}' -TotalCount 1"`, installCommand: managerPowerShell('install-phpmyadmin.ps1', ` -ToolsRoot "${toolsRoot()}"`), updateCommand: managerPowerShell('install-phpmyadmin.ps1', ` -ToolsRoot "${toolsRoot()}" -Latest`) },
   { id: 'mariadb', name: 'MariaDB', purpose: 'Project database engine with secured phpMyAdmin access', command: 'mariadb', versionCommand: 'mariadb --version', packageName: 'mariadb', installCommand: 'choco install mariadb -y', updateCommand: 'choco upgrade mariadb -y' },
   { id: 'sqlserver', name: 'SQL Server tools', purpose: 'SQL Server project database administration', command: 'sqlcmd', versionCommand: 'sqlcmd -?', packageName: 'sql-server-express', installCommand: 'choco install sql-server-express -y', updateCommand: 'choco upgrade sql-server-express -y' },
   { id: 'mongodb', name: 'MongoDB', purpose: 'Optional document database engine', command: 'mongod', versionCommand: 'mongod --version', packageName: 'mongodb', installCommand: 'choco install mongodb -y', updateCommand: 'choco upgrade mongodb -y' },
@@ -119,7 +124,7 @@ async function inspectRuntime(definition: RuntimeDefinition) {
 }
 
 export function getInstalledRuntimeVersions(id: VersionedRuntimeId) {
-  const root = path.join('C:\\web\\tools', id)
+  const root = toolPath(id)
   if (!existsSync(root)) return []
   const executablePath = (version: string) => id === 'node'
     ? path.join(root, version, 'node.exe')
@@ -139,7 +144,7 @@ export function projectRuntimeEnvironment(runtimeVersions: Record<string, unknow
     if (!/^\d+\.\d+\.\d+$/.test(version) || !getInstalledRuntimeVersions(id).includes(version)) {
       throw new Error(`${id} ${version} is not installed on this host`)
     }
-    const root = path.join('C:\\web\\tools', id, version)
+    const root = toolPath(id, version)
     paths.push(id === 'go' ? path.join(root, 'bin') : root)
     selected[`MANAGER_${id.toUpperCase()}_VERSION`] = version
   }
@@ -216,7 +221,7 @@ function runtimeJobCommand(runtimeId: RuntimeId, action: RuntimeJobAction, reque
   const definition = definitionFor(runtimeId)
   if (action === 'install-version') {
     if (!versionedRuntimeIds.includes(runtimeId as VersionedRuntimeId) || !requestedVersion || !/^\d+\.\d+\.\d+$/.test(requestedVersion)) throw new ApiError('Choose a valid side-by-side runtime version', 400)
-    return `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "C:\\web\\manager\\scripts\\install-runtime-version.ps1" -Runtime ${runtimeId} -Version ${requestedVersion}`
+    return managerPowerShell('install-runtime-version.ps1', ` -Runtime ${runtimeId} -Version ${requestedVersion} -InstallRoot "${toolsRoot()}"`)
   }
   if (action === 'configure') {
     if (runtimeId !== 'mysql') throw new ApiError('This runtime has no Manager configuration step', 400)
@@ -228,13 +233,13 @@ function runtimeJobCommand(runtimeId: RuntimeId, action: RuntimeJobAction, reque
 }
 
 async function activatePhpMyAdmin(jobId: string, installIfMissing: boolean) {
-  const versionFile = 'C:\\web\\tools\\phpmyadmin\\VERSION'
+  const versionFile = toolPath('phpmyadmin', 'VERSION')
   if (!existsSync(versionFile)) {
     if (!installIfMissing) throw new Error('phpMyAdmin installation did not produce a version marker')
     await appendRuntimeLog(jobId, '[dependency] Installing the secured phpMyAdmin client for this database engine\n')
     let logQueue = Promise.resolve()
     const installer = await runCommand(
-      'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "C:\\web\\manager\\scripts\\install-phpmyadmin.ps1"',
+      managerPowerShell('install-phpmyadmin.ps1', ` -ToolsRoot "${toolsRoot()}"`),
       undefined,
       10 * 60_000,
       (chunk) => { logQueue = logQueue.then(() => appendRuntimeLog(jobId, chunk)) },

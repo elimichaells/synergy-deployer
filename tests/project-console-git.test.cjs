@@ -55,7 +55,7 @@ test('non-GitHub repositories do not retrieve a token; public repositories can w
 });
 
 test('secret redaction survives every chunk boundary and redacts truncated credentials', () => {
-  const { secretRedactor } = load('lib/exec.ts', {});
+  const { secretRedactor } = load('lib/exec.ts', { './paths': require('../lib/paths.ts') });
   for (const secret of [token, basic]) {
     for (let cut = 1; cut < secret.length; cut++) {
       let output = '';
@@ -74,7 +74,7 @@ test('secret redaction survives every chunk boundary and redacts truncated crede
 
 test('direct Git execution retains cancellation and redacts both streams and retained output', async () => {
   let child, options, executable, args; const killed = [];
-  const api = load('lib/exec.ts', { child_process: {
+  const api = load('lib/exec.ts', { './paths': require('../lib/paths.ts'), child_process: {
     spawn: (file, argv, opts) => {
       executable = file; args = argv; options = opts;
       child = new EventEmitter(); child.pid = 12345; child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); return child;

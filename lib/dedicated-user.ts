@@ -9,6 +9,7 @@ import { connectionPassword, getSecretConnection } from '@/lib/data-services'
 import { databaseKey } from '@/lib/database-discovery-policy'
 import { ownershipStatement, quoteIdent, rewriteEnvCredentials, roleNameFor, type OwnedObject } from '@/lib/dedicated-user-policy'
 import { discoverDatabases, getStorageDatabase } from '@/lib/storage'
+import { envBackupDir } from '@/lib/paths'
 
 // Moves a database from a superuser login to a dedicated, limited database user:
 // create the user, hand it ownership of the app's objects, then switch each app's
@@ -191,7 +192,7 @@ export async function convertToDedicatedUser(serviceId: string, userId?: string 
     const stamp = new Date().toISOString().replace(/[-:.]/g, '')
     for (const app of plan.apps) {
       const { rows } = await query<{ root_path: string }>('select root_path from projects where id=$1', [app.projectId])
-      const backupDirectory = path.join(process.env.MANAGER_ENV_BACKUP_DIR || 'C:\\web\\backups\\manager-env', app.projectId)
+      const backupDirectory = path.join(envBackupDir(), app.projectId)
       await mkdir(backupDirectory, { recursive: true })
       for (const { file } of app.files) {
         const full = path.join(rows[0].root_path, file)
@@ -202,7 +203,7 @@ export async function convertToDedicatedUser(serviceId: string, userId?: string 
         backups.push({ full, original })
       }
     }
-    steps.push(`Updated ${backups.length} env file(s); originals saved under ${process.env.MANAGER_ENV_BACKUP_DIR || 'C:\\web\\backups\\manager-env'}`)
+    steps.push(`Updated ${backups.length} env file(s); originals saved under ${envBackupDir()}`)
 
     const { restartWithFreshEnvironment } = await import('@/lib/deploy')
     const restarted: string[] = []

@@ -10,6 +10,7 @@ import { query } from '@/lib/db'
 import { runCommand } from '@/lib/exec'
 import { requireRole } from '@/lib/rbac'
 import { projectRuntimeEnvironment } from '@/lib/runtimes'
+import { envBackupDir } from '@/lib/paths'
 
 const ALLOWED_ENV_FILES = ['.env', '.env.local']
 const MANAGED_START = '# >>> Manager project data services'
@@ -127,7 +128,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       await readFile(filePath, 'utf8')
       const timestamp = new Date().toISOString().replace(/[-:.]/g, '')
       backupFile = `${fileName.replace(/^\./, '')}-${timestamp}.bak`
-      const backupDirectory = path.join(process.env.MANAGER_ENV_BACKUP_DIR || 'C:\\web\\backups\\manager-env', projectId)
+      const backupDirectory = path.join(envBackupDir(), projectId)
       await mkdir(backupDirectory, { recursive: true })
       await copyFile(filePath, path.join(backupDirectory, backupFile))
     } catch (error) {
