@@ -71,7 +71,7 @@ test('a cancelled deployment stops waiting for memory without building', async (
   await assert.rejects(api.withBuildSlot(async () => assert.fail('must not build'), () => {}, () => { if (++checks > 2) throw new Error('cancelled'); }, () => 100, 5), /cancelled/);
 });
 
-async function pipeline(t, failure, cacheHit = false, options = { trigger: 'manual' }, notAncestor = false, gateOffReason = null, memoryLimit = null) {
+async function pipeline(t, failure, cacheHit = false, options = { trigger: 'manual' }, notAncestor = false, gateOffReason = null, memoryLimit = null, extra = {}) {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'manager-pipeline-test-'));
   t.after(async () => { assert.ok(base.startsWith(path.resolve(os.tmpdir()) + path.sep)); await fs.rm(base, { recursive: true, force: true }); });
   const root = path.join(base, 'live'); const candidate = path.join(base, 'candidate');
@@ -80,16 +80,17 @@ async function pipeline(t, failure, cacheHit = false, options = { trigger: 'manu
   await fs.writeFile(path.join(candidate, '.env'), 'APPLICATION_MARKER=fixture');
   await fs.writeFile(path.join(candidate, 'package.json'), '{}');
   await fs.writeFile(path.join(candidate, 'package-lock.json'), '{}');
+  for (const [name, content] of Object.entries(extra.files || {})) { await fs.writeFile(path.join(root, name), content); await fs.writeFile(path.join(candidate, name), content); }
   const checkout = failure === 'local-edits' || failure === 'generated-files';
   if (checkout) { await fs.mkdir(path.join(root, '.git')); await fs.mkdir(path.join(candidate, '.git')); }
   const calls = []; let status = 'online'; let seq = 0; let previewName; let audits = 0; let builds = 0;
   const project = { id: 'fixture-project', name: 'Fixture', root_path: root, project_type: 'angular', repo_url: 'https://github.com/example/fixture',
-    default_branch: 'main', install_cmd: null, build_cmd: 'npm run build', start_cmd: null, pm2_name: 'fixture-app', port: 3217 };
+    default_branch: 'main', install_cmd: null, build_cmd: 'npm run build', start_cmd: null, pm2_name: 'fixture-app', port: 3217, ...(extra.project || {}) };
   const query = async (sql, values) => {
     calls.push({ kind: 'query', sql, values });
     if (sql.includes('INSERT INTO deployments')) return { rows: [{ id: 'fixture-' + (++seq) }] };
     if (sql.includes('select hostname from project_domains')) return { rows: [{ hostname: 'fixture.example.com' }] };
-    if (sql.includes('select memory_limit_mb from projects')) return { rows: [{ memory_limit_mb: memoryLimit }] };
+    if (sql.includes('select memory_limit_mb, start_method from projects')) return { rows: [{ memory_limit_mb: memoryLimit, start_method: extra.startMethod ?? null }] };
     if (sql.includes('security_gate_off_until')) return { rows: [{ off: gateOffReason ? true : null, reason: gateOffReason }] };
     return { rows: [] };
   };
@@ -163,6 +164,7 @@ async function pipeline(t, failure, cacheHit = false, options = { trigger: 'manu
     },
     '@/lib/deployment-capacity': { withInstallationSlot: async work => { calls.push({ kind: 'capacity' }); return work(); }, withBuildSlot: async work => { calls.push({ kind: 'build-slot' }); return work(); } },
     '@/lib/server-memory-policy': require('../lib/server-memory-policy.ts'),
+    '@/lib/direct-start': require('../lib/direct-start.ts'),
     '@/lib/deployment-schema': { ensureDeploymentSchema: async () => {} },
     '@/lib/security-gate-policy': require('../lib/security-gate-policy.ts'),
     '@/lib/ports': { allocateTemporaryPort: async () => 43217 },
@@ -305,6 +307,32 @@ test('an app memory limit caps the Node heap for the test start and the live sta
   for (const start of starts) assert.equal(start.env.NODE_OPTIONS, '--max-old-space-size=768');
   const { calls: unlimited } = await pipeline(t, undefined);
   for (const start of unlimited.filter(call => call.kind === 'command' && call.cmd.startsWith('pm2 start'))) assert.equal(start.env.NODE_OPTIONS, undefined);
+});
+
+test('an app switched to a direct start is test-started and started directly, without the runner', async t => {
+  const extra = { project: { project_type: 'node', start_cmd: 'node server.js' }, files: { 'server.js': 'require("http").createServer().listen(process.env.PORT)' }, startMethod: 'direct' };
+  const { calls, root, candidate } = await pipeline(t, undefined, false, { trigger: 'manual' }, false, null, null, extra);
+  const starts = calls.filter(call => call.kind === 'command' && call.cmd.startsWith('pm2 start'));
+  assert.equal(starts.length, 2, 'test start and live start');
+  for (const start of starts) {
+    assert.ok(!start.cmd.includes('pm2-runner'), start.cmd);
+    assert.ok(start.cmd.includes('--interpreter node --name') && start.cmd.includes('--kill-timeout 15000'), start.cmd);
+  }
+  assert.ok(starts.find(call => call.cwd === candidate).cmd.startsWith('pm2 start "' + path.join(candidate, 'server.js') + '"'));
+  assert.ok(starts.find(call => call.cwd === root).cmd.startsWith('pm2 start "' + path.join(root, 'server.js') + '"'));
+});
+
+test('an app that was never switched keeps the runner even when it could start directly', async t => {
+  const extra = { project: { project_type: 'node', start_cmd: 'node server.js' }, files: { 'server.js': 'require("http").createServer().listen(process.env.PORT)' } };
+  const { calls } = await pipeline(t, undefined, false, { trigger: 'manual' }, false, null, null, extra);
+  for (const start of calls.filter(call => call.kind === 'command' && call.cmd.startsWith('pm2 start'))) assert.ok(start.cmd.includes('pm2-runner'), start.cmd);
+});
+
+test('a switched app whose start stops qualifying falls back to the runner instead of failing', async t => {
+  const extra = { project: { project_type: 'node', start_cmd: 'node server.js' }, files: { 'server.js': 'require("child_process").spawn(process.execPath)' }, startMethod: 'direct' };
+  const { calls, result } = await pipeline(t, undefined, false, { trigger: 'manual' }, false, null, null, extra);
+  assert.equal(result.status, 'success');
+  for (const start of calls.filter(call => call.kind === 'command' && call.cmd.startsWith('pm2 start'))) assert.ok(start.cmd.includes('pm2-runner'), start.cmd);
 });
 
 const securityStatuses = calls => calls.filter(call => call.kind === 'query' && call.sql.includes('SET security_status')).map(call => call.sql.includes("'overridden'") ? 'overridden' : call.sql.includes("'not_applicable'") ? 'not_applicable' : call.values[0]);

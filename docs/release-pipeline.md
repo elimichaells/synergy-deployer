@@ -58,6 +58,16 @@ Builds take turns and wait for free memory. Each build first needs a build slot 
 
 An app can have a memory limit (app Settings > Memory). For Node.js apps it becomes `--max-old-space-size` at three quarters of the limit, added to the app's own `NODE_OPTIONS` and replacing any earlier heap cap; the test start and the live start both use it. A limit applies the next time the app starts. For every app, the manager warns when the app's whole process tree stays over its limit.
 
+### Start methods
+
+Apps whose start command needs a shell are started through the manager's runner (`scripts/pm2-runner.js`), which costs a Node process, two shells and, for `npm start`, an npm process: about 70 to 130 MB per app. An app can instead be started directly by PM2 when its start is one of: `next start` (run from `node_modules/next`, always on the assigned port), `node <script>` with only `--flag` options, or a native `.exe`; reached directly or through `npm start` / `npm run <name>`, optionally behind `cross-env NAME=value`. It must keep the runner when npm runs a `pre` or `post` script around it, the command uses quotes or shell operators, the app pins its own Node version, it is a PHP app, or its script starts child processes (a parent PM2 stops could leave the child holding the port).
+
+Nothing changes until an app is switched on Infrastructure > Memory. Switching stops the app, waits until its port is free, starts it directly and health-checks it; if it is not healthy it is started through the runner again and the method is not changed. A switched app's deployments then test-start and start it directly. If a later commit makes its start ineligible, deployments fall back to the runner rather than failing.
+
+### Sleeping staging apps
+
+A staging app can sleep after 30 minutes to 8 hours without use (app Settings > Sleep when idle, or Infrastructure > Memory). Use is read once a minute from open inbound connections on the app's port; a deployment also counts. A sleeping app is stopped with PM2 and wakes when it is deployed, when someone presses Wake now, or when someone opens its address: its Caddy site gets a `handle_errors` block that sends a 502 to the manager's public `/api/wake` page, which starts the app and shows a "starting up" page that reloads itself. That page needs no session; it only acts on host names of staging apps with sleeping turned on, and it starts at most one wake per app every 90 seconds. Production apps never sleep.
+
 ### Temporary advisory exceptions
 
 Manager administrators can create `security-exceptions.json` in Manager's working directory, or set `MANAGER_SECURITY_EXCEPTIONS_FILE` in Manager's own environment to an absolute file path and restart Manager. Protect this file with administrator-only write access. Never place it in an application's checkout. The default file is Git-ignored. An absent file means no exceptions; malformed configuration blocks deployment.

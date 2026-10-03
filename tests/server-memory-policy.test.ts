@@ -87,3 +87,12 @@ test('history is thinned for charts without hiding the lowest points', () => {
   assert.ok(thinned.some(point => point.availableMb === 10))
   assert.equal(downsample(history.slice(0, 5), 10).length, 5)
 })
+
+test('launcher processes are counted as overhead, so a direct start shows what it would save', () => {
+  const processes = [
+    { ...proc(10, 0, 'node.exe', 67), launcher: true }, proc(11, 10, 'cmd.exe', 2), { ...proc(12, 11, 'node.exe', 58), launcher: true }, proc(13, 12, 'cmd.exe', 2), proc(14, 13, 'node.exe', 400), proc(15, 14, 'node.exe', 300),
+    proc(20, 0, 'node.exe', 150),
+  ]
+  const { apps } = attributeMemory(processes, new Map([[10, 'runner-app'], [20, 'direct-app']]))
+  assert.deepEqual(apps.map(app => [app.name, app.privateMb, app.overheadMb]), [['runner-app', 829, 129], ['direct-app', 150, 0]])
+})

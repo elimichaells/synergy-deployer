@@ -2,14 +2,19 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { AlertTriangle, ArrowUpRight, CheckCircle2, Info, RefreshCw } from 'lucide-react'
+import { AlertTriangle, ArrowUpRight, CheckCircle2, Info, Loader2, Moon, RefreshCw, Zap } from 'lucide-react'
 import { AppShell } from '@/components/layout/app-shell'
 import { Section } from '@/components/app/section'
+import { SleepSelect, WakeButton } from '@/components/app/staging-sleep'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 interface AppRow { name: string; projectId: string | null; label: string; environment: string | null; privateMb: number; processes: number; limitMb: number | null; peakMb: number }
+interface StartMethodRow { projectId: string; label: string; environment: string | null; state: 'direct' | 'eligible' | 'runner'; overheadMb: number; reason: string | null }
+interface StagingRow { projectId: string; label: string; running: boolean; privateMb: number; sleepAfterMinutes: number | null; sleepingSince: string | null; lastActiveAt: string | null }
 interface Overview {
+  startMethods: StartMethodRow[]
+  staging: StagingRow[]
   snapshot: {
     takenAt: string; totalMb: number; availableMb: number; commitMb: number | null; commitLimitMb: number | null
     pageFileMb: number | null; pageFileUsedMb: number | null; apps: AppRow[]; others: { name: string; count: number; privateMb: number }[]
@@ -102,6 +107,46 @@ export default function MemoryPage() {
   const recentAlerts = data?.alerts.filter(alert => alert.resolved_at) ?? []
   const apps = showAll ? snapshot?.apps ?? [] : (snapshot?.apps ?? []).slice(0, 12)
   const largest = snapshot?.apps[0]?.privateMb || 1
+  const startMethods = data?.startMethods ?? []
+  const eligibleMb = startMethods.filter(row => row.state === 'eligible').reduce((sum, row) => sum + row.overheadMb, 0)
+  const stagingRows = data?.staging ?? []
+  const stagingRunningMb = stagingRows.filter(row => row.running).reduce((sum, row) => sum + row.privateMb, 0)
+
+  const [switching, setSwitching] = useState<string | null>(null)
+  const [results, setResults] = useState<Record<string, { tone: 'ok' | 'error'; text: string }>>({})
+  const [sleepingAll, setSleepingAll] = useState(false)
+  const [sleepWarning, setSleepWarning] = useState<string | null>(null)
+
+  const switchApp = async (row: StartMethodRow, method: 'direct' | 'runner') => {
+    if (!window.confirm(`Restart ${row.label} ${method === 'direct' ? 'without the extra processes' : 'through the runner again'}? It is offline for a few seconds. If it does not come back healthy, it is started again the way it was.`)) return
+    setSwitching(row.projectId)
+    try {
+      const response = await fetch(`/api/sites/${row.projectId}/start-method`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ method }) })
+      const body = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(body.error || 'Could not switch')
+      const result = body.result as { healthy: boolean; reason: string | null; restored: boolean }
+      setResults(current => ({ ...current, [row.projectId]: result.healthy
+        ? { tone: 'ok', text: method === 'direct' ? 'Switched and healthy.' : 'Back on the runner and healthy.' }
+        : { tone: 'error', text: `Did not come back healthy (${result.reason}). ${result.restored ? 'It is running the way it was.' : 'It could not be started the old way either: open its logs.'}` } }))
+      load()
+    } catch (err) {
+      setResults(current => ({ ...current, [row.projectId]: { tone: 'error', text: (err as Error).message } }))
+    } finally { setSwitching(null) }
+  }
+
+  const sleepAll = async () => {
+    const targets = stagingRows.filter(row => !row.sleepAfterMinutes)
+    if (!window.confirm(`Let ${targets.length} staging app${targets.length === 1 ? '' : 's'} sleep after an hour without use? The web server reloads once per app so a visit can wake it.`)) return
+    setSleepingAll(true); setSleepWarning(null)
+    for (const row of targets) {
+      const response = await fetch(`/api/sites/${row.projectId}/sleep`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ minutes: 60 }) }).catch(() => null)
+      const body = await response?.json().catch(() => ({}))
+      if (!response?.ok) { setSleepWarning(`${row.label}: ${body?.error || 'could not be changed'}`); break }
+      if (body?.caddyWarning) setSleepWarning(`${row.label}: ${body.caddyWarning}`)
+    }
+    setSleepingAll(false)
+    load()
+  }
 
   return (
     <AppShell title="Memory" subtitle="What is using this server's memory, how it changed over the last day, and warnings before it runs out." area="infrastructure"
@@ -177,6 +222,51 @@ export default function MemoryPage() {
           {(snapshot.apps.length > 12) && <Button variant="ghost" size="sm" className="mt-3" onClick={() => setShowAll(value => !value)}>{showAll ? 'Show fewer' : `Show all ${snapshot.apps.length} apps`}</Button>}
           <p className="mt-4 flex items-start gap-2 text-xs leading-5 text-muted-foreground"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />A limit caps a Node.js app&apos;s heap, so a leak restarts that one app instead of starving the server. Synergy also warns when an app goes over its limit or keeps growing for hours.</p>
         </Section>
+
+        {startMethods.length > 0 && <Section title="Start apps without extra processes"
+          description={<>Apps started through the manager&apos;s runner also run a launcher, two shells and often npm: memory the app itself does not need. Apps with a simple start can run directly under PM2 instead{eligibleMb > 0 ? <>, which would free about <span className="text-foreground">{gb(eligibleMb)}</span> now</> : null}. Switching restarts the app once; if it does not come back healthy, it is started again the way it was. Later deployments keep the app&apos;s method.</>}>
+          <ul className="divide-y divide-border/60 text-sm">
+            {startMethods.map(row => (
+              <li key={row.projectId} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{row.label}{row.environment === 'staging' && <span className="ml-2 text-xs font-normal text-muted-foreground">Staging</span>}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {row.state === 'direct' ? 'Started directly by PM2' : row.state === 'eligible' ? `Extra processes use ${gb(row.overheadMb)}` : `Keeps the runner: ${row.reason}`}
+                  </span>
+                  {results[row.projectId] && <span role="status" className={cn('mt-1 block text-xs', results[row.projectId].tone === 'ok' ? 'text-status-ready' : 'text-red-300')}>{results[row.projectId].text}</span>}
+                </span>
+                {row.state === 'eligible' && <Button size="sm" variant="outline" disabled={switching !== null} onClick={() => void switchApp(row, 'direct')}>
+                  {switching === row.projectId ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />Restarting…</> : <><Zap className="mr-1.5 h-3.5 w-3.5" />Switch, saves {gb(row.overheadMb)}</>}
+                </Button>}
+                {row.state === 'direct' && <Button size="sm" variant="ghost" disabled={switching !== null} onClick={() => void switchApp(row, 'runner')}>
+                  {switching === row.projectId ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />Restarting…</> : 'Switch back'}
+                </Button>}
+              </li>
+            ))}
+          </ul>
+        </Section>}
+
+        {stagingRows.length > 0 && <Section title="Staging apps"
+          description={<>Running staging apps use {gb(stagingRunningMb)}. Let idle ones sleep to give that memory back. A sleeping app wakes when it is deployed, when you press Wake now, or when someone opens it; they see a short &quot;starting up&quot; page for about as long as a restart takes.</>}
+          action={stagingRows.some(row => !row.sleepAfterMinutes) ? <Button size="sm" variant="outline" disabled={sleepingAll} onClick={() => void sleepAll()}>{sleepingAll ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Moon className="mr-1.5 h-3.5 w-3.5" />}Sleep all after 1 hour idle</Button> : undefined}>
+          {sleepWarning && <p role="alert" className="mb-3 text-xs text-amber-200">{sleepWarning}</p>}
+          <ul className="divide-y divide-border/60 text-sm">
+            {stagingRows.map(row => (
+              <li key={row.projectId} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                <span className="min-w-0 flex-1">
+                  <Link href={`/sites/${row.projectId}?tab=settings#sleep`} className="block truncate font-medium hover:underline">{row.label}</Link>
+                  <span className="block text-xs text-muted-foreground">
+                    {row.sleepingSince ? `Asleep since ${when(row.sleepingSince)}` : row.running ? `Running, ${gb(row.privateMb)}${row.sleepAfterMinutes && row.lastActiveAt ? ` · last used ${when(row.lastActiveAt)}` : ''}` : 'Stopped'}
+                  </span>
+                </span>
+                <span className="flex items-center gap-2">
+                  {row.sleepingSince && <WakeButton projectId={row.projectId} onWoken={load} />}
+                  <SleepSelect projectId={row.projectId} minutes={row.sleepAfterMinutes} onChanged={(_, warning) => { setSleepWarning(warning ? `${row.label}: ${warning}` : null); load() }} />
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Section>}
 
         <Section title="Everything else" description="Programs on this server that are not apps managed here.">
           <ul className="divide-y divide-border/60 text-sm">

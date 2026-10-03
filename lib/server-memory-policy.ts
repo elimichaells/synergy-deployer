@@ -2,8 +2,10 @@
 
 const MB = 1024 * 1024
 
-export interface ProcessRow { pid: number; ppid: number; name: string; privateBytes: number; workingBytes: number; started?: number }
-export interface AppMemory { name: string; privateMb: number; workingMb: number; processes: number }
+export interface ProcessRow { pid: number; ppid: number; name: string; privateBytes: number; workingBytes: number; started?: number
+  /** Starts the app rather than being it: the manager's runner, npm, cross-env or a shell. */
+  launcher?: boolean }
+export interface AppMemory { name: string; privateMb: number; workingMb: number; processes: number; overheadMb: number }
 export interface OtherMemory { name: string; count: number; privateMb: number }
 
 /**
@@ -33,14 +35,18 @@ export function attributeMemory(processes: ProcessRow[], roots: Map<number, stri
     return result
   }
 
+  // What a direct start would save: the processes that only start the app.
+  const launcher = (row: ProcessRow) => !!row.launcher || /^(cmd|conhost)(\.exe)?$/i.test(row.name)
+
   const apps = new Map<string, AppMemory>()
   const others = new Map<string, OtherMemory>()
   for (const row of processes) {
     const app = owner(row.pid)
     if (app) {
-      const entry = apps.get(app) || { name: app, privateMb: 0, workingMb: 0, processes: 0 }
+      const entry = apps.get(app) || { name: app, privateMb: 0, workingMb: 0, processes: 0, overheadMb: 0 }
       entry.privateMb += row.privateBytes / MB
       entry.workingMb += row.workingBytes / MB
+      if (launcher(row)) entry.overheadMb += row.privateBytes / MB
       entry.processes++
       apps.set(app, entry)
     } else {
@@ -51,7 +57,8 @@ export function attributeMemory(processes: ProcessRow[], roots: Map<number, stri
       others.set(name, entry)
     }
   }
-  const round = <T extends { privateMb: number; workingMb?: number }>(entry: T) => ({ ...entry, privateMb: Math.round(entry.privateMb), ...(entry.workingMb !== undefined ? { workingMb: Math.round(entry.workingMb) } : {}) })
+  const round = <T extends { privateMb: number; workingMb?: number; overheadMb?: number }>(entry: T) => ({ ...entry, privateMb: Math.round(entry.privateMb),
+    ...(entry.workingMb !== undefined ? { workingMb: Math.round(entry.workingMb) } : {}), ...(entry.overheadMb !== undefined ? { overheadMb: Math.round(entry.overheadMb) } : {}) })
   return {
     apps: [...apps.values()].map(round).sort((a, b) => b.privateMb - a.privateMb),
     others: [...others.values()].map(round).sort((a, b) => b.privateMb - a.privateMb).slice(0, otherLimit),

@@ -11,6 +11,8 @@ export function middleware(request: NextRequest) {
     pathname.startsWith('/favicon') ||
     pathname.startsWith('/api/auth') ||
     pathname.startsWith('/api/webhooks') ||
+    // A visit to a sleeping staging app is sent here by Caddy to wake it; it needs no session.
+    pathname === '/api/wake' ||
     pathname === '/login'
   ) {
     return NextResponse.next()

@@ -13,6 +13,7 @@ import { AppToolGrid } from '@/components/app/app-tools'
 import { PromoteSheet } from '@/components/app/promote-sheet'
 import { SecurityGateBanner, SecurityGateSetting, useSecurityGate } from '@/components/app/security-gate'
 import { MemorySetting } from '@/components/app/memory-setting'
+import { StagingAsleepBanner, StagingSleepSetting } from '@/components/app/staging-sleep'
 import { AppShell } from '@/components/layout/app-shell'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { EnvEditor } from '@/components/env-editor'
@@ -786,6 +787,7 @@ export default function SitePage() {
       >
         {error && <div role="alert" className="notice-error">{error}</div>}
         <SecurityGateBanner projectId={project.id} gate={securityGate.gate} canWrite={canWrite} onChanged={securityGate.setGate} />
+        {project.environment === 'staging' && <StagingAsleepBanner projectId={project.id} canWrite={canWrite} />}
 
         <TabsContent value="setup" className="mt-0">
           <ProjectSetup key={project.id} projectId={project.id} onChanged={() => void refresh()} onDeploy={() => void handleDeploy()} deploying={deploying || hasRunningDeploy} />
@@ -1047,6 +1049,10 @@ export default function SitePage() {
               </select></label>
             </div>
           </Section>
+
+          {project.environment === 'staging' && <Section id="sleep" title="Sleep when idle" description="Stop this staging app when nobody has used it for a while, to give its memory back to the server.">
+            <StagingSleepSetting projectId={project.id} canWrite={canWrite} />
+          </Section>}
 
           <Section id="memory" title="Memory" description="How much memory this app uses, and a limit so a leak cannot starve the whole server.">
             <MemorySetting projectId={project.id} canWrite={canWrite} />

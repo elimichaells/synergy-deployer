@@ -103,7 +103,24 @@ async function stackDomainRoutes(domain: string): Promise<StackDomainRoute[]> {
     }
 }
 
-export function renderCaddyBlock(domain: string, port: number, stackRoutes: StackDomainRoute[] = []) {
+/**
+ * For a staging app that sleeps: when Caddy cannot reach it (502), the manager's wake page
+ * answers instead, starts the app, and reloads itself until the app is back.
+ */
+function renderWakeHandler() {
+    const managerPort = Number(process.env.MANAGER_PORT || 4000)
+    return `
+\thandle_errors {
+\t\t@asleep expression {err.status_code} == 502
+\t\thandle @asleep {
+\t\t\trewrite * /api/wake?host={host}
+\t\t\treverse_proxy 127.0.0.1:${managerPort}
+\t\t}
+\t}
+`
+}
+
+export function renderCaddyBlock(domain: string, port: number, stackRoutes: StackDomainRoute[] = [], wake = false) {
     const logFile = `C:\\Caddy\\logs\\${domain.replace(/\./g, '-')}-error.log`
     const stack = [...stackRoutes]
         .sort((a, b) => b.path_prefix.length - a.path_prefix.length || a.path_prefix.localeCompare(b.path_prefix))
@@ -125,7 +142,7 @@ ${renderReverseProxy(port, '\t\t')}
     return `# ${domain}
 ${domain} {
 ${proxyBlock}
-
+${wake ? renderWakeHandler() : ''}
 \tlog {
 \t\toutput file ${logFile} {
 \t\t\troll_size 10MB
@@ -194,7 +211,7 @@ async function applyCaddyUpdate(domain: string, port: number) {
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid application port')
     let content = await readFile(CADDYFILE_PATH, 'utf8')
     const sanitizedDomain = sanitizeDomain(domain)
-    content = replaceCaddyBlock(content, sanitizedDomain, renderCaddyBlock(sanitizedDomain, port, await stackDomainRoutes(sanitizedDomain)))
+    content = replaceCaddyBlock(content, sanitizedDomain, renderCaddyBlock(sanitizedDomain, port, await stackDomainRoutes(sanitizedDomain), await wakeEnabledFor(sanitizedDomain)))
 
     await validateCaddyContent(content)
     await writeFile(CADDYFILE_PATH, content, 'utf8')
@@ -204,6 +221,32 @@ async function applyCaddyUpdate(domain: string, port: number) {
     const reload = await runCommand(`"${CADDY_EXE}" reload --config "${CADDYFILE_PATH}" --adapter caddyfile`, process.cwd())
     if (reload.code !== 0) throw new Error(reload.output)
     return { domain: sanitizedDomain, validation: validation.output, reload: reload.output }
+}
+
+/** Whether the staging app behind this host sleeps, so its site needs the wake handler. */
+async function wakeEnabledFor(domain: string) {
+    try {
+        const { query } = await import('./db')
+        const { rows } = await query<{ id: string }>(`
+            select p.id from projects p
+            where p.environment = 'staging' and p.sleep_after_minutes is not null
+              and (lower(regexp_replace(coalesce(p.url, ''), '^https?://([^/:]+).*$', '\\1')) = lower($1)
+                   or exists (select 1 from project_domains d where d.project_id = p.id and lower(d.hostname) = lower($1)))
+            limit 1`, [domain])
+        return rows.length > 0
+    } catch {
+        // Before the sleep columns exist, nothing sleeps.
+        return false
+    }
+}
+
+/** Re-renders the sites for these hosts that Caddy already serves; hosts it does not serve are left alone. */
+export async function refreshCaddyHosts(hosts: string[], port: number) {
+    const content = await readFile(CADDYFILE_PATH, 'utf8')
+    for (const host of hosts) {
+        const domain = sanitizeDomain(host)
+        if (content.includes(`${domain} {`)) await applyCaddyUpdate(domain, port)
+    }
 }
 
 export async function updateCaddyStrict(domain: string, port: number) {

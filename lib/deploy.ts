@@ -2,11 +2,14 @@ import { query } from '@/lib/db'
 import { runCommand } from '@/lib/exec'
 import { getGitHubConnectionToken } from '@/lib/github-connections'
 import { existsSync, readFileSync } from 'fs'
+import net from 'net'
 import { rm, writeFile } from 'fs/promises'
 import path from 'path'
 import { DeploymentRelease, sourceFingerprint } from '@/lib/deployment-release'
 import { withBuildSlot, withInstallationSlot } from '@/lib/deployment-capacity'
 import { withHeapLimit } from '@/lib/server-memory-policy'
+import { directStartCommand, planDirectStart, type DirectStart, type DirectStartPlan } from '@/lib/direct-start'
+import { acquireProjectOperation } from '@/lib/project-operation'
 import { discardSeededCaches, seedBuildCache } from '@/lib/deployment-build-cache'
 import { classifyLocalChanges, inspectLocalChanges, localChangesMessage, recordBuildChanges, restoreGeneratedFiles, type BuildChanges } from '@/lib/deployment-build-changes'
 import { installWithDependencyCache, assertAuditPassed, formatAuditFindings, loadAuditExceptions } from '@/lib/deployment-cache'
@@ -63,6 +66,8 @@ export interface DeployProject {
   id: string
   /** Memory limit in MB; Node apps get a matching heap cap. Loaded by the engine itself. */
   memory_limit_mb?: number | null
+  /** 'direct' once the app has been switched to start without the runner. Loaded by the engine itself. */
+  start_method?: string | null
   name: string
   repo_url: string
   default_branch: string
@@ -192,6 +197,23 @@ function getStartCommand(project: DeployProject) {
   return project.start_cmd ?? getProjectTypeDefaults(project.project_type).startCmd
 }
 
+/** Whether this app can start without the runner, judged from its files in `rootPath`. */
+export function directStartPlan(project: DeployProject, rootPath: string): DirectStartPlan {
+  let scripts: Record<string, string> | null = null
+  try { scripts = JSON.parse(readFileSync(path.join(rootPath, 'package.json'), 'utf8')).scripts || {} } catch { scripts = null }
+  return planDirectStart({
+    startCmd: getStartCommand(project), projectType: normalizeProjectType(project.project_type), port: project.port,
+    nodePinned: !!project.runtime_versions?.node, root: rootPath, scripts,
+    exists: file => existsSync(file), join: (...parts) => path.join(...parts),
+    read: file => { try { return readFileSync(file, 'utf8') } catch { return null } },
+  })
+}
+
+/** The direct start to use, only for an app that has been switched and still qualifies. */
+function activeDirectStart(project: DeployProject, rootPath: string): DirectStart | null {
+  return project.start_method === 'direct' ? directStartPlan(project, rootPath).direct : null
+}
+
 function getPm2StartCommand(project: DeployProject, rootPath: string) {
   const projectType = normalizeProjectType(project.project_type)
   const portArg = project.port ? ` -p ${project.port}` : ''
@@ -210,17 +232,24 @@ function getPm2StartCommand(project: DeployProject, rootPath: string) {
     throw new Error(`No start command configured for ${project.pm2_name}`)
   }
 
+  const direct = activeDirectStart(project, rootPath)
+  if (direct) return directStartCommand(direct, project.pm2_name)
+
   return `pm2 start "${PM2_RUNNER}" --interpreter node --name "${project.pm2_name}" --shutdown-with-message --kill-timeout 15000`
 }
 
 function getRuntimeEnv(project: DeployProject, rootPath: string, databaseEnv: Record<string, string> = {}): Record<string, string> {
   const startCmd = getStartCommand(project)
   const projectEnv = loadProjectEnvFile(rootPath, project.project_type)
+  // A direct start applies the variables its start command set itself (cross-env, node flags).
+  const directEnv = activeDirectStart(project, rootPath)?.env ?? {}
+  const nodeOptions = [projectEnv.NODE_OPTIONS, directEnv.NODE_OPTIONS].filter(Boolean).join(' ')
   return {
     ...Object.fromEntries(CONTROL_PLANE_ENV_KEYS.map((key) => [key, ''])),
     ...projectEnv,
+    ...directEnv,
     // A memory limit caps Node's heap, so a leak restarts this app instead of starving the server.
-    ...(project.memory_limit_mb ? { NODE_OPTIONS: withHeapLimit(projectEnv.NODE_OPTIONS, project.memory_limit_mb) } : {}),
+    ...(project.memory_limit_mb ? { NODE_OPTIONS: withHeapLimit(nodeOptions, project.memory_limit_mb) } : nodeOptions ? { NODE_OPTIONS: nodeOptions } : {}),
     ...databaseEnv,
     ...projectRuntimeEnvironment(project.runtime_versions),
     HOSTNAME: normalizeProjectType(project.project_type) === 'angular' ? '127.0.0.1' : '0.0.0.0',
@@ -353,7 +382,7 @@ export async function restartWithFreshEnvironment(projectId: string, onProgress?
   const project = rows[0]
   if (!project) throw new Error('Application not found')
   if (!/^[A-Za-z0-9._-]+$/.test(project.pm2_name)) throw new Error('Invalid PM2 application name')
-  project.memory_limit_mb = await memoryLimitOf(project.id)
+  Object.assign(project, await appStartSettings(project.id))
   const databaseEnv = { ...await getProjectDatabaseEnv(project.id), ...await getProjectDataServiceEnv(project.id) }
   const env = getRuntimeEnv(project, project.root_path, databaseEnv)
   if (normalizeProjectType(project.project_type) === 'laravel') {
@@ -397,16 +426,16 @@ export async function startDeploy(project: DeployProject, options: DeployOptions
   return id
 }
 
-/** The app's memory limit, or none if it is not set or cannot be read. */
-async function memoryLimitOf(projectId: string) {
+/** The app's memory limit and start method, or defaults if they are not set or cannot be read. */
+async function appStartSettings(projectId: string): Promise<{ memory_limit_mb: number | null; start_method: string | null }> {
   try {
-    const { rows } = await query<{ memory_limit_mb: number | null }>('select memory_limit_mb from projects where id=$1', [projectId])
-    return rows[0]?.memory_limit_mb ?? null
-  } catch { return null }
+    const { rows } = await query<{ memory_limit_mb: number | null; start_method: string | null }>('select memory_limit_mb, start_method from projects where id=$1', [projectId])
+    return { memory_limit_mb: rows[0]?.memory_limit_mb ?? null, start_method: rows[0]?.start_method ?? null }
+  } catch { return { memory_limit_mb: null, start_method: null } }
 }
 
 async function runDeployAsync(project: DeployProject, options: DeployOptions, deploymentId: string): Promise<DeployResult> {
-  project = { ...project, memory_limit_mb: await memoryLimitOf(project.id) }
+  project = { ...project, ...await appStartSettings(project.id) }
   activeDeployments.add(deploymentId)
   const started = Date.now()
   let log = '[system] Starting isolated deployment; current release stays online during build\n'
@@ -934,4 +963,90 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
     activeDeployments.delete(deploymentId)
     cancelledDeployments.delete(deploymentId)
   }
+}
+
+
+const portFree = (port: number) => new Promise<boolean>(resolve => {
+  const socket = net.connect({ host: '127.0.0.1', port })
+  socket.once('connect', () => { socket.destroy(); resolve(false) })
+  socket.once('error', () => resolve(true))
+  socket.setTimeout(2000, () => { socket.destroy(); resolve(false) })
+})
+
+async function waitForPortFree(port: number | null, limitMs = 30_000) {
+  if (!port) return true
+  const started = Date.now()
+  while (Date.now() - started < limitMs) {
+    if (await portFree(port)) return true
+    await new Promise(resolve => setTimeout(resolve, 1000))
+  }
+  return false
+}
+
+export interface StartMethodResult { method: 'direct' | 'runner'; healthy: boolean; reason: string | null; restored: boolean }
+
+/**
+ * Restarts an app with a different start method. The app is offline for a few seconds, like a
+ * restart. If it does not come back healthy, it is started again the way it was, and the method
+ * is not changed.
+ */
+export async function switchStartMethod(projectId: string, method: 'direct' | 'runner', onProgress?: (message: string) => void | Promise<void>): Promise<StartMethodResult> {
+  const { rows } = await query<DeployProject>(
+    `select id, name, repo_url, default_branch, project_type, root_path, install_cmd, build_cmd, deploy_script, start_cmd, pre_deploy_cmd, post_deploy_cmd,
+            runtime_versions, pm2_name, port, github_connection_id from projects where id=$1`, [projectId])
+  const base = rows[0]
+  if (!base) throw new Error('Application not found')
+  if (!/^[A-Za-z0-9._-]+$/.test(base.pm2_name)) throw new Error('Invalid PM2 application name')
+  Object.assign(base, await appStartSettings(projectId))
+  if (method === 'direct') {
+    const plan = directStartPlan(base, base.root_path)
+    if (!plan.direct) throw new Error(`This app cannot start directly: ${plan.reason}`)
+  }
+
+  const release = await acquireProjectOperation(projectId)
+  try {
+    const snapshot = await runCommand('pm2 jlist', undefined, 15_000)
+    if (snapshot.code) throw new Error('Cannot read the PM2 process list')
+    const current = (JSON.parse(snapshot.output.slice(snapshot.output.indexOf('['))) as Array<{ name: string; pm2_env: { status?: string; pm_cwd?: string } }>).find(item => item.name === base.pm2_name)
+    if (!current) throw new Error('The app is not running under PM2')
+    if (!current.pm2_env.pm_cwd || path.resolve(current.pm2_env.pm_cwd).toLowerCase() !== path.resolve(base.root_path).toLowerCase()) throw new Error('The PM2 process does not belong to this app folder')
+    if (current.pm2_env.status !== 'online') throw new Error('Start the app first; only a running app can be switched')
+
+    const databaseEnv = { ...await getProjectDatabaseEnv(projectId), ...await getProjectDataServiceEnv(projectId) }
+    const previous = { ...base }
+    const next = { ...base, start_method: method === 'direct' ? 'direct' : null }
+    const startWith = async (project: DeployProject) => {
+      const env = getRuntimeEnv(project, project.root_path, databaseEnv)
+      const started = await runCommand(getPm2StartCommand(project, project.root_path), project.root_path, 60_000, undefined, env, false)
+      if (started.code) return { healthy: false, reason: 'PM2 could not start the application' }
+      if (project.port) {
+        const health = await waitForDeploymentHealth(project.port, { checkProcess: timeout => getPm2ProcessStatus(project.pm2_name, timeout), onProgress })
+        return { healthy: health.healthy, reason: health.healthy ? null : health.reason || 'Health check failed' }
+      }
+      await new Promise(resolve => setTimeout(resolve, 5000))
+      const status = await getPm2ProcessStatus(project.pm2_name, 15_000)
+      return { healthy: status === 'online', reason: status === 'online' ? null : `Process is ${status || 'unknown'}` }
+    }
+    const stop = async () => {
+      await runCommand(`pm2 delete "${base.pm2_name}"`, base.root_path, 60_000)
+      // Never start the next copy while the old one still holds the port.
+      if (!await waitForPortFree(base.port)) throw new Error(`Port ${base.port} is still in use after stopping the app`)
+    }
+
+    await onProgress?.(`Stopping ${base.name}`)
+    await stop()
+    await onProgress?.(method === 'direct' ? 'Starting it directly under PM2' : 'Starting it through the runner')
+    const result = await startWith(next)
+    if (result.healthy) {
+      await query('update projects set start_method=$2 where id=$1', [projectId, next.start_method])
+      await runCommand('pm2 save', undefined, 30_000)
+      return { method, healthy: true, reason: null, restored: false }
+    }
+
+    await onProgress?.('It did not come back healthy; starting it the way it was')
+    await stop().catch(() => undefined)
+    const restored = await startWith(previous)
+    if (restored.healthy) await runCommand('pm2 save', undefined, 30_000)
+    return { method, healthy: false, reason: result.reason, restored: restored.healthy }
+  } finally { await release() }
 }

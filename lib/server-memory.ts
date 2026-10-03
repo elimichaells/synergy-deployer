@@ -16,6 +16,10 @@ export interface AppUsage {
   workingMb: number
   processes: number
   limitMb: number | null
+  /** Memory used by processes that only start the app. */
+  overheadMb: number
+  /** Started through the manager's runner rather than directly by PM2. */
+  runner: boolean
 }
 
 export interface MemorySnapshot {
@@ -29,6 +33,8 @@ export interface MemorySnapshot {
   pageFileUsedMb: number | null
   apps: AppUsage[]
   others: { name: string; count: number; privateMb: number }[]
+  /** Local ports with an open inbound connection; null where this cannot be read. */
+  activePorts: number[] | null
 }
 
 // One CIM query gives every process with its parent, private bytes and start time.
@@ -37,11 +43,14 @@ const WINDOWS_SNAPSHOT = [
   '$os = Get-CimInstance Win32_OperatingSystem',
   '$pf = @(Get-CimInstance Win32_PageFileUsage)',
   "$epoch = [datetime]'1970-01-01'",
-  '$p = @(Get-CimInstance Win32_Process | ForEach-Object { ,@([int64]$_.ProcessId, [int64]$_.ParentProcessId, [string]$_.Name, [int64]$_.PrivatePageCount, [int64]$_.WorkingSetSize, $(if ($_.CreationDate) { [int64]($_.CreationDate.ToUniversalTime() - $epoch).TotalMilliseconds } else { 0 })) })',
-  "[pscustomobject]@{ totalKb = [int64]$os.TotalVisibleMemorySize; freeKb = [int64]$os.FreePhysicalMemory; commitLimitKb = [int64]$os.TotalVirtualMemorySize; commitFreeKb = [int64]$os.FreeVirtualMemory; pageFileMb = [int64](($pf | Measure-Object AllocatedBaseSize -Sum).Sum); pageFileUsedMb = [int64](($pf | Measure-Object CurrentUsage -Sum).Sum); p = $p } | ConvertTo-Json -Compress -Depth 4",
+  // Command lines stay inside PowerShell (they can hold secrets); only a launcher flag leaves it.
+  '$p = @(Get-CimInstance Win32_Process | ForEach-Object { ,@([int64]$_.ProcessId, [int64]$_.ParentProcessId, [string]$_.Name, [int64]$_.PrivatePageCount, [int64]$_.WorkingSetSize, $(if ($_.CreationDate) { [int64]($_.CreationDate.ToUniversalTime() - $epoch).TotalMilliseconds } else { 0 }), [bool]([string]$_.CommandLine -match "pm2-runner\.js|npm-cli\.js|[\\/]cross-env[\\/]")) })',
+  // Ports with an open inbound connection show which apps are in use (for sleeping staging apps).
+  '$ports = @(Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue | ForEach-Object { [int]$_.LocalPort } | Sort-Object -Unique)',
+  "[pscustomobject]@{ ports = $ports; totalKb = [int64]$os.TotalVisibleMemorySize; freeKb = [int64]$os.FreePhysicalMemory; commitLimitKb = [int64]$os.TotalVirtualMemorySize; commitFreeKb = [int64]$os.FreeVirtualMemory; pageFileMb = [int64](($pf | Measure-Object AllocatedBaseSize -Sum).Sum); pageFileUsedMb = [int64](($pf | Measure-Object CurrentUsage -Sum).Sum); p = $p } | ConvertTo-Json -Compress -Depth 4",
 ].join('; ')
 
-interface RawHost { totalMb: number; availableMb: number; commitMb: number | null; commitLimitMb: number | null; pageFileMb: number | null; pageFileUsedMb: number | null; processes: ProcessRow[] }
+interface RawHost { totalMb: number; availableMb: number; commitMb: number | null; commitLimitMb: number | null; pageFileMb: number | null; pageFileUsedMb: number | null; processes: ProcessRow[]; activePorts: number[] | null }
 
 async function readHost(): Promise<RawHost> {
   if (process.platform === 'win32') {
@@ -53,30 +62,38 @@ async function readHost(): Promise<RawHost> {
       totalMb: Math.round(raw.totalKb / 1024), availableMb: Math.round(raw.freeKb / 1024),
       commitLimitMb: Math.round(raw.commitLimitKb / 1024), commitMb: Math.round((raw.commitLimitKb - raw.commitFreeKb) / 1024),
       pageFileMb: raw.pageFileMb ?? null, pageFileUsedMb: raw.pageFileUsedMb ?? null,
+      activePorts: Array.isArray(raw.ports) ? raw.ports.map(Number) : typeof raw.ports === 'number' ? [raw.ports] : [],
       processes: rows.filter(row => Array.isArray(row) && row.length >= 6).map(row => ({
-        pid: Number(row[0]), ppid: Number(row[1]), name: String(row[2]), privateBytes: Number(row[3]) || 0, workingBytes: Number(row[4]) || 0, started: Number(row[5]) || undefined })),
+        pid: Number(row[0]), ppid: Number(row[1]), name: String(row[2]), privateBytes: Number(row[3]) || 0, workingBytes: Number(row[4]) || 0, started: Number(row[5]) || undefined, launcher: row[6] === true })),
     }
   }
   // Elsewhere, resident memory stands in for private memory.
   const result = await runCommand({ file: 'ps', args: ['-A', '-o', 'pid=,ppid=,rss=,comm='] }, undefined, 30_000, undefined, undefined, true)
   const processes = result.code ? [] : result.output.split('\n').map(line => /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+)$/.exec(line)).filter(Boolean)
     .map(match => ({ pid: Number(match![1]), ppid: Number(match![2]), name: match![4].trim().split('/').pop()!, privateBytes: Number(match![3]) * 1024, workingBytes: Number(match![3]) * 1024 }))
-  return { totalMb: Math.round(os.totalmem() / MB), availableMb: Math.round(os.freemem() / MB), commitMb: null, commitLimitMb: null, pageFileMb: null, pageFileUsedMb: null, processes }
+  return { totalMb: Math.round(os.totalmem() / MB), availableMb: Math.round(os.freemem() / MB), commitMb: null, commitLimitMb: null, pageFileMb: null, pageFileUsedMb: null, processes, activePorts: null }
 }
 
 async function readPm2Roots() {
   const result = await runCommand('pm2 jlist', undefined, 30_000)
   const roots = new Map<number, string>()
-  if (result.code) return roots
+  // PM2's container for an app started through the manager's runner only launches the app.
+  const runners = new Set<number>()
+  if (result.code) return { roots, runners }
   try {
-    for (const item of JSON.parse(result.output.slice(result.output.indexOf('['))) as { name: string; pid?: number }[]) if (item.pid) roots.set(item.pid, item.name)
+    for (const item of JSON.parse(result.output.slice(result.output.indexOf('['))) as { name: string; pid?: number; pm2_env?: { pm_exec_path?: string } }[]) {
+      if (!item.pid) continue
+      roots.set(item.pid, item.name)
+      if (/pm2-runner\.js$/i.test(item.pm2_env?.pm_exec_path || '')) runners.add(item.pid)
+    }
   } catch { /* An unreadable list leaves every process unattributed rather than failing the snapshot. */ }
-  return roots
+  return { roots, runners }
 }
 
 export async function readMemorySnapshot(): Promise<MemorySnapshot> {
-  const [host, roots] = await Promise.all([readHost(), readPm2Roots()])
-  const { apps, others } = attributeMemory(host.processes, roots)
+  const [host, { roots, runners }] = await Promise.all([readHost(), readPm2Roots()])
+  const { apps, others } = attributeMemory(host.processes.map(row => runners.has(row.pid) ? { ...row, launcher: true } : row), roots)
+  const runnerNames = new Set([...runners].map(pid => roots.get(pid)))
   await ensureServerMemorySchema()
   const { rows: projects } = await query<{ id: string; name: string; environment: string | null; pm2_name: string; memory_limit_mb: number | null }>(
     'select id, name, environment, pm2_name, memory_limit_mb from projects')
@@ -84,10 +101,10 @@ export async function readMemorySnapshot(): Promise<MemorySnapshot> {
   return {
     takenAt: new Date().toISOString(), platform: process.platform,
     totalMb: host.totalMb, availableMb: host.availableMb, commitMb: host.commitMb, commitLimitMb: host.commitLimitMb,
-    pageFileMb: host.pageFileMb, pageFileUsedMb: host.pageFileUsedMb,
+    pageFileMb: host.pageFileMb, pageFileUsedMb: host.pageFileUsedMb, activePorts: host.activePorts,
     apps: apps.map(app => {
       const project = byPm2.get(app.name)
-      return { ...app, projectId: project?.id ?? null, label: project?.name ?? app.name, environment: project?.environment ?? null, limitMb: project?.memory_limit_mb ?? null }
+      return { ...app, runner: runnerNames.has(app.name), projectId: project?.id ?? null, label: project?.name ?? app.name, environment: project?.environment ?? null, limitMb: project?.memory_limit_mb ?? null }
     }),
     others,
   }
@@ -97,6 +114,10 @@ let schemaReady: Promise<void> | null = null
 export function ensureServerMemorySchema() {
   schemaReady ??= query(`
     alter table projects add column if not exists memory_limit_mb integer;
+    alter table projects add column if not exists start_method text;
+    alter table projects add column if not exists sleep_after_minutes integer;
+    alter table projects add column if not exists sleeping_since timestamptz;
+    alter table projects add column if not exists last_active_at timestamptz;
     create table if not exists server_memory_samples (
       taken_at timestamptz primary key default now(),
       total_mb integer not null, available_mb integer not null,
@@ -148,6 +169,8 @@ export async function memorySamplerTick() {
       await query(`delete from server_alerts where resolved_at < now() - interval '30 days'`)
     }
     await updateAlerts(snapshot)
+    const { stagingSleepTick } = await import('@/lib/staging-sleep')
+    await stagingSleepTick(new Set(snapshot.apps.map(app => app.name)), snapshot.activePorts ? new Set(snapshot.activePorts) : null)
   } catch (error) {
     console.error('[memory] sample failed:', error instanceof Error ? error.message : error)
   } finally { sampling = false }
@@ -217,7 +240,17 @@ export async function memoryOverview() {
        from server_alerts where resolved_at is null or resolved_at > now() - interval '7 days' order by resolved_at nulls first, opened_at desc limit 50`),
   ])
   const peakByApp = new Map(peaks.rows.map(row => [row.name, row.peak]))
+  const { startMethodOverview } = await import('@/lib/start-methods')
+  const startMethods = await startMethodOverview(snapshot).catch(error => { console.error('[memory] start methods:', error); return [] })
+  const { rows: stagingRows } = await query<{ id: string; name: string; pm2_name: string; sleep_after_minutes: number | null; sleeping_since: Date | null; last_active_at: Date | null }>(
+    `select id, name, pm2_name, sleep_after_minutes, sleeping_since, last_active_at from projects where environment = 'staging' order by name`)
+  const staging = stagingRows.map(row => {
+    const app = snapshot.apps.find(item => item.name === row.pm2_name)
+    return { projectId: row.id, label: row.name, running: !!app, privateMb: app?.privateMb ?? 0, sleepAfterMinutes: row.sleep_after_minutes,
+      sleepingSince: row.sleeping_since?.toISOString() ?? null, lastActiveAt: row.last_active_at?.toISOString() ?? null }
+  })
   return {
+    startMethods, staging,
     snapshot: { ...snapshot, apps: snapshot.apps.map(app => ({ ...app, peakMb: Math.max(app.privateMb, peakByApp.get(app.name) ?? 0) })) },
     history: downsample(history.rows.map(row => ({ takenAt: row.taken_at.toISOString(), availableMb: row.available_mb, commitMb: row.commit_mb })), 288),
     alerts: alerts.rows,
