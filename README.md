@@ -126,6 +126,19 @@ verifies the new login, backs up and rewrites the apps' env files, and restarts
 each app with a health check. If any app does not come back healthy, the env
 files, ownership and user are all put back.
 
+### Lighter starts and sleeping staging apps (2.11.0)
+
+Infrastructure > Memory lists every app started through the manager's runner
+with the memory its launcher processes use, and whether it can be started
+directly by PM2 instead (next start, node <script> or a native executable,
+directly or through npm start or cross-env). Switching restarts that one app,
+health-checks it, and puts it back on the runner if it is not healthy; later
+deployments keep the direct start. Staging apps can also sleep after 30 minutes
+to 8 hours without use. A sleeping app wakes when it is deployed, when someone
+presses Wake now, or when someone opens it and sees a short "starting up" page.
+Nothing changes for an app until it is switched or set to sleep. See
+[docs/release-pipeline.md](docs/release-pipeline.md#start-methods).
+
 ### Memory management (2.10.0)
 
 **Infrastructure > Memory** shows what uses the server's memory: free memory and
