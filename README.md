@@ -126,6 +126,17 @@ verifies the new login, backs up and rewrites the apps' env files, and restarts
 each app with a health check. If any app does not come back healthy, the env
 files, ownership and user are all put back.
 
+### Database server memory (2.12.0)
+
+Infrastructure > Memory shows each database server on the machine with its
+memory, data size, open and idle connections, and the apps that use it, and
+points out logins holding many idle connections. For MySQL and MariaDB it
+recommends memory settings measured on the server (performance monitoring off,
+the unused X protocol off, a smaller log buffer). An administrator applies the
+chosen ones: my.ini is backed up, MySQL validates the new file before anything
+restarts, and the previous file is restored if the server does not come back.
+See [docs/release-pipeline.md](docs/release-pipeline.md#database-server-memory).
+
 ### Lighter starts and sleeping staging apps (2.11.0)
 
 Infrastructure > Memory lists every app started through the manager's runner
