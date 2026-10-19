@@ -1,19 +1,33 @@
 name: Manager Windows Release
+run-name: Manager release ${{ inputs.release_tag || github.ref_name }}
 
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to validate and package
+        required: true
+        type: string
 
 permissions:
   contents: write
 
+env:
+  RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+
 jobs:
   windows-installer:
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - name: Check out release source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+          persist-credentials: false
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -23,12 +37,13 @@ jobs:
 
       - name: Validate release identity
         shell: pwsh
-        run: node scripts/check-release.cjs "${{ github.ref_name }}" --write
+        run: node scripts/check-release.cjs "$env:RELEASE_TAG" --write
 
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
 
       - name: Test source
+        timeout-minutes: 5
         run: npm test
 
       - name: Audit production dependencies
@@ -49,7 +64,7 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content ./package.json -Raw | ConvertFrom-Json).version
-          node scripts/check-release.cjs "${{ github.ref_name }}"
+          node scripts/check-release.cjs "$env:RELEASE_TAG"
           ./scripts/package-manager-exe.ps1 -OutputDirectory ./release -Version $version
 
       - name: Publish immutable GitHub release assets
@@ -58,4 +73,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $assets = Get-ChildItem -LiteralPath ./release -File | ForEach-Object FullName
-          gh release create "${{ github.ref_name }}" $assets --verify-tag --generate-notes --title "Manager ${{ github.ref_name }}"
+          gh release create "$env:RELEASE_TAG" $assets --verify-tag --generate-notes --title "Manager $env:RELEASE_TAG"
