@@ -11,6 +11,7 @@ import { formatBytes } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { Flag, serverRoleLabel } from '@/components/storage/bits'
 import { AddDatabaseSheet } from '@/components/storage/add-database-sheet'
+import { RenameReminders } from '@/components/storage/rename-reminders'
 import { ServersAndMigrations } from '@/components/storage/servers-panel'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
@@ -90,6 +91,7 @@ export default function StoragePage() {
         <Button size="sm" onClick={() => setAddOpen(true)}><Plus className="mr-1.5 h-4 w-4" />Add database</Button>
       </> : undefined}
     >
+      <RenameReminders refreshKey={String(now)} />
       <TabsContent value="databases" className="mt-0">
       {error && <div role="alert" className="notice-error">{error}</div>}
       {notice && <p role="status" className="mb-5 rounded-md border border-status-ready/25 bg-status-ready/5 px-4 py-3 text-sm text-emerald-200">{notice}</p>}

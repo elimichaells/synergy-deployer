@@ -8,6 +8,7 @@ import { ChevronLeft, LogOut, Plus, Search, Server } from 'lucide-react'
 import { SynergyMark } from '@/components/synergy/brand'
 import { CommandMenu } from '@/components/synergy/command-menu'
 import { infrastructureItems, isNavActive, navItems } from '@/components/synergy/nav'
+import { ServerHealthBanner } from '@/components/server-health'
 
 function initials(name?: string) {
   return (name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]?.toUpperCase()).join('') || '?'
@@ -145,6 +146,7 @@ export function AppShell({ children, title, subtitle, user, actions, back, heade
 
       <main className="min-w-0">
         <div className="mx-auto max-w-[1240px] px-4 py-6 sm:px-6 sm:py-8">
+          <ServerHealthBanner />
           {area === 'infrastructure' ? (
             <div className="grid min-w-0 gap-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-10">
               <aside className="min-w-0">

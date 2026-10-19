@@ -1,6 +1,7 @@
 import { createHash } from 'crypto'
 import { cp, lstat, mkdir, readFile } from 'fs/promises'
 import path from 'path'
+import { gitInspectionError } from './deployment-git-error'
 
 // A deployment's own install and build can rewrite files that are committed to Git:
 // npm install rewrites package-lock.json, and some builds regenerate committed bundles.
@@ -96,7 +97,7 @@ async function fingerprint(root: string, relative: string) {
 /** The tracked files that differ from the commit in a checkout, with their current fingerprints. */
 export async function inspectLocalChanges(execute: Execute, root: string) {
   const status = await execute('git status --porcelain=v1 --untracked-files=no')
-  if (status.code !== 0) throw new Error('Could not check local source changes; deployment stopped without changing the checkout')
+  if (status.code !== 0) throw new Error(gitInspectionError(status.output))
   const { paths, complex } = parseTrackedChanges(status.output)
   const hashes: Record<string, string> = {}
   const mtimes: Record<string, number | null> = {}

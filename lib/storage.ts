@@ -214,15 +214,16 @@ function serverRole(connection: { options: Record<string, unknown>; purpose: str
 
 /** One entry per physical database, with every app that uses it. */
 export interface BackupSummary {
+  credentialSource?: 'application' | 'connection'
   scheduleId: string; frequency: string; enabled: boolean; lastStatus: string; lastFinishedAt: string | null; nextRunAt: string | null
   timeOfDay: string; timezone: string; dayOfWeek: number; dayOfMonth: number; monthOfYear: number; retentionCount: number
   /** Set when the schedule belongs to the older control-server backup system rather than the app database one. */
   legacy?: boolean
 }
 
-function backupSummary(row: { schedule_id: string | null; frequency: string | null; enabled: boolean | null; last_status: string | null; last_finished_at: string | null; next_run_at: string | null; time_of_day: string | null; timezone: string | null; day_of_week: number | null; day_of_month: number | null; month_of_year: number | null; retention_count: number | null }): BackupSummary {
+function backupSummary(row: { credential_source?: 'application' | 'connection' | null; schedule_id: string | null; frequency: string | null; enabled: boolean | null; last_status: string | null; last_finished_at: string | null; next_run_at: string | null; time_of_day: string | null; timezone: string | null; day_of_week: number | null; day_of_month: number | null; month_of_year: number | null; retention_count: number | null }): BackupSummary {
   return { scheduleId: row.schedule_id!, frequency: row.frequency!, enabled: !!row.enabled, lastStatus: row.last_status!, lastFinishedAt: row.last_finished_at, nextRunAt: row.next_run_at,
-    timeOfDay: row.time_of_day || '03:00', timezone: row.timezone || 'UTC', dayOfWeek: row.day_of_week ?? 0, dayOfMonth: row.day_of_month ?? 1, monthOfYear: row.month_of_year ?? 1, retentionCount: row.retention_count ?? 30 }
+    timeOfDay: row.time_of_day || '03:00', timezone: row.timezone || 'UTC', dayOfWeek: row.day_of_week ?? 0, dayOfMonth: row.day_of_month ?? 1, monthOfYear: row.month_of_year ?? 1, retentionCount: row.retention_count ?? 30, credentialSource: row.credential_source || 'application' }
 }
 
 export async function listStorage() {
@@ -238,7 +239,7 @@ export async function listStorage() {
   }>(`select s.id,s.project_id,s.name,s.database_name,s.username,s.options,s.connection_id,dc.name as connection_name,dc.provider,dc.host,dc.port,
             dc.options as connection_options,dc.purpose,p.name as project_name,p.environment,g.id as group_id,g.name as group_name,
             bs.id as schedule_id,bs.frequency,bs.enabled,bs.last_status,bs.last_finished_at,bs.next_run_at,
-            bs.time_of_day,bs.timezone,bs.day_of_week,bs.day_of_month,bs.month_of_year,bs.retention_count
+            bs.time_of_day,bs.timezone,bs.day_of_week,bs.day_of_month,bs.month_of_year,bs.retention_count,bs.credential_source
        from project_data_services s join data_connections dc on dc.id=s.connection_id join projects p on p.id=s.project_id
        left join application_groups g on g.id=p.application_group_id left join data_service_backup_schedules bs on bs.service_id=s.id
       order by p.name`)

@@ -1,5 +1,6 @@
 import os from 'os'
 import { db } from '@/lib/db'
+import { requireDeploymentDiskSpace } from './disk-capacity'
 
 type Append = (message: string) => void | Promise<void>
 
@@ -16,6 +17,7 @@ export async function withInstallationSlot<T>(work: () => Promise<T>, append: Ap
   let lastNotice = 0
   while (true) {
     checkCancelled()
+    requireDeploymentDiskSpace()
     if (Date.now() - started > 20 * 60_000) throw new Error('Installation queue exceeded twenty minutes; retry when the host is less busy')
     const client = await db.connect()
     let slot = -1
@@ -77,6 +79,7 @@ export async function withBuildSlot<T>(work: () => Promise<T>, append: Append, c
   let waitingFor: 'memory' | 'slot' | null = null
   while (true) {
     checkCancelled()
+    requireDeploymentDiskSpace()
     const free = availableMb()
     if (Date.now() - started > BUILD_QUEUE_LIMIT_MS) {
       throw new Error(waitingFor === 'memory'

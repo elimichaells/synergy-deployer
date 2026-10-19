@@ -19,7 +19,7 @@ export async function POST(request: Request) {
     requireRole(user, ['admin'])
     const body = await request.json()
     const schedule = await configureDataServiceBackup(String(body.serviceId || ''), body, user?.id)
-    await audit(user?.id, 'project.data-service.backup.configure', schedule.service_id, { frequency: schedule.frequency, enabled: schedule.enabled })
+    await audit(user?.id, 'project.data-service.backup.configure', schedule.service_id, { frequency: schedule.frequency, enabled: schedule.enabled, credentialSource: schedule.credential_source })
     return NextResponse.json({ schedule })
   } catch (error) { return jsonError(error) }
 }

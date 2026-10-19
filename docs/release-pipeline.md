@@ -132,6 +132,26 @@ The group lists its component environments and provides direct links to database
 
 ## Verification
 
+### Reliability release 2.15
+
+Application readiness is distinct from the enabled setting, PM2 process status and last deployment result. The dashboard and application overview use the independent monitor's observations; missing or stale observations show unknown. Under app Settings, administrators and operators can set a local readiness path, explicit expected HTTP codes and a startup deadline (5–180 seconds). Defaults require 2xx. Same-origin redirects are followed to their destination; redirect loops, external redirects, 404 and failing pages do not pass by default. The same profile applies to monitoring, deployment preflight, final checks and recovery.
+
+Health & alerts combines monitor incidents, memory alerts, failed/interrupted backup schedules and active security gate overrides. Failed database sources produce an unavailable warning and have bounded connection/query waits. Alert delivery stays inside Manager; the independent Windows monitor keeps collecting when Manager is down, and incidents are visible after access returns. Monitor incidents retain their existing debounce/recovery policy. Database-backed alerts reflect their current source state.
+
+Deployment output is batched into delta writes. The detail endpoint accepts `after=<character offset>` and returns bounded `log_chunk`, `log_next`, `log_reset` and `log_complete` fields; Unicode offsets count PostgreSQL characters. Omitting `after` retains the complete-log response. The UI drains remaining output before stopping after completion and bounds rendered output. Log persistence failures cannot bypass rollback.
+
+Git diagnostics distinguish checkout ownership, permissions, locks and missing Git without exposing raw command output. Deployment Git commands trust only the explicitly configured working directory for that invocation. Next.js apps with custom package startup scripts must explicitly configure their start command so initialization is not silently bypassed.
+
+The guarded Windows launcher is `scripts/start-manager-services.ps1 -ConfigPath <config.json>`. Configuration pins `nodeExe`, `npmPath`, `pm2Home`, `pm2PackageRoot` and `accountSid`. `-ValidateOnly` checks saved application paths and passively reads PM2 without changing processes. At boot it preserves intentionally stopped apps, leaves an already healthy daemon alone, rejects an unresponsive live daemon or incomplete registry, and restores only a validated saved list after a cold start. It never runs `pm2 update`, overwrites the saved list or falls back to an ecosystem file. Keep the previous scheduled-task XML and release build for rollback; verify a cold boot during a maintenance window.
+
+Manual deployments from an application's page have a **Candidate preflight** checkbox, enabled by default. Unchecking it sends `preflight: false` for that deployment and skips the temporary-port start. The log records the choice. Builds, security checks, final health verification, and rollback still run. Other deployment entry points keep preflight enabled by default. Skipping the candidate check can interrupt service until final health succeeds or rollback restores the previous release.
+
+The **HTTP health checks** checkbox is also enabled by default. Unchecking it sends `healthCheck: false` for this deployment and skips both candidate preflight and final HTTP health checks. This allows installing an application before its runtime database or other settings are ready. It does not bypass the build, dependency security gate, filesystem activation safeguards or PM2 start errors. HTTP 500 responses will not trigger rollback in this mode. Deployment logs and the release guarantees display explicitly state that readiness was not verified. Automated deployments retain the default checks.
+
+When an enabled health check fails, Manager collects a bounded tail of the application's PM2 error log before cleanup or rollback. It adds runtime diagnostic lines and the error summary to the deployment failure, so errors such as missing settings, database role restrictions and connection failures appear in the deployment view. Known environment secrets, credential URLs and common password/token assignments are redacted.
+
+Every deployment loads the saved application `.env` and `.env.local` for its build, candidate start and live start. Save edits before deploying; unsaved editor text is not applied. Managed database settings provide standard variables, not arbitrary application-specific connection names. An empty `DATABASE_OWNER_URL` must be configured with the required restricted database role; skipping preflight cannot supply credentials or repair HTTP 500 responses. Environment changes during a build require retrying the deployment to avoid activating a candidate built with stale settings.
+
 - `npm test`: isolated unit, filesystem, orchestration, authorization, creation and grouping tests.
 - `npm run typecheck`: TypeScript validation.
 - `node scripts/build-verified-release.mjs`: builds a separate Manager candidate without overwriting the live build.

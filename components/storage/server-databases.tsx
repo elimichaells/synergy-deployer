@@ -10,6 +10,7 @@ import { formatBytes } from '@/lib/format'
 import { ControlBackupsPanel } from './control-backups-panel'
 import { DataTab } from './data-tab'
 import { SqlTab } from './sql-tab'
+import { RenameDatabaseSheet } from './rename-database-sheet'
 
 interface Server { id: string; name: string; provider: string; username: string | null }
 interface Entry {
@@ -40,6 +41,7 @@ function ServerBlock({ server }: { server: Server }) {
   const [open, setOpen] = useState<Entry | null>(null)
   const [dropping, setDropping] = useState<Entry | null>(null)
   const [creating, setCreating] = useState(false)
+  const [renaming, setRenaming] = useState<Entry | null>(null)
 
   const load = useCallback(async () => {
     setError('')
@@ -80,6 +82,7 @@ function ServerBlock({ server }: { server: Server }) {
               </div>
               <span className="text-xs text-muted-foreground md:text-right">{formatBytes(database.sizeBytes)}</span>
               <div className="flex items-center justify-end gap-1">
+                <Button size="sm" variant="ghost" onClick={() => setRenaming(database)}>Rename</Button>
                 {database.tracked
                   ? <Button asChild size="sm" variant="outline"><Link href={`/storage/${database.id}`}>Open<ArrowUpRight className="ml-1 h-3.5 w-3.5" /></Link></Button>
                   : <Button size="sm" variant="outline" onClick={() => setOpen(database)}><Eye className="mr-1.5 h-3.5 w-3.5" />Browse</Button>}
@@ -92,6 +95,7 @@ function ServerBlock({ server }: { server: Server }) {
       <UntrackedSheet entry={open} system={!!listing?.server.system} onOpenChange={value => { if (!value) setOpen(null) }} />
       <DropSheet serverId={server.id} entry={dropping} onClose={() => setDropping(null)} onDropped={() => { setDropping(null); void load().catch(err => setError((err as Error).message)) }} />
       <CreateSheet serverId={server.id} open={creating} onOpenChange={setCreating} onCreated={() => void load().catch(err => setError((err as Error).message))} />
+      {renaming && <RenameDatabaseSheet serviceId={renaming.id} open={!!renaming} onOpenChange={value => { if (!value) setRenaming(null) }} onDone={() => void load().catch(err => setError((err as Error).message))} />}
     </div>
   )
 }

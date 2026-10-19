@@ -1,4 +1,5 @@
 import type { CommandResult } from './exec'
+import { gitInspectionError } from './deployment-git-error'
 
 type Execute = (command: string) => Promise<CommandResult>
 
@@ -16,7 +17,7 @@ function changedFileSummary(output: string) {
 
 export async function assertCleanDeploymentCheckout(execute: Execute) {
   const status = await execute('git status --porcelain=v1 --untracked-files=no')
-  if (status.code !== 0) throw new Error('Could not check local source changes; deployment stopped without changing the checkout')
+  if (status.code !== 0) throw new Error(gitInspectionError(status.output))
   if (status.output.trim()) {
     throw new Error('Local source changes detected. Deployment stopped to preserve them.' + changedFileSummary(status.output) + ' Review and commit/push the intended changes before redeploying; Manager will not discard them.')
   }

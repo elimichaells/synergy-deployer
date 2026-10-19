@@ -285,7 +285,7 @@ export default function DeploymentPage() {
                 {deployment.security_status === 'passed' ? 'Dependency audit passed' : deployment.security_status === 'failed' ? 'Blocked by security gate' : deployment.security_status === 'overridden' ? 'Released with known vulnerabilities' : deployment.security_status === 'not_applicable' ? 'Audit not applicable' : 'Security gate pending'}
               </span>
               <span className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs', pipeline.zeroDowntime ? 'border-syn-cyan/30 text-syn-cyan' : 'border-border text-muted-foreground')}>
-                <Zap className="h-3.5 w-3.5" />{pipeline.zeroDowntime ? 'Zero-downtime preflight verified' : project?.port ? 'Preflight pending' : 'No preflight (no port)'}
+                <Zap className="h-3.5 w-3.5" />{deployment.log?.includes('[health] HTTP readiness checks disabled') ? 'HTTP readiness not verified' : pipeline.zeroDowntime ? 'Zero-downtime preflight verified' : deployment.log?.includes('[preflight] Skipped by operator') ? 'Candidate preflight skipped' : project?.port ? 'Preflight pending' : 'No preflight (no port)'}
               </span>
               {pipeline.rolledBack && <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300/30 px-2.5 py-1 text-xs text-amber-200"><RotateCcw className="h-3.5 w-3.5" />Auto-rollback succeeded</span>}
             </dd>

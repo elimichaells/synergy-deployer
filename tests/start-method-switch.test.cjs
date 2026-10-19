@@ -26,6 +26,10 @@ async function harness(t, { healthy, status = 'online' }) {
     return { code: 0, output: '' };
   };
   const api = load('lib/deploy.ts', {
+    '@/lib/health-profiles': { applicationHealthProfile: async () => ({path:'/',statuses:[],timeoutMs:60000}) },
+    '@/lib/deployment-log': require('../lib/deployment-log.ts'),
+    '@/lib/startup-diagnostics': require('../lib/startup-diagnostics.ts'),
+    '@/lib/deployment-diagnostics': require('../lib/deployment-diagnostics.ts'),
     '@/lib/db': { query }, '@/lib/exec': { runCommand },
     '@/lib/github-connections': { getGitHubConnectionToken: async () => '' },
     '@/lib/project-types': { normalizeProjectType: value => value || 'next', getProjectTypeDefaults: () => ({ installCmd: null, buildCmd: null, startCmd: null }), getProjectPortEnvironment: (_type, port) => ({ PORT: String(port) }) },

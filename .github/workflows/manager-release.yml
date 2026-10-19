@@ -15,6 +15,31 @@ jobs:
       - name: Check out release source
         uses: actions/checkout@v4
 
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Validate release identity
+        shell: pwsh
+        run: node scripts/check-release.cjs "${{ github.ref_name }}" --write
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Test source
+        run: npm test
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Verify production build
+        env:
+          MANAGER_PREVIEW: "1"
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npm run build
+
       - name: Install .NET 8 SDK
         uses: actions/setup-dotnet@v4
         with:
@@ -24,6 +49,7 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content ./package.json -Raw | ConvertFrom-Json).version
+          node scripts/check-release.cjs "${{ github.ref_name }}"
           ./scripts/package-manager-exe.ps1 -OutputDirectory ./release -Version $version
 
       - name: Publish immutable GitHub release assets

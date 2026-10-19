@@ -1,0 +1,11 @@
+const fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process');
+const root=path.resolve(__dirname,'..');
+const git=(...args)=>cp.execFileSync('git',args,{cwd:root,encoding:'utf8',windowsHide:true}).trim();
+const manifest=JSON.parse(fs.readFileSync(path.join(root,'package.json'))),lock=JSON.parse(fs.readFileSync(path.join(root,'package-lock.json')));
+if(!/^\d+\.\d+\.\d+$/.test(manifest.version)||lock.version!==manifest.version||lock.packages?.['']?.version!==manifest.version)throw Error('Release versions do not match');
+const tag=process.argv.slice(2).find(arg=>arg!=='--write');
+if(tag&&tag!=='v'+manifest.version)throw Error('Release tag does not match package version');
+if(git('status','--porcelain'))throw Error('Release requires a clean source checkout');
+const metadata={version:manifest.version,sourceCommit:git('rev-parse','HEAD'),sourceDirty:false};
+if(process.argv.includes('--write'))fs.writeFileSync(path.join(root,'release-source.json'),JSON.stringify(metadata,null,2)+'\n');
+console.log(JSON.stringify(metadata));

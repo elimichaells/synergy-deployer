@@ -12,6 +12,7 @@ export const navItems = [
 
 /** Server-level areas, shown in the Infrastructure side menu. */
 export const infrastructureItems = [
+  { href: '/infrastructure/health', label: 'Health & alerts', icon: Gauge, description: 'Disk, process and response warnings before an outage' },
   { href: '/domains', label: 'Domains & DNS', icon: Globe2, description: 'Cloudflare accounts and every public address' },
   { href: '/services', label: 'Processes', icon: Cpu, description: 'Running processes and the Caddy web server' },
   { href: '/infrastructure/memory', label: 'Memory', icon: MemoryStick, description: 'What uses the server\'s memory, warnings and limits' },

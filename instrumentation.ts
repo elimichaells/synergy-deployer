@@ -1,4 +1,7 @@
 export async function register() {
+  // An isolated release preview must not run schedulers, migrations, job recovery
+  // or proxy rewrites against the production control plane.
+  if (process.env.MANAGER_PREVIEW === '1') return
   if (process.env.NEXT_RUNTIME === 'nodejs') {
     const { seedSettingsFromEnv } = await import('@/lib/settings')
     await seedSettingsFromEnv()

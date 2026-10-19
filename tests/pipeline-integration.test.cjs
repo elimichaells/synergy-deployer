@@ -108,6 +108,9 @@ test('real Windows PM2: live build, directory activation and failed-health rollb
     assert.equal(await httpBody(), 'old');
     const query = async sql => ({ rows: sql.includes('INSERT INTO deployments') ? [{ id: 'fixture-' + (++deployment) }] : [] });
     const api = load('lib/deploy.ts', {
+    '@/lib/health-profiles': { applicationHealthProfile: async () => ({path:'/',statuses:[],timeoutMs:60000}) },
+    '@/lib/deployment-log': require('../lib/deployment-log.ts'),
+    '@/lib/startup-diagnostics': require('../lib/startup-diagnostics.ts'),
       '@/lib/db': { query }, '@/lib/exec': { runCommand }, '@/lib/github-connections': { getGitHubConnectionToken: async () => null },
       '@/lib/project-types': require('../lib/project-types.ts'), '@/lib/notify': { notifyDeploy: async () => {} },
       '@/lib/project-databases': { getProjectDatabaseEnv: async () => ({}) }, '@/lib/data-services': { getProjectDataServiceEnv: async () => ({}) },

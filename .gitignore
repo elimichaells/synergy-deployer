@@ -27,3 +27,5 @@ start
 
 # Manager-owned temporary security policy
 /security-exceptions.json
+/release-source.json
+/_prod_deploy_log.txt

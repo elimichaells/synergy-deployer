@@ -406,7 +406,10 @@ try {
         $env:APP_POSTGRES_CONNECTION_NAME=$appDbConnectionName; $env:APP_POSTGRES_SERVICE_NAME=$appDbServiceName
     }
     Invoke-Native 'node.exe' @('scripts\initialize-manager.js') 'Apply schema and create administrator'
-    Invoke-Native 'npm.cmd' @('run','build') 'Build Manager'
+    $previousPreview = $env:MANAGER_PREVIEW
+    try { $env:MANAGER_PREVIEW='1'; Invoke-Native 'npm.cmd' @('run','build') 'Build Manager without starting background services' }
+    finally { $env:MANAGER_PREVIEW=$previousPreview }
+    Invoke-Native 'npm.cmd' @('ci','--omit=dev','--ignore-scripts','--no-audit','--no-fund') 'Install locked runtime dependencies'
 } finally { Pop-Location }
 
 Write-Step 'Configuring and validating Caddy'

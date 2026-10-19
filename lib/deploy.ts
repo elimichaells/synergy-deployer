@@ -20,6 +20,7 @@ import { captureProjectProcesses, stopProjectProcesses } from '@/lib/deployment-
 import { recoverProjectTerminalLocks } from '@/lib/deployment-terminals'
 import { logProjectDirectoryHandles } from '@/lib/deployment-locks'
 import { managedStartCommand, managedRuntimeEnvironment } from '@/lib/deployment-runtime'
+import { formatRuntimeDiagnostics } from '@/lib/deployment-diagnostics'
 import { parse as parseDotenv } from 'dotenv'
 import { getProjectTypeDefaults, getProjectPortEnvironment, normalizeProjectType, type ProjectType } from '@/lib/project-types'
 import { notifyDeploy, sendNotification } from '@/lib/notify'
@@ -27,6 +28,9 @@ import { getProjectDatabaseEnv } from '@/lib/project-databases'
 import { getProjectDataServiceEnv } from '@/lib/data-services'
 import { projectRuntimeEnvironment } from '@/lib/runtimes'
 import { waitForDeploymentHealth } from '@/lib/deployment-health'
+import { applicationHealthProfile } from '@/lib/health-profiles'
+import { createDeploymentLogWriter } from '@/lib/deployment-log'
+import { customStartupWarning } from '@/lib/startup-diagnostics'
 import { runDeploymentCommand } from '@/lib/deployment-command'
 import { detectGoBuildCommand } from '@/lib/deployment-go'
 import { syncDeploymentCheckout } from '@/lib/deployment-git'
@@ -86,6 +90,10 @@ export interface DeployProject {
 }
 
 export interface DeployOptions {
+  /** Operator accepts activation without HTTP readiness checks for this release. */
+  healthCheck?: boolean
+  /** Skip the temporary-port boot check for this deployment; final health and rollback remain enabled. */
+  preflight?: boolean
   userId?: string | null
   trigger: 'manual' | 'webhook' | 'promote' | 'rollback'
   commitSha?: string
@@ -392,7 +400,7 @@ export async function restartWithFreshEnvironment(projectId: string, onProgress?
   const restart = await runCommand(`pm2 restart "${project.pm2_name}" --update-env`, project.root_path, 60_000, undefined, env, false)
   if (restart.code !== 0) return { healthy: false, reason: 'PM2 could not restart the application' }
   if (project.port) {
-    const health = await waitForDeploymentHealth(project.port, { checkProcess: timeout => getPm2ProcessStatus(project.pm2_name, timeout), onProgress })
+    const health = await waitForDeploymentHealth(project.port, { ...await applicationHealthProfile(project.pm2_name), checkProcess: timeout => getPm2ProcessStatus(project.pm2_name, timeout), onProgress })
     return { healthy: health.healthy, reason: health.healthy ? null : health.reason || 'Health check failed' }
   }
   await new Promise(resolve => setTimeout(resolve, 5000))
@@ -439,7 +447,6 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
   activeDeployments.add(deploymentId)
   const started = Date.now()
   let log = '[system] Starting isolated deployment; current release stays online during build\n'
-  let flushing: Promise<void> | undefined
   let activating = false
   let accepted = false
   let recoverable = true
@@ -456,14 +463,10 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
   const root = release.candidate
   const check = () => throwIfCancelled(deploymentId)
   const redact = (value: string) => value.replace(/(https?:\/\/)[^\s/@]+@/gi, '$1[REDACTED]@')
-  const flush = (): Promise<void> => flushing ??= (async () => {
-    while (true) {
-      const current = log
-      await query('UPDATE deployments SET log=$1 WHERE id=$2', [current, deploymentId])
-      if (current === log) break
-    }
-  })().finally(() => { flushing = undefined })
-  const append = async (chunk: string) => { log += redact(chunk); await flush() }
+  const logWriter = createDeploymentLogWriter(chunk => query("UPDATE deployments SET log=COALESCE(log,'') || $1 WHERE id=$2", [chunk, deploymentId]))
+  logWriter.append(log)
+  const flush = () => logWriter.flush()
+  const append = async (chunk: string) => { const safe = redact(chunk); log += safe; logWriter.append(safe) }
   let lastStage = { phase: 'prepare', startedAt: Date.now() }
   const stage = async (phase: string) => {
     check()
@@ -474,7 +477,10 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
   }
   const git = async (command: string, cwd = root) => {
     check()
-    const result = await runCommand(command, cwd, GIT_NETWORK_TIMEOUT, undefined, undefined, false)
+    // Trust only the explicitly configured checkout for this one Git invocation.
+    // This avoids per-account global settings when Windows restores PM2 as SYSTEM.
+    const gitEnv = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'safe.directory', GIT_CONFIG_VALUE_0: path.resolve(cwd).replace(/\\/g, '/') }
+    const result = await runCommand(command, cwd, GIT_NETWORK_TIMEOUT, undefined, gitEnv, false)
     check()
     return result
   }
@@ -489,6 +495,14 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
     await append(result.output)
     if (result.code) throw new Error('PM2 operation failed')
     return result
+  }
+  const runtimeFailure = async (name: string, env: Record<string, string>, reason: string) => {
+    try {
+      const logs = await runCommand(`pm2 logs "${name}" --err --nostream --lines 20`, root, 15_000, undefined, undefined, false)
+      const diagnostic = formatRuntimeDiagnostics(logs.output.slice(-16_000), env)
+      if (diagnostic.details) await append(diagnostic.details)
+      return reason + (diagnostic.summary ? '; runtime cause: ' + diagnostic.summary : '; inspect the application runtime logs for details')
+    } catch { return reason + '; runtime logs could not be collected' }
   }
   const stopService = async (name: string, action: 'stop' | 'delete', laravel = false, serviceRoot = project.root_path) => {
     const snapshot = await runCommand('pm2 jlist', undefined, 15_000)
@@ -622,6 +636,10 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
     Object.assign(project, { project_type: candidateProject.project_type, install_cmd: candidateProject.install_cmd,
       build_cmd: candidateProject.build_cmd, start_cmd: candidateProject.start_cmd })
     getPm2StartCommand(project, project.root_path)
+    let packageScripts: Record<string, string> | undefined
+    try { packageScripts = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).scripts } catch { /* Non-Node projects have no package file. */ }
+    const startupWarning = customStartupWarning(project.project_type, project.start_cmd, packageScripts)
+    if (startupWarning) throw new Error(startupWarning)
     const startCommand = getStartCommand(project)
     if (startCommand) managedStartCommand(startCommand, normalizeProjectType(project.project_type), project.port)
     const databaseEnv = { ...await getProjectDatabaseEnv(project.id), ...await getProjectDataServiceEnv(project.id) }
@@ -767,7 +785,13 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
 
     // Prove that the built candidate can actually boot and answer HTTP before
     // changing the live directory or stopping the current process.
-    if (project.port) {
+    if (options.healthCheck === false) {
+      await append('[health] HTTP readiness checks disabled by operator for this deployment; application readiness will not be verified\n')
+    }
+    if (project.port && options.preflight === false && options.healthCheck !== false) {
+      await append('[preflight] Skipped by operator for this deployment; final health check and rollback remain enabled\n')
+    }
+    if (project.port && options.preflight !== false && options.healthCheck !== false) {
       await stage('preflight')
       previewPort = await allocateTemporaryPort()
       previewName = `${project.pm2_name}:candidate:${deploymentId.slice(0, 8)}`
@@ -776,9 +800,10 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
       await append(`[preflight] Starting candidate on temporary port ${previewPort}; current release remains online\n`)
       await pm2(getPm2StartCommand(previewProject, root), root, previewEnv)
       previewRunning = true
-      const previewHealth = await waitForDeploymentHealth(previewPort, {
+      const previewHealth = await waitForDeploymentHealth(previewPort, { ...await applicationHealthProfile(project.pm2_name),
         checkProcess: timeout => getPm2ProcessStatus(previewName!, timeout), checkCancelled: check, onProgress: append })
-      if (!previewHealth.healthy) throw new Error('Candidate preflight failed: ' + (previewHealth.reason || 'health check failed'))
+      if (!previewHealth.healthy) throw new Error(await runtimeFailure(previewName, previewEnv,
+        'Candidate preflight failed: ' + (previewHealth.reason || 'health check failed')))
       await append('[preflight] Candidate boot and HTTP health verified before activation\n')
       const domains = await query<{ hostname: string }>('select hostname from project_domains where project_id=$1 order by hostname', [project.id])
       projectDomains = domains.rows.map(row => row.hostname)
@@ -866,10 +891,10 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
     }
     await pm2(getPm2StartCommand(project, project.root_path), project.root_path, runtimeEnv)
     await stage('health')
-    if (project.port) {
-      const health = await waitForDeploymentHealth(project.port, {
+    if (project.port && options.healthCheck !== false) {
+      const health = await waitForDeploymentHealth(project.port, { ...await applicationHealthProfile(project.pm2_name),
         checkProcess: timeout => getPm2ProcessStatus(project.pm2_name, timeout), checkCancelled: check, onProgress: append })
-      if (!health.healthy) throw new Error(health.reason || 'Candidate health check failed')
+      if (!health.healthy) throw new Error(await runtimeFailure(project.pm2_name, runtimeEnv, health.reason || 'Candidate health check failed'))
       await append('[health] OK\n')
     }
     if (caddyOnPreview && project.port) {
@@ -888,7 +913,7 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
     pausedWorkers.length = 0
     if (!script && project.post_deploy_cmd) {
       const post = await execute(project.post_deploy_cmd, runtimeEnv, project.root_path)
-      if (post.code) await append('[post-deploy] Command failed; healthy release remains active\n')
+      if (post.code) await append('[post-deploy] Command failed; activated release remains active\n')
     }
     await pm2('pm2 save')
     await append('[release] Active on original port; previous source retained at ' + release.previous + '\n')
@@ -918,7 +943,7 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
           await pm2(`pm2 start "${previousProcessFile}" --only "${project.pm2_name}"`)
           if (previousStatus === 'stopped') await pm2(`pm2 stop "${project.pm2_name}"`)
           if (previousStatus === 'online' && project.port) {
-            const restored = await waitForDeploymentHealth(project.port, { checkProcess: timeout => getPm2ProcessStatus(project.pm2_name, timeout), checkCancelled: () => {}, onProgress: append })
+            const restored = await waitForDeploymentHealth(project.port, { ...await applicationHealthProfile(project.pm2_name), checkProcess: timeout => getPm2ProcessStatus(project.pm2_name, timeout), checkCancelled: () => {}, onProgress: append })
             if (!restored.healthy) throw new Error('Previous process did not recover: ' + restored.reason)
             await append('[rollback] Previous release health verified\n')
           }
@@ -954,12 +979,15 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
       try { await stopService(previewName, 'delete', normalizeProjectType(project.project_type) === 'laravel', root) } catch { await append('[preflight] Candidate cleanup requires attention\n') }
       previewRunning = false
     }
+    // A failed buffered write must not prevent rollback or the final full-log retry.
+    await logWriter.flush().catch(() => {})
     await query(`UPDATE deployments SET status=$1,phase=$2,security_status=case when phase='security' then 'failed' else security_status end,finished_at=now(),log=$3 WHERE id=$4`,
       [accepted ? 'success' : 'failed', accepted ? 'complete_with_warning' : 'failed', log, deploymentId])
     void notifyDeploy({ projectName: project.name, status: accepted ? 'success' : 'failed', trigger: options.trigger,
       durationMs: Date.now() - started, error: message })
     return { deploymentId, status: accepted ? 'success' : 'failed', log }
   } finally {
+    await logWriter.close().catch(() => {})
     activeDeployments.delete(deploymentId)
     cancelledDeployments.delete(deploymentId)
   }
@@ -1020,7 +1048,7 @@ export async function switchStartMethod(projectId: string, method: 'direct' | 'r
       const started = await runCommand(getPm2StartCommand(project, project.root_path), project.root_path, 60_000, undefined, env, false)
       if (started.code) return { healthy: false, reason: 'PM2 could not start the application' }
       if (project.port) {
-        const health = await waitForDeploymentHealth(project.port, { checkProcess: timeout => getPm2ProcessStatus(project.pm2_name, timeout), onProgress })
+        const health = await waitForDeploymentHealth(project.port, { ...await applicationHealthProfile(project.pm2_name), checkProcess: timeout => getPm2ProcessStatus(project.pm2_name, timeout), onProgress })
         return { healthy: health.healthy, reason: health.healthy ? null : health.reason || 'Health check failed' }
       }
       await new Promise(resolve => setTimeout(resolve, 5000))

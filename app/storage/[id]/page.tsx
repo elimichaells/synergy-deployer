@@ -13,6 +13,8 @@ import { ProviderLogo, providerMeta, type Provider } from '@/components/app/prov
 import { Flag, serverRoleLabel } from '@/components/storage/bits'
 import { DedicatedUserSheet } from '@/components/storage/dedicated-user-sheet'
 import { MoveDatabaseSheet } from '@/components/storage/move-database-sheet'
+import { RenameDatabaseSheet } from '@/components/storage/rename-database-sheet'
+import { RenameReminders } from '@/components/storage/rename-reminders'
 import { DataTab } from '@/components/storage/data-tab'
 import { SqlTab } from '@/components/storage/sql-tab'
 import { ScheduleSheet, type ScheduleValues } from '@/components/storage/schedule-sheet'
@@ -47,6 +49,7 @@ export default function DatabasePage() {
   const [copied, setCopied] = useState(false)
   const [dedicatedOpen, setDedicatedOpen] = useState(false)
   const [moveOpen, setMoveOpen] = useState(false)
+  const [renameOpen, setRenameOpen] = useState(false)
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const [now, setNow] = useState(() => Date.now())
 
@@ -145,6 +148,7 @@ export default function DatabasePage() {
       >
         {error && <div role="alert" className="notice-error">{error}</div>}
         {notice && <p role="status" className="mb-5 rounded-md border border-status-ready/25 bg-status-ready/5 px-4 py-3 text-sm text-emerald-200">{notice}</p>}
+        <RenameReminders database={database.database} refreshKey={String(now)} />
 
         <TabsContent value="overview" className="mt-0 space-y-6">
           {recommendations.length > 0 && (
@@ -264,6 +268,8 @@ export default function DatabasePage() {
         </TabsContent>
 
         <TabsContent value="settings" className="mt-0 space-y-6">
+          {isPostgres && access.isAdmin && <Section title="Rename database" description="Update this database's name while keeping its data. Review every app sharing it and update their saved environment files and connection settings afterward."
+            action={<Button size="sm" variant="outline" onClick={() => setRenameOpen(true)}>Review rename</Button>} />}
           {isPostgres && database.serverRole !== 'external' && <Section title="Move to another server" description="Make an exact copy on another PostgreSQL server on this machine with its own login, check it, and switch the apps over. The original is kept until you remove it."
             action={<Button size="sm" variant="outline" onClick={() => setMoveOpen(true)}><Truck className="mr-1.5 h-3.5 w-3.5" />Plan the move</Button>} />}
           <Section title="Copy data to another database" description="Move this database to another server or engine, for example from Synergy's system server to the apps server. The copy is checked table by table and nothing here is changed.">
@@ -283,6 +289,7 @@ export default function DatabasePage() {
       </AppShell>
       <ScheduleSheet target={{ kind: 'service', serviceId: database.id }} initial={database.backup} open={scheduleOpen} onOpenChange={setScheduleOpen} onSaved={() => void load().catch(() => undefined)} />
       {isPostgres && <MoveDatabaseSheet serviceId={database.id} open={moveOpen} onOpenChange={setMoveOpen} onDone={() => void load().catch(() => undefined)} />}
+      {isPostgres && access.isAdmin && <RenameDatabaseSheet serviceId={database.id} open={renameOpen} onOpenChange={setRenameOpen} onDone={() => { setRevealed(null); void load().catch(() => undefined) }} />}
       <DedicatedUserSheet serviceId={database.id} open={dedicatedOpen} onOpenChange={setDedicatedOpen} onDone={() => { setRevealed(null); void load().catch(() => undefined) }} />
     </Tabs>
   )

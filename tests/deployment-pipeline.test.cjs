@@ -8,7 +8,7 @@ const load = require('./server-module.cjs');
 
 test('host installation slots serialize heavy work and release on failure', async () => {
   let locked = false; let running = 0; let maximum = 0; let releases = 0;
-  const api = load('lib/deployment-capacity.ts', { '@/lib/db': { db: { connect: async () => {
+  const api = load('lib/deployment-capacity.ts', { './disk-capacity': { requireDeploymentDiskSpace: () => {} }, '@/lib/db': { db: { connect: async () => {
     const client = new EventEmitter();
     client.query = async sql => { if (sql.includes('try_advisory')) { const acquired = !locked; if (acquired) locked = true; return { rows: [{ locked: acquired }] }; } locked = false; return { rows: [] }; };
     client.release = () => { releases++; }; return client;
@@ -24,7 +24,7 @@ test('host installation slots serialize heavy work and release on failure', asyn
 
 test('cancelled installation queue never starts work or leaks a connection', async () => {
   let connections = 0;
-  const api = load('lib/deployment-capacity.ts', { '@/lib/db': { db: { connect: async () => { connections++; throw new Error('must not connect'); } } } });
+  const api = load('lib/deployment-capacity.ts', { './disk-capacity': { requireDeploymentDiskSpace: () => {} }, '@/lib/db': { db: { connect: async () => { connections++; throw new Error('must not connect'); } } } });
   await assert.rejects(api.withInstallationSlot(async () => assert.fail(), () => {}, () => { throw new Error('cancelled'); }), /cancelled/);
   assert.equal(connections, 0);
 });
@@ -43,7 +43,7 @@ function lockDb(state) {
 
 test('a build waits for free memory, then runs, and only one build runs at a time', async () => {
   const state = { held: new Set() };
-  const api = load('lib/deployment-capacity.ts', { '@/lib/db': lockDb(state) });
+  const api = load('lib/deployment-capacity.ts', { './disk-capacity': { requireDeploymentDiskSpace: () => {} }, '@/lib/db': lockDb(state) });
   const log = [];
   const free = [900, 1200, 4096, 4096, 4096, 4096, 4096, 4096];
   let reads = 0;
@@ -66,7 +66,7 @@ test('a build waits for free memory, then runs, and only one build runs at a tim
 });
 
 test('a cancelled deployment stops waiting for memory without building', async () => {
-  const api = load('lib/deployment-capacity.ts', { '@/lib/db': lockDb({ held: new Set() }) });
+  const api = load('lib/deployment-capacity.ts', { './disk-capacity': { requireDeploymentDiskSpace: () => {} }, '@/lib/db': lockDb({ held: new Set() }) });
   let checks = 0;
   await assert.rejects(api.withBuildSlot(async () => assert.fail('must not build'), () => {}, () => { if (++checks > 2) throw new Error('cancelled'); }, () => 100, 5), /cancelled/);
 });
@@ -116,6 +116,9 @@ async function pipeline(t, failure, cacheHit = false, options = { trigger: 'manu
   };
   const cache = load('lib/deployment-cache.ts', { './deployment-preparation': prep });
   const api = load('lib/deploy.ts', {
+    '@/lib/health-profiles': { applicationHealthProfile: async () => ({path:'/',statuses:[],timeoutMs:60000}) },
+    '@/lib/deployment-log': extra.logWriter ? {createDeploymentLogWriter: extra.logWriter} : require('../lib/deployment-log.ts'),
+    '@/lib/startup-diagnostics': require('../lib/startup-diagnostics.ts'),
     '@/lib/db': { query }, '@/lib/exec': { runCommand: command },
     '@/lib/github-connections': { getGitHubConnectionToken: async () => 'fixture-token' },
     '@/lib/project-types': { normalizeProjectType: value => value || 'next', getProjectTypeDefaults: () => ({ installCmd: null, buildCmd: 'npm run build', startCmd: null }), getProjectPortEnvironment: (_type, port) => ({ PORT: String(port) }) },
@@ -134,6 +137,7 @@ async function pipeline(t, failure, cacheHit = false, options = { trigger: 'manu
     '@/lib/deployment-go': {}, '@/lib/deployment-git': { assertCleanDeploymentCheckout: async () => {}, syncDeploymentCheckout: async () => {} },
     '@/lib/deployment-preparation': prep,
     '@/lib/deployment-runtime': require('../lib/deployment-runtime.ts'),
+    '@/lib/deployment-diagnostics': require('../lib/deployment-diagnostics.ts'),
     '@/lib/deployment-terminals': { recoverProjectTerminalLocks: async root => { calls.push({ kind: 'terminal-recovery', root }); } },
     '@/lib/deployment-locks': { logProjectDirectoryHandles: async () => {} },
     '@/lib/deployment-processes': {
@@ -426,6 +430,51 @@ test('failed candidate preflight leaves the current directory and process untouc
   assert.equal(calls.some(call => call.kind === 'query' && call.sql.includes('SET active_deployment_id')), false);
   assert.equal(calls.some(call => call.kind === 'process-stop' && call.root === root), false);
   assert.equal(calls.some(call => call.kind === 'process-stop' && call.root === candidate), true);
+});
+
+test('operator can skip candidate preflight while keeping saved environment and final health checks', async t => {
+  const { calls, result } = await pipeline(t, null, false, { trigger: 'manual', preflight: false }, false, null, null,
+    { files: { '.env.local': 'DATABASE_OWNER_URL=fixture-owner-url\n' } });
+  assert.equal(result.status, 'success');
+  assert.match(result.log, /Skipped by operator/);
+  assert.equal(calls.some(call => call.kind === 'command' && call.cmd.includes(':candidate:')), false);
+  assert.equal(calls.filter(call => call.kind === 'health').length, 1);
+  const start = calls.find(call => call.kind === 'command' && call.cmd.startsWith('pm2 start'));
+  assert.equal(start.env.DATABASE_OWNER_URL, 'fixture-owner-url');
+  assert.ok(calls.findIndex(call => call.kind === 'activate') < calls.findIndex(call => call.kind === 'health'));
+});
+
+test('skipping preflight still rolls back when final health fails', async t => {
+  const { calls, result } = await pipeline(t, 'health', false, { trigger: 'manual', preflight: false });
+  assert.equal(result.status, 'failed');
+  assert.ok(calls.some(call => call.kind === 'activate'));
+  assert.ok(calls.some(call => call.kind === 'rollback'));
+  assert.equal(calls.some(call => call.kind === 'query' && call.sql.includes('SET active_deployment_id')), false);
+});
+
+test('failed buffered log persistence does not block rollback and the final full log retry', async t => {
+  let flushes=0;
+  const logWriter=()=>({append:()=>{},flush:async()=>{if(++flushes>1)throw new Error('log database unavailable')},close:async()=>{}});
+  const {calls,result}=await pipeline(t,'health',false,{trigger:'manual',preflight:false},false,null,null,{logWriter});
+  assert.equal(result.status,'failed');assert.ok(calls.some(c=>c.kind==='rollback'));
+  const final=calls.find(c=>c.kind==='query' && c.sql.includes('finished_at=now(),log=$3'));
+  assert.ok(final);assert.match(final.values[2],/rollback/);
+});
+
+test('operator can deploy without HTTP checks while build and security gates remain active', async t => {
+  const { calls, result } = await pipeline(t, 'health', false, { trigger: 'manual', healthCheck: false });
+  assert.equal(result.status, 'success');
+  assert.match(result.log, /readiness will not be verified/);
+  assert.equal(calls.filter(call => call.kind === 'health').length, 0);
+  assert.equal(calls.some(call => call.kind === 'command' && call.cmd.includes(':candidate:')), false);
+  assert.ok(calls.some(call => call.kind === 'activate'));
+  assert.equal(calls.filter(call => call.kind === 'build-command' && call.cmd.startsWith('npm audit')).length, 2);
+});
+
+test('HTTP check opt-out does not override a failing security gate', async t => {
+  const { calls, result } = await pipeline(t, 'audit', false, { trigger: 'manual', healthCheck: false });
+  assert.equal(result.status, 'failed');
+  assert.equal(calls.some(call => call.kind === 'activate'), false);
 });
 
 test('a preview that cannot be stopped blocks Windows activation while the live service stays online', { skip: process.platform !== 'win32' }, async t => {

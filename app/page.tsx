@@ -8,13 +8,15 @@ import { Button } from '@/components/ui/button'
 import { DeploymentRow, type DeploymentSummary } from '@/components/synergy/deployment-row'
 import { FrameworkAvatar } from '@/components/synergy/framework-logo'
 import { PipelineMini } from '@/components/synergy/pipeline'
-import { StatusDot, statusMeta } from '@/components/synergy/status'
 import { deploymentDuration, formatSeconds, relativeTime, stagesFromPhase } from '@/lib/deployment-stages'
 import { cn } from '@/lib/utils'
+import { useServerHealth } from '@/components/server-health'
+import { applicationState, applicationHealthLabels } from '@/lib/application-health'
 
 interface Project {
   id: string
   name: string
+  pm2_name: string
   is_active: boolean
   project_type: string
   environment: 'production' | 'staging'
@@ -33,6 +35,7 @@ interface SessionUser {
 const DAY = 86_400_000
 
 export default function Dashboard() {
+  const { health, error: healthError } = useServerHealth()
   const [projects, setProjects] = useState<Project[]>([])
   const [deployments, setDeployments] = useState<DeploymentSummary[]>([])
   const [user, setUser] = useState<SessionUser | null>(null)
@@ -81,13 +84,13 @@ export default function Dashboard() {
     const finished = week.filter(d => d.status === 'success' || d.status === 'failed')
     const ok = finished.filter(d => d.status === 'success')
     return {
-      online: projects.filter(p => p.is_active).length,
+      online: projects.filter(p => applicationState(healthError ? null : health, p.pm2_name) === 'ready').length,
       today: deployments.filter(d => d.started_at && now - Date.parse(d.started_at) < DAY).length,
       week: week.length,
       successRate: finished.length ? Math.round((ok.length / finished.length) * 100) : null,
       failing: [...latestByProject.values()].filter(d => d.status === 'failed').length,
     }
-  }, [deployments, projects, latestByProject, now])
+  }, [deployments, projects, latestByProject, now, health, healthError])
 
   const lastRelease = deployments.find(d => d.status === 'success')
   const greeting = new Date(now).getHours() < 12 ? 'Good morning' : new Date(now).getHours() < 18 ? 'Good afternoon' : 'Good evening'
@@ -116,10 +119,10 @@ export default function Dashboard() {
         {active.length === 0 ? (
           <div className="grid grid-cols-2 md:grid-cols-4">
             {[
-              ['Applications', String(projects.length), `${stats.online} online`],
+              ['Applications', String(projects.length), healthError || !health || health.stale ? 'Health unknown' : `${stats.online} readiness checks passed`],
               ['Deploys today', String(stats.today), `${stats.week} this week`],
               ['Success rate', stats.successRate === null ? '—' : `${stats.successRate}%`, 'last 7 days'],
-              ['Needs attention', String(stats.failing), stats.failing ? 'latest release failed' : 'everything healthy'],
+              ['Needs attention', String(stats.failing), stats.failing ? 'latest release failed' : 'no recent release failures'],
             ].map(([label, value, hint], index) => (
               <div key={label} className={cn('px-5 py-4', index % 2 === 1 && 'border-l border-border', index > 1 && 'border-t border-border md:border-t-0', index === 2 && 'md:border-l')}>
                 <p className="text-xs text-muted-foreground">{label}</p>
@@ -186,7 +189,7 @@ export default function Dashboard() {
               ) : (
                 <div className="divide-y divide-border">
                   {projects.slice(0, 7).map(project => {
-                    const latest = latestByProject.get(project.id)
+                    const readiness = applicationState(healthError ? null : health, project.pm2_name)
                     return (
                       <Link key={project.id} href={`/sites/${project.id}`} className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-white/[0.025]">
                         <FrameworkAvatar type={project.project_type} size="sm" />
@@ -194,9 +197,7 @@ export default function Dashboard() {
                           <p className="truncate text-[13px] font-medium">{project.name}</p>
                           <p className="truncate text-[11px] text-muted-foreground">{project.url?.replace(/^https?:\/\//, '') || (project.port ? `localhost:${project.port}` : project.environment)}</p>
                         </div>
-                        {project.setup_required ? <span className="text-[11px] text-amber-200">Setup</span> : latest ? (
-                          <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground"><StatusDot status={latest.status} className="scale-75" />{statusMeta[latest.status].label}</span>
-                        ) : <span className="text-[11px] text-muted-foreground">Not deployed</span>}
+                        <span className={cn('text-[11px]', readiness === 'ready' ? 'text-emerald-300' : readiness === 'degraded' || readiness === 'offline' ? 'text-amber-200' : 'text-muted-foreground')}>{project.setup_required ? 'Setup' : applicationHealthLabels[readiness]}</span>
                       </Link>
                     )
                   })}

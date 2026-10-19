@@ -48,3 +48,18 @@ test('stalled detail requests time out and retry without overlapping requests', 
   assert.equal(errors, 1); await clock.tick(5000); assert.equal(requests, 2);
   watcher.close(); await settle(); assert.equal(clock.pending.size, 0);
 });
+
+test('incremental polling drains completed backlog using server cursors and supports a reset', async t => {
+  const clock = timers(t); const urls = []; const updates = [];
+  const chunks = [
+    { log_chunk: 'A😀', log_next: 2, log_complete: false },
+    { log_chunk: 'new', log_next: 3, log_reset: true, log_complete: false },
+    { log_chunk: ' end', log_next: 7, log_complete: true },
+  ];
+  t.mock.method(global, 'fetch', async url => { urls.push(url); return Response.json({ id: 'fixture', status: 'success', ...chunks.shift() }); });
+  watchDeployment('fixture', update => updates.push(update));
+  await settle(); await clock.tick(100); await clock.tick(100);
+  assert.deepEqual(urls.map(url => new URL(url, 'http://test').searchParams.get('after')), ['0', '2', '3']);
+  assert.deepEqual(updates.map(x => x.log), ['A😀', 'new', 'new end']);
+  assert.equal(clock.pending.size, 0);
+});

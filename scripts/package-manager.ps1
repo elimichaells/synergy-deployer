@@ -22,6 +22,9 @@ try {
     $sourceCommit = & git rev-parse HEAD
     if ($LASTEXITCODE -ne 0) { throw 'Packaging requires a Git source checkout' }
     $sourceDirty = [bool](@(& git status --porcelain).Count)
+    if ($sourceDirty) { throw 'Formal release packaging requires a clean source checkout. Commit and verify the reviewed source first.' }
+    $packageVersion = (Get-Content (Join-Path $root 'package.json') -Raw | ConvertFrom-Json).version
+    if ($Version -ne $packageVersion) { throw 'Package version must match package.json' }
     $sourceFiles = @(& git ls-files --cached --others --exclude-standard)
     if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate Manager source files' }
     $blocked = @('.env.local','pm2_jlist.json','pm2_list.json','pm2_fresh.json','manager_logs.txt','manager_logs_utf8.txt','build.log','_prod_deploy_log.txt','tsconfig.tsbuildinfo')

@@ -41,38 +41,24 @@ test('startup retries report progress and stop on a healthy response', async () 
   const result = await waitForDeploymentHealth(3010, { onProgress: message => { messages.push(message) } }, clock.dependencies)
   assert.equal(result.healthy, true)
   assert.equal(clock.calls(), 2)
-  assert.match(messages[0], /HTTP 503; \d+s remaining/)
+  assert.match(messages[0], /HTTP 503 at \/; \d+s remaining/)
 })
 
-test('404 and navigation redirects are acceptable without following external redirects', async () => {
-  for (const status of [404, 301, 302, 303, 307, 308]) {
-    const clock = fakeClock([status])
-    const result = await waitForDeploymentHealth(3010, {}, {
-      ...clock.dependencies,
-      fetch: (async (url, init) => {
-        assert.equal(url, 'http://127.0.0.1:3010')
-        assert.equal(init?.redirect, 'manual')
-        return clock.dependencies.fetch(url, init)
-      }) as typeof fetch,
-    })
-    assert.equal(result.healthy, true)
-  }
-})
-
-test('a real Next-style login redirect passes without requesting the destination', async () => {
+test('a login redirect must reach a working page', async () => {
   const paths: string[] = []
   const server = createServer((request, response) => {
     paths.push(request.url || '')
-    response.writeHead(request.url === '/' ? 307 : 500, { Location: '/login' })
+    if (request.url === '/') response.writeHead(307, { Location: '/login' })
+    else response.writeHead(500)
     response.end()
   })
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   try {
     const address = server.address()
     assert.ok(address && typeof address !== 'string')
-    const result = await waitForDeploymentHealth(address.port, { timeoutMs: 2000 })
-    assert.equal(result.healthy, true)
-    assert.deepEqual(paths, ['/'])
+    const result = await waitForDeploymentHealth(address.port, { timeoutMs: 500, intervalMs: 10 })
+    assert.equal(result.healthy, false)
+    assert.ok(paths.includes('/login'))
   } finally {
     server.closeAllConnections()
     await new Promise<void>(resolve => server.close(() => resolve()))
@@ -80,7 +66,7 @@ test('a real Next-style login redirect passes without requesting the destination
 })
 
 test('non-navigation 3xx responses and HTTP errors do not pass health checks', async () => {
-  for (const status of [300, 304, 305, 400, 401, 403, 429, 500, 503]) {
+  for (const status of [300, 304, 305, 400, 401, 403, 404, 429, 500, 503]) {
     const clock = fakeClock([status])
     const result = await waitForDeploymentHealth(3010, { timeoutMs: 500 }, clock.dependencies)
     assert.equal(result.healthy, false, `HTTP ${status}`)

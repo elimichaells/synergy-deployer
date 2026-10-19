@@ -9,6 +9,7 @@ import { Switch } from '@/components/ui/switch'
 export interface ScheduleValues {
   enabled: boolean; frequency: string; timeOfDay: string; timezone: string
   dayOfWeek: number; dayOfMonth: number; monthOfYear: number; retentionCount: number
+  credentialSource?: 'application' | 'connection'
 }
 
 const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -64,6 +65,12 @@ export function ScheduleSheet({ target, initial, open, onOpenChange, onSaved }: 
             <label className="field-label">Time zone<select className="control-input" value={values.timezone} onChange={event => set('timezone', event.target.value)}>{(timezones.includes(values.timezone) ? timezones : [values.timezone, ...timezones]).map(zone => <option key={zone} value={zone}>{zone}</option>)}</select></label>
           </div>
           <label className="field-label">Backups to keep<input className="control-input" type="number" min={1} max={365} value={values.retentionCount} onChange={event => set('retentionCount', Number(event.target.value))} /></label>
+          {target.kind === 'service' && <label className="field-label">Backup account
+            <select className="control-input" value={values.credentialSource || 'application'} onChange={event => set('credentialSource', event.target.value as 'application' | 'connection')}>
+              <option value="application">Application account</option><option value="connection">Managed connection account</option>
+            </select>
+            <span className="mt-1 block text-xs font-normal text-muted-foreground">Use the managed connection account when the app has limited table access. This changes only backup access; application credentials and permissions stay the same.</span>
+          </label>}
           {error && <p role="alert" className="notice-error">{error}</p>}
           <Button className="w-full" onClick={() => void save()} disabled={saving}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Save schedule</Button>
         </div>

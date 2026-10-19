@@ -1,4 +1,7 @@
 'use client'
+import { ApplicationHealth } from '@/components/app/health-settings'
+import { useServerHealth } from '@/components/server-health'
+import { applicationState, applicationHealthLabels } from '@/lib/application-health'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
@@ -126,6 +129,7 @@ const commitUrl = (repo: string | null | undefined, sha: string | null) => {
 }
 
 export default function SitePage() {
+  const { health, error: healthError } = useServerHealth()
   const params = useParams()
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -140,6 +144,8 @@ export default function SitePage() {
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
   const [deploying, setDeploying] = useState(false)
+  const [preflight, setPreflight] = useState(true)
+  const [healthCheck, setHealthCheck] = useState(true)
   const [promoteOpen, setPromoteOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [envFile, setEnvFile] = useState('.env')
@@ -319,7 +325,7 @@ export default function SitePage() {
     setDeploying(true)
     setError(null)
     try {
-      const res = await fetch(`/api/sites/${siteId}/deploy`, { method: 'POST' })
+      const res = await fetch(`/api/sites/${siteId}/deploy`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ preflight, healthCheck }) })
       const body = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(body.error || 'Deployment failed')
       // Follow the new release on its own pipeline page.
@@ -720,6 +726,8 @@ export default function SitePage() {
   }
 
   const hasRunningDeploy = deployments.some(d => d.status === 'running')
+  const readiness = applicationState(healthError ? null : health, project.pm2_name)
+  const processOnline = !healthError && !health?.stale && health?.snapshot?.apps.find(a => a.name === project.pm2_name)?.status === 'online'
   const visibleToolchains = toolchainRuntimes.filter(runtime =>
     runtime.id === 'node' ? ['next', 'node', 'angular', 'laravel'].includes(projectForm.projectType)
       : runtime.id === 'php' ? projectForm.projectType === 'laravel'
@@ -780,12 +788,21 @@ export default function SitePage() {
               <ArrowUpRight className="mr-1.5 h-3.5 w-3.5" />Promote to production
             </Button>
           )}
+          {canWrite && <label className="flex items-center gap-2 text-xs text-muted-foreground" title="Check the candidate before activation. When disabled, final health checking and rollback still apply.">
+            <input type="checkbox" checked={healthCheck && preflight} onChange={event => setPreflight(event.target.checked)} disabled={deploying || hasRunningDeploy || !healthCheck} />
+            Candidate preflight
+          </label>}
+          {canWrite && <label className="flex items-center gap-2 text-xs text-muted-foreground" title="When disabled, deploy without verifying HTTP readiness. The app may return errors until its database and other settings are configured.">
+            <input type="checkbox" checked={healthCheck} onChange={event => setHealthCheck(event.target.checked)} disabled={deploying || hasRunningDeploy} />
+            HTTP health checks
+          </label>}
           <Button size="sm" onClick={() => void handleDeploy()} disabled={!canWrite || deploying || hasRunningDeploy || project.setup_required} title={project.setup_required ? 'Finish setup first' : undefined}>
             {hasRunningDeploy ? <><RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" />Deploying…</> : <><Rocket className="mr-1.5 h-3.5 w-3.5" />Deploy</>}
           </Button>
         </>}
       >
         {error && <div role="alert" className="notice-error">{error}</div>}
+        {!healthCheck && <div className="notice-error" role="status">HTTP readiness will not be checked for the next deployment. Application errors such as missing database configuration will not trigger automatic rollback.</div>}
         <SecurityGateBanner projectId={project.id} gate={securityGate.gate} canWrite={canWrite} onChanged={securityGate.setGate} />
         {project.environment === 'staging' && <StagingAsleepBanner projectId={project.id} canWrite={canWrite} />}
 
@@ -820,12 +837,15 @@ export default function SitePage() {
                 </div>
                 <div className="relative mt-8">
                   <p className={cn('text-3xl font-semibold tracking-[-0.03em]', hasRunningDeploy && 'spectrum-text')}>
-                    {hasRunningDeploy ? 'Deploying…' : !live ? 'Not deployed yet' : project.is_active ? 'Online' : 'Stopped'}
+                    {hasRunningDeploy ? 'Deploying…' : !live ? 'Not deployed yet' : applicationHealthLabels[readiness]}
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">
                     {hasRunningDeploy ? 'The current release keeps serving until the new one passes its checks.'
                       : !live ? 'Deploy to put the first release live.'
-                      : project.is_active ? `Serving the release from ${relativeTime(live.finished_at, clock)}.` : 'The process is stopped, so visitors cannot reach it.'}
+                      : readiness === 'ready' ? `Local readiness passed. Released ${relativeTime(live.finished_at, clock)}.`
+                      : readiness === 'degraded' ? 'The process is running, but its readiness check is failing.'
+                      : readiness === 'unknown' ? 'A fresh readiness result is unavailable. Inspect Health & alerts.'
+                      : 'The latest process observation is ' + readiness + '.'}
                   </p>
                 </div>
               </div>
@@ -850,11 +870,11 @@ export default function SitePage() {
 
           <Section title="At a glance" description="How this application is running, in plain language.">
             <div className="divide-y divide-border">
-              <StatusLine tone={project.is_active ? 'ok' : 'off'} icon={<Activity className="h-3.5 w-3.5" />}
-                action={canWrite && live ? (project.is_active
+              <StatusLine tone={readiness === 'ready' ? 'ok' : readiness === 'degraded' || readiness === 'offline' ? 'warn' : 'off'} icon={<Activity className="h-3.5 w-3.5" />}
+                action={canWrite && live && readiness !== 'unknown' ? (processOnline
                   ? <Button variant="ghost" size="sm" onClick={() => void handleServiceAction('restart')} disabled={actionBusy !== null}><RotateCw className={cn('mr-1.5 h-3.5 w-3.5', actionBusy === 'restart' && 'animate-spin')} />Restart</Button>
                   : <Button variant="outline" size="sm" onClick={() => void handleServiceAction('start')} disabled={actionBusy !== null}><Play className="mr-1.5 h-3.5 w-3.5" />Start</Button>) : undefined}>
-                {project.is_active ? <><span className="font-medium">Running</span><span className="text-muted-foreground"> on port {project.port ?? '—'} as process <span className="font-mono">{project.pm2_name}</span></span></> : <><span className="font-medium">Not running</span><span className="text-muted-foreground"> — {live ? 'start it to serve visitors again' : 'it starts with the first deployment'}</span></>}
+                <span className="font-medium">{applicationHealthLabels[readiness]}</span><span className="text-muted-foreground"> — port {project.port ?? '—'}, process <span className="font-mono">{project.pm2_name}</span>{health?.checkedAt ? `, checked ${relativeTime(health.checkedAt, clock)}` : ''}</span>
               </StatusLine>
               <StatusLine tone={publicHosts.length ? 'ok' : 'warn'} icon={<Globe2 className="h-3.5 w-3.5" />}
                 action={<Button variant="ghost" size="sm" onClick={() => changeTab('domains')}>{publicHosts.length ? 'Manage' : 'Add domain'}</Button>}>
@@ -933,7 +953,7 @@ export default function SitePage() {
         <TabsContent value="environment" className="mt-0 space-y-4">
           <Section
             title="Environment variables"
-            description={<>These are the settings and secrets your app reads when it starts, such as a database address, an API key or a mail password. They are saved in the app&apos;s <span className="font-mono text-xs">.env</span> file on this server. Changes apply on the next deployment or restart. Database variables are added for you and don&apos;t need to be listed here.</>}
+            description={<>Save these settings before deploying. Every deployment reads the saved <span className="font-mono text-xs">.env</span> and <span className="font-mono text-xs">.env.local</span> for the candidate and live application; .env.local takes precedence for Node apps. Managed database connections provide standard variables automatically. Custom names such as DATABASE_OWNER_URL still need their correct credentials here.</>}
             action={<div className="flex h-8 items-center rounded-md border border-border p-0.5" role="group" aria-label="File">
               {['.env', '.env.local'].map(file => <button key={file} type="button" onClick={() => setEnvFile(file)} aria-pressed={envFile === file} className={cn('h-full rounded-[5px] px-2.5 font-mono text-xs', envFile === file ? 'bg-white/[0.09] text-foreground' : 'text-muted-foreground hover:text-foreground')}>{file}</button>)}
             </div>}
@@ -1032,6 +1052,8 @@ export default function SitePage() {
         </TabsContent>
 
         <TabsContent value="settings" className="mt-0 space-y-6">
+          <ApplicationHealth id={project.id} canWrite={canWrite} />
+
           <Section title="General" description="Name, framework and where the code comes from."
             footer={<><span>Changes apply on the next deployment.</span><Button size="sm" onClick={() => void handleSaveProject()} disabled={savingProject || !canWrite}>{projectSaved ? <><Check className="mr-1.5 h-3.5 w-3.5" />Saved</> : savingProject ? 'Saving…' : 'Save'}</Button></>}>
             <div className="grid gap-4 md:grid-cols-2">

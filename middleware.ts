@@ -5,6 +5,9 @@ const COOKIE_NAME = 'manager_session'
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
+  if (process.env.MANAGER_PREVIEW === '1' && (pathname === '/api/wake' || !['GET', 'HEAD', 'OPTIONS'].includes(request.method))) {
+    return NextResponse.json({ error: 'This release preview is read-only.' }, { status: 503, headers: { 'Retry-After': '30' } })
+  }
 
   if (
     pathname.startsWith('/_next') ||

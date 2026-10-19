@@ -1,6 +1,6 @@
 {
   "name": "trueid-manager-v2",
-  "version": "2.14.0",
+  "version": "2.16.0",
   "private": true,
   "scripts": {
     "dev": "next dev -p 4000",
@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "test": "node scripts/test.cjs",
     "package:windows": "powershell -ExecutionPolicy Bypass -File ./scripts/package-manager.ps1",
-    "package:windows:exe": "powershell -ExecutionPolicy Bypass -File ./scripts/package-manager-exe.ps1"
+    "package:windows:exe": "powershell -ExecutionPolicy Bypass -File ./scripts/package-manager-exe.ps1",
+    "build:production": "npm run build && npm ci --omit=dev --ignore-scripts --no-audit --no-fund",
+    "release:check": "node scripts/check-release.cjs"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.0.5",
@@ -32,16 +34,15 @@
     "jsonwebtoken": "^9.0.2",
     "lucide-react": "^0.323.0",
     "mongodb": "^6.21.0",
-    "mssql": "^12.7.0",
+    "mssql": "^12.7.10",
     "mysql2": "^3.24.2",
-    "next": "^15.5.24",
+    "next": "^15.5.28",
     "pg": "^8.11.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "redis": "^5.12.1",
     "systeminformation": "^5.33.6",
     "tailwind-merge": "^2.2.1",
-    "tailwindcss-animate": "^1.0.7",
     "ws": "^8.21.3"
   },
   "devDependencies": {
@@ -55,12 +56,14 @@
     "@types/ws": "^8.5.10",
     "autoprefixer": "^10.4.17",
     "eslint": "^8.56.0",
-    "eslint-config-next": "^15.5.24",
+    "eslint-config-next": "^15.5.28",
     "postcss": "^8.5.26",
     "tailwindcss": "^3.4.1",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "tailwindcss-animate": "^1.0.7"
   },
   "overrides": {
-    "postcss": "$postcss"
+    "postcss": "$postcss",
+    "source-map-js": "1.2.2"
   }
 }

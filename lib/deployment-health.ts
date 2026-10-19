@@ -1,4 +1,8 @@
+import { probeHttp } from '../scripts/http-health.cjs'
+
 interface HealthCheckOptions {
+  path?: string
+  statuses?: number[]
   timeoutMs?: number
   intervalMs?: number
   requestTimeoutMs?: number
@@ -41,19 +45,15 @@ export async function waitForDeploymentHealth(
     attempt++
 
     try {
-      const response = await dependencies.fetch(`http://127.0.0.1:${port}`, {
+      const response = await probeHttp(`http://127.0.0.1:${port}${options.path || '/'}`, {
         signal: AbortSignal.timeout(Math.min(options.requestTimeoutMs ?? 5000, remaining())),
-        redirect: 'manual',
-      })
-      // Probe only the headers, without following redirects outside the application.
-      await response.body?.cancel()
+        statuses: options.statuses,
+      }, dependencies.fetch)
       options.checkCancelled?.()
-      // Frameworks use temporary/permanent redirects for login and HTTPS routing.
-      const redirects = [301, 302, 303, 307, 308]
-      if (dependencies.now() < deadline && (response.ok || response.status === 404 || redirects.includes(response.status))) {
+      if (dependencies.now() < deadline && response.ok) {
         return { healthy: true }
       }
-      lastFailure = `HTTP ${response.status}`
+      lastFailure = response.reason || `HTTP ${response.status}`
     } catch (error) {
       const cause = error instanceof Error ? error.cause as { code?: string } | undefined : undefined
       lastFailure = cause?.code || (error instanceof Error ? error.message : 'Request failed')
