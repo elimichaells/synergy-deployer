@@ -22,18 +22,49 @@ jobs:
   windows-installer:
     runs-on: windows-latest
     timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: release-source
     steps:
       - name: Check out release source
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.release_tag || github.ref }}
           persist-credentials: false
+          path: release-source
+
+      - name: Check out validation harness
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: validation-source
+
+      - name: Verify validation uses identical application source
+        shell: pwsh
+        run: |
+          $releaseRoot = (Get-Location).Path
+          $validationRoot = Join-Path $env:GITHUB_WORKSPACE 'validation-source'
+          $allowed = @('.github/workflows/manager-release.yml', 'tests/backup-credentials.test.cjs')
+          $releaseFiles = @(& git -C $releaseRoot ls-files)
+          if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate release source' }
+          $validationFiles = @(& git -C $validationRoot ls-files)
+          if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate validation source' }
+          foreach ($relative in @($releaseFiles + $validationFiles | Sort-Object -Unique)) {
+            if ($allowed -contains $relative) { continue }
+            $releaseFile = Join-Path $releaseRoot $relative
+            $validationFile = Join-Path $validationRoot $relative
+            if (!(Test-Path -LiteralPath $releaseFile -PathType Leaf) -or !(Test-Path -LiteralPath $validationFile -PathType Leaf)) { throw "Source file differs: $relative" }
+            if ((Get-FileHash -LiteralPath $releaseFile -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $validationFile -Algorithm SHA256).Hash) { throw "Application source differs: $relative" }
+          }
+          Write-Host 'Application source and dependencies match the tagged release exactly.'
 
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
+          cache-dependency-path: release-source/package-lock.json
 
       - name: Validate release identity
         shell: pwsh
@@ -44,6 +75,9 @@ jobs:
 
       - name: Test source
         timeout-minutes: 5
+        working-directory: validation-source
+        env:
+          NODE_PATH: ${{ github.workspace }}/release-source/node_modules
         run: npm test
 
       - name: Audit production dependencies

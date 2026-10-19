@@ -25,7 +25,8 @@ test('backup diagnostics keep permission errors before long SQL and redact secre
 
 function fixture(t,source='connection') {
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'manager-backup-test-'));t.after(()=>{assert.ok(root.startsWith(path.resolve(os.tmpdir())+path.sep));fs.rmSync(root,{recursive:true,force:true})});
- const calls=[];let finished=false;
+ const calls=[];let finished=false,complete,fail;
+ const completion=new Promise((resolve,reject)=>{complete=resolve;fail=reject});
  const schedule={id:'schedule',service_id:'service',enabled:false,retention_count:30,credential_source:source};
  const mocks={
   '@/lib/api':require('../lib/api.ts'), '@/lib/backup-policy':policy,
@@ -33,15 +34,17 @@ function fixture(t,source='connection') {
   '@/lib/secret-crypto':{decryptSecret:value=>value==='admin-cipher'?'admin-secret':'app-secret'},
   '@/lib/settings':{getSetting:async key=>key==='BACKUP_DIR'?root:root},
   '@/lib/cron-jobs':{validateTimezone:()=>true}, '@/lib/notify':{sendNotification:async()=>assert.fail('No notification expected')},
-  '@/lib/db':{query:async(sql,values)=>{calls.push({sql,values});if(sql.startsWith('select *'))return {rows:[schedule]};if(sql.includes("set last_status='running'"))return {rows:[schedule]};if(sql.includes('select pds.id'))return {rows:[target]};if(sql.includes("set last_status='success'"))finished=true;return {rows:[]}}},
-  child_process:{spawn:(exe,args,options)=>{calls.push({exe,args,options});const child=new EventEmitter();child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.kill=()=>{};process.nextTick(()=>{fs.writeFileSync(args[args.indexOf('-f')+1],'PGDMPfixture');child.emit('close',0)});return child}},
+  'fs/promises':{...require('node:fs/promises'),mkdir:async(...args)=>{await new Promise(resolve=>setTimeout(resolve,100));return fs.promises.mkdir(...args)}},
+  '@/lib/db':{query:async(sql,values)=>{calls.push({sql,values});if(sql.startsWith('select *'))return {rows:[schedule]};if(sql.includes("set last_status='running'"))return {rows:[schedule]};if(sql.includes('select pds.id'))return {rows:[target]};if(sql.includes("set last_status='success'")){finished=true;complete()}if(sql.includes("set last_status='failed'"))fail(new Error('Fixture backup failed'));return {rows:[]}}},
+  child_process:{spawn:(exe,args,options)=>{calls.push({exe,args,options});const child=new EventEmitter();child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.kill=()=>{};process.nextTick(()=>{try{fs.writeFileSync(args[args.indexOf('-f')+1],'PGDMPfixture');child.emit('close',0)}catch(error){child.emit('error',error)}});return child}},
  };
- return {api:load('lib/data-service-backups.ts',mocks),calls,finished:()=>finished};
+ return {api:load('lib/data-service-backups.ts',mocks),calls,finished:()=>finished,completion};
 }
 
 test('scheduled dump uses only the selected credential, bounded locks and TLS; records real success',async t=>{
  const f=fixture(t);assert.equal((await f.api.executeDataServiceBackup('schedule','manual')).started,true);
- for(let i=0;i<100&&!f.finished();i++)await new Promise(r=>setImmediate(r));
+ let timeout;
+ try{await Promise.race([f.completion,new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Fixture backup did not complete')),5000)})])}finally{clearTimeout(timeout)}
  assert.equal(f.finished(),true);const command=f.calls.find(x=>x.exe);assert.ok(command.args.includes('--lock-wait-timeout=5s'));
  assert.equal(command.args[command.args.indexOf('-U')+1],'backup_admin');assert.equal(command.options.env.PGPASSWORD,'admin-secret');assert.equal(command.options.env.PGSSLMODE,'require');assert.equal(command.options.env.PGCONNECT_TIMEOUT,'10');
  assert.ok(!f.calls.some(x=>x.sql&&/grant|alter role|update project_data_services/i.test(x.sql)));
