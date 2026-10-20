@@ -54,5 +54,5 @@ test('a log persistence failure cannot prevent recovery diagnostics',async()=>{
 });
 test('unified alerts preserve independent monitor state when database sources fail',async()=>{
  const api=load('lib/unified-health.ts',{'@/lib/health-db':{query:async()=>{throw new Error('password=private')}},'@/lib/server-health':{readServerHealth:async()=>({checkedAt:'2026-10-15T00:00:00Z',stale:false,unavailable:false,snapshot:null,incidents:[{id:'disk',key:'disk',severity:'critical',message:'Disk low',action:'Inspect',openedAt:'2026-10-15T00:00:00Z',lastSeenAt:'2026-10-15T00:00:00Z'}]})}});
- const result=await api.readUnifiedHealth();assert.equal(result.incidents.length,4);assert.equal(result.incidents[0].id,'disk');assert.doesNotMatch(JSON.stringify(result),/private/);
+ const result=await api.readUnifiedHealth();assert.equal(result.incidents.length,5);assert.equal(result.incidents[0].id,'disk');assert.ok(result.incidents.some(i=>i.key==='source:Operations'));assert.doesNotMatch(JSON.stringify(result),/private/);
 });

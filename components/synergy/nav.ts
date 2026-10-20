@@ -1,4 +1,4 @@
-import { Boxes, Cpu, Database, Gauge, Globe2, HardDrive, MemoryStick, Rocket, Server, Settings, Workflow, Wrench } from 'lucide-react'
+import { Boxes, Cpu, Database, Gauge, Globe2, HardDrive, MemoryStick, Rocket, Server, Settings, ShieldCheck, Workflow, Wrench } from 'lucide-react'
 
 /** Top-level navigation. `matches` lists every route prefix a tab owns. */
 export const navItems = [
@@ -12,6 +12,7 @@ export const navItems = [
 
 /** Server-level areas, shown in the Infrastructure side menu. */
 export const infrastructureItems = [
+  { href: '/infrastructure/operations', label: 'AI Operations', icon: ShieldCheck, description: 'Diagnosis, reviewed recovery and sampled uptime' },
   { href: '/infrastructure/health', label: 'Health & alerts', icon: Gauge, description: 'Disk, process and response warnings before an outage' },
   { href: '/domains', label: 'Domains & DNS', icon: Globe2, description: 'Cloudflare accounts and every public address' },
   { href: '/services', label: 'Processes', icon: Cpu, description: 'Running processes and the Caddy web server' },

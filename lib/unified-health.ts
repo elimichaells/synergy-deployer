@@ -25,6 +25,19 @@ async function collect(): Promise<ServerHealth> {
     try { const { rows } = await query(source.sql); for (const row of rows) { const incident = source.map(row); if (incident) incidents.push(incident) } }
     catch { incidents.push({ id: 'source:' + source.name, key: 'source:' + source.name, source: source.name, href: source.href, severity: 'warning', message: source.name + ' alerts could not be refreshed.', action: 'Check the Manager database connection and this section before assuming it is healthy.', openedAt: new Date().toISOString(), lastSeenAt: new Date().toISOString() }) }
   }))
+  try {
+    const events = await query(`select id,status,created_at from manager_ai_events where kind='recovery'
+      and (status='failed' or status='running' and created_at<now()-interval '10 minutes') order by created_at desc limit 20`)
+    for (const row of events.rows) incidents.push({ id: 'operations:' + row.id, key: 'operations:' + row.id, source: 'AI Operations',
+      href: '/infrastructure/operations', severity: 'warning', message: row.status === 'running' ? 'A recovery attempt has no completed verification.' : 'An application recovery attempt needs review.',
+      action: 'Inspect the operation history and application readiness before allowing another attempt.',
+      openedAt: timestamp(row.created_at), lastSeenAt: timestamp(row.created_at) })
+  } catch (error) {
+    // Older installations have no Operations schema until their first configuration.
+    if ((error as { code?: string }).code !== '42P01') incidents.push({ id: 'source:Operations', key: 'source:Operations', source: 'AI Operations',
+      href: '/infrastructure/operations', severity: 'warning', message: 'Recovery history could not be refreshed.',
+      action: 'Check the Manager database before assuming recovery verification completed.', openedAt: new Date().toISOString(), lastSeenAt: new Date().toISOString() })
+  }
   // Link monitor incidents to the affected app without coupling collection to PostgreSQL.
   // If this optional lookup fails, the original independent incident remains visible.
   try {

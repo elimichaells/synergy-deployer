@@ -1,6 +1,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { recordHistory } = require('./health-history.cjs');
+const { recordUptime, validateUptime } = require('./uptime-history.cjs');
 
 async function atomicJson(file, value) {
   const temporary = file + '.' + process.pid + '.tmp';
@@ -32,4 +33,11 @@ async function acquireMonitorLock(stateFile) {
     } catch { return null; }
   }
 }
-module.exports = { atomicJson, updateHistory, acquireMonitorLock };
+async function updateUptime(config, sample) {
+  const file = config.uptimeFile || path.join(path.dirname(config.stateFile), 'uptime.json');
+  let previous;
+  try { previous = validateUptime(JSON.parse(await fs.readFile(file, 'utf8'))); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  await atomicJson(file, recordUptime(previous, sample));
+}
+module.exports = { atomicJson, updateHistory, updateUptime, acquireMonitorLock };

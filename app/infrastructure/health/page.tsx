@@ -36,6 +36,7 @@ export default function ServerHealthPage() {
         <p className="mt-3 text-sm text-muted-foreground"><span className="font-medium text-foreground">Next step: </span>{alert.action}</p>{alert.href && <Link href={alert.href} className="mt-2 inline-block text-xs underline">Inspect {alert.service || alert.source || 'server'}</Link>}<p className="mt-2 text-xs text-muted-foreground">First observed {when(alert.openedAt)} · last confirmed {when(alert.lastSeenAt)}</p>
       </div>)}</section>}
       <HealthHistoryPanel />
+      <Link href="/infrastructure/operations" className="block rounded-xl border border-border bg-card p-5 text-sm"><span className="font-semibold">AI Operations →</span><span className="mt-1 block text-muted-foreground">Investigate these alerts, review application recovery and inspect sampled uptime.</span></Link>
       {sample && <div className="grid gap-4 sm:grid-cols-2">{sample.disks.map(disk => <div key={disk.name} className="rounded-xl border border-border bg-card p-5">
         <p className="text-sm text-muted-foreground">{disk.name} free disk space</p><p className="mt-2 text-2xl font-semibold">{gb(disk.free)} <span className="text-sm font-normal text-muted-foreground">of {gb(disk.total)}</span></p>
         <meter className="mt-3 h-3 w-full" min={0} max={disk.total} value={disk.free} low={disk.total * .2} optimum={disk.total} aria-label={`${disk.name} free space`} />

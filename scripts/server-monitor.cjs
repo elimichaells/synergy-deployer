@@ -98,6 +98,8 @@ async function run(configPath) {
   const sample = await collect(config);
   try { await updateHistory(config, previous, sample); }
   catch { sample.collectorError = [sample.collectorError, 'health history persistence'].filter(Boolean).join(', '); }
+  try { await require('./monitor-state.cjs').updateUptime(config, sample); }
+  catch { sample.collectorError = [sample.collectorError, 'uptime history persistence'].filter(Boolean).join(', '); }
   const state = advanceState(previous, sample);
   await fs.mkdir(path.dirname(config.stateFile), { recursive: true });
   await atomicJson(config.stateFile, state);
