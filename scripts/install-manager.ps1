@@ -35,14 +35,16 @@ function New-Secret([int]$Bytes = 48) {
 }
 
 function Get-Setting([string]$Name, $Default, [switch]$Secret, [switch]$Required) {
+    # Test strings explicitly: PowerShell considers $false -eq '' and 0 -eq '' true.
+    # Unchecked wizard options must survive defaulting and required-value checks.
     $value = $null
     if ($script:Config.PSObject.Properties.Name -contains $Name) { $value = $script:Config.$Name }
     if ($null -eq $value -or ($value -is [string] -and [string]::IsNullOrWhiteSpace($value))) {
         $environmentValue = [Environment]::GetEnvironmentVariable(('MANAGER_INSTALL_' + $Name.ToUpperInvariant()))
         if ($environmentValue) { $value = $environmentValue }
     }
-    if (($null -eq $value -or $value -eq '') -and -not $Unattended) {
-        $label = if ($null -ne $Default -and $Default -ne '') { $Name + ' [' + $Default + ']' } else { $Name }
+    if (($null -eq $value -or ($value -is [string] -and [string]::IsNullOrWhiteSpace($value))) -and -not $Unattended) {
+        $label = if ($null -ne $Default -and -not ($Default -is [string] -and [string]::IsNullOrWhiteSpace($Default))) { $Name + ' [' + $Default + ']' } else { $Name }
         if ($Secret) {
             $secure = Read-Host $label -AsSecureString
             $value = [Net.NetworkCredential]::new('',$secure).Password
@@ -51,8 +53,8 @@ function Get-Setting([string]$Name, $Default, [switch]$Secret, [switch]$Required
             $value = if ($entered) { $entered } else { $Default }
         }
     }
-    if (($null -eq $value -or $value -eq '') -and $null -ne $Default) { $value = $Default }
-    if ($Required -and ($null -eq $value -or $value -eq '')) { throw ($Name + ' is required') }
+    if (($null -eq $value -or ($value -is [string] -and [string]::IsNullOrWhiteSpace($value))) -and $null -ne $Default) { $value = $Default }
+    if ($Required -and ($null -eq $value -or ($value -is [string] -and [string]::IsNullOrWhiteSpace($value)))) { throw ($Name + ' is required') }
     return $value
 }
 
@@ -282,6 +284,8 @@ $driveName = [IO.Path]::GetPathRoot($webRoot).TrimEnd('\').TrimEnd(':')
 $drive = Get-PSDrive -Name $driveName
 if ($drive.Free -lt 5GB) { throw 'At least 5 GB of free disk space is required' }
 Add-Result 'Disk space' 'pass' ('{0:N1} GB free' -f ($drive.Free/1GB))
+$controlPlan = if ($installPostgres) { 'Install control PostgreSQL' } else { 'Use existing PostgreSQL' }
+Add-Result 'Control PostgreSQL plan' 'pass' ($controlPlan + ' at ' + $dbHost + ':' + $dbPort)
 if ($installApplicationPostgres) {
     if ($appDbPort -eq $dbPort) { throw 'AppDbPort must differ from the Manager control database port' }
     $appService = Get-Service -Name $appDbServiceName -ErrorAction SilentlyContinue

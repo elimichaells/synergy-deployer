@@ -26,6 +26,12 @@ MySQL, MariaDB, MongoDB, SQL Server Express and Memurai installers are **not inc
 
 For an extracted ZIP, edit `manager-install.json` and run `setup.cmd -Unattended -Plan`, followed by `setup.cmd -Unattended`. The offline ZIP defaults to local HTTPS and bundled dependencies.
 
+### Reusing existing PostgreSQL
+
+Use offline setup **2.19.1 or later**. Version 2.19.0 incorrectly replaced unchecked boolean options with their defaults, so unchecking control PostgreSQL installation still produced a port-conflict error. The corrected installer preserves these selections. Uncheck **Install PostgreSQL control database**, enter the existing `postgres` password, and keep the isolated project cluster selected if port 5433 is free. The review screen must say **use existing server**, and preflight must report **Control PostgreSQL plan: Use existing PostgreSQL at 127.0.0.1:5432**.
+
+Setup creates the `server_manager` database and `manager_app` role in that instance. If those names already belong to another installation, use distinct `DbName` and `DbAppUser` values through the ZIP configuration instead of overwriting its credentials. Reusing a database does not change its Windows service startup setting. Verify its existing service is automatic and running after reboot; its name will replace `ManagerPostgreSQLControl` in the acceptance commands below.
+
 ## Reboot acceptance check
 
 Complete these checks on the new server while its internet access remains disconnected:

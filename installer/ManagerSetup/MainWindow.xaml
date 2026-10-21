@@ -230,7 +230,9 @@
                                 </Grid.ColumnDefinitions>
                                 <StackPanel>
                                     <TextBlock Text="Core services" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,18" />
-                                    <CheckBox x:Name="InstallPostgresCheckBox" IsChecked="True" Content="PostgreSQL control database" />
+                                    <CheckBox x:Name="InstallPostgresCheckBox" IsChecked="True" Content="Install PostgreSQL control database" />
+                                    <TextBlock Text="Uncheck to use existing PostgreSQL at 127.0.0.1:5432. Enter its existing postgres administrator password on the account step."
+                                               Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,0,0,12" />
                                     <CheckBox x:Name="InstallAppPostgresCheckBox" IsChecked="True" Content="Isolated project PostgreSQL cluster" />
                                     <CheckBox x:Name="InstallPgwebCheckBox" IsChecked="True" Content="Pgweb for PostgreSQL" />
                                     <CheckBox x:Name="LatestNpmCheckBox" IsChecked="True" Content="Current npm release" />

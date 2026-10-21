@@ -377,7 +377,7 @@ public partial class MainWindow : Window
             $"WEB ROOT    {options.WebRoot}",
             $"ADMIN       {options.AdminName} <{options.AdminEmail}>",
             string.Empty,
-            $"CONTROL DB  PostgreSQL 127.0.0.1:5432 ({Enabled(options.InstallPostgreSql)})",
+            $"CONTROL DB  PostgreSQL 127.0.0.1:5432 ({(options.InstallPostgreSql ? "install new server" : "use existing server")})",
             $"PROJECT DB  PostgreSQL 127.0.0.1:5433 ({Enabled(options.InstallApplicationPostgreSql)})",
             $"PGWEB       {Enabled(options.InstallPgweb)}",
             $"PHPMYADMIN  {Enabled(options.OptionalDatabaseEngines.Any(engine => engine is "mysql" or "mariadb"))}",
