@@ -66,7 +66,7 @@ export function postgresBin(env: Env = process.env, probe: Probe = realProbe): s
 /** MySQL or MariaDB client tools, wherever they were installed. */
 export function mysqlBin(env: Env = process.env, probe: Probe = realProbe): string | null {
   if (set(env.MYSQL_BIN_PATH)) return set(env.MYSQL_BIN_PATH)!
-  const candidates = [path.join('C:\\tools', 'mysql', 'current', 'bin')]
+  const candidates = [path.join(managerDataRoot(env), 'services', 'mysql', 'runtime', 'bin'), path.join(managerDataRoot(env), 'services', 'mariadb', 'runtime', 'bin'), path.join('C:\\tools', 'mysql', 'current', 'bin')]
   for (const parent of [path.join(set(env.ProgramFiles) || 'C:\\Program Files', 'MySQL'), path.join(set(env.ProgramFiles) || 'C:\\Program Files', 'MariaDB')]) {
     for (const name of probe.list(parent).sort().reverse()) candidates.push(path.join(parent, name, 'bin'))
   }

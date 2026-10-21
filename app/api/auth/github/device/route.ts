@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSessionFromCookie } from '@/lib/auth'
 import { requireRole } from '@/lib/rbac'
 import { jsonError } from '@/lib/api'
+import { getSetting } from '@/lib/settings'
 
 /**
  * GitHub Device Flow — Step 1: Request device + user codes
@@ -12,11 +13,11 @@ export async function POST() {
         const user = await getSessionFromCookie()
         requireRole(user, ['admin'])
 
-        const clientId = process.env.GITHUB_CLIENT_ID
+        const clientId = await getSetting('GITHUB_CLIENT_ID')
         if (!clientId) {
             return NextResponse.json(
-                { error: 'GITHUB_CLIENT_ID is not configured in .env.local' },
-                { status: 500 }
+                { error: 'Save your GitHub OAuth client ID in Settings → Connections → GitHub application.' },
+                { status: 409 }
             )
         }
 

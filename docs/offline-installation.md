@@ -9,10 +9,31 @@ Use the **offline setup edition** (`manager-setup-offline-<version>-<timestamp>.
 - PostgreSQL 17, with separate control and application clusters
 - Pgweb and the Sling migration engine
 - Go, PHP 8.3, Composer, Python 3.13, and the Visual C++ runtime
+- Dashboard packages: MySQL 8.4.13, MariaDB 11.4.13, MongoDB 7.0.45, SQL Server 2022 Express and phpMyAdmin 5.2.3
+
+SQL Server includes the October 2026 GDR security update, KB5128493 (16.0.1210.3), and verifies that version after installation. The updater targets only the new `MANAGER` instance; an existing SQL Server instance must be connected instead of installing alongside shared SQL components. [Microsoft update details and checksum](https://support.microsoft.com/en-us/servicing/sql/sql-server-2022/general-distribution-release/kb5128493-october-2026).
 
 Exact versions, publisher download locations, and SHA-256 values are pinned in `installer/offline/dependencies.lock.json`. PM2 has its own npm lockfile. Each generated bundle includes `offline/manifest.json` and third-party notices. Preflight verifies every bundled file and the Manager version, source commit, architecture and npm lock before installing anything. Missing or changed files stop setup; there is no internet fallback.
 
-MySQL, MariaDB, MongoDB, SQL Server Express and Memurai installers are **not included** in this edition. Their wizard controls are disabled. PostgreSQL covers Manager's own database requirements; existing institution database servers can be connected after installation. This edition does not install phpMyAdmin.
+Starting with 2.20.0, the optional packages are saved to `C:\ProgramData\Manager\offline-services` during installation. Install them from **Infrastructure → Runtimes & tools** after Manager is running. Their initial wizard controls remain disabled because their credentials and provisioning connections are created through the dashboard. PostgreSQL covers Manager's own database requirements. Redis uses an existing institution Redis server; Memurai Developer is not bundled.
+
+The dashboard verifies each local archive before installation and does not fall back to Chocolatey or the internet. Services use automatic Windows startup and loopback listeners: `ManagerMySQL` on 3306, `ManagerMariaDB` on 3307, `ManagerMongoDB` on 27017 and `MSSQL$MANAGER` on 1433. An occupied port or an unowned service/data directory stops installation without replacing it. Connect the existing database under Data connections instead.
+
+Installation generates machine-protected credentials, creates an authenticated persistence check, restarts the database, verifies the same data and registers an encrypted provisioning connection in Manager. MySQL/MariaDB also activate phpMyAdmin at the administrator-protected `/mysql/` route. phpMyAdmin offers both database ports. Database files and receipts live under `C:\ProgramData\Manager\services`; preserve these directories. Interrupted initialization is not automatically repeated over existing data. Online update/version controls are disabled in offline mode.
+
+## Upgrade an existing offline Manager
+
+For an already installed 2.19.x or 2.20.x server, use the **offline ZIP**. Do not rerun the fresh-installation wizard against the existing installation. Back up Manager and its databases, finish active deployment/install jobs, and confirm Manager HTTPS works first. Extract the ZIP outside the installed Manager directory, then run from administrator PowerShell:
+
+```powershell
+Set-Location C:\ManagerUpgrade\manager-2.20.0
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\upgrade-manager-offline.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\upgrade-manager-offline.ps1 -Apply
+```
+
+Use the actual extracted directory. The first command verifies the package and installed instance without applying changes. The second replaces application code and dependencies, preserves `.env.local`, databases and existing deployments, saves optional packages, and verifies HTTPS. Application files are restored if startup verification fails. Recovery files remain under `C:\ProgramData\Manager\Recovery`; retain them until acceptance. Allow at least 8 GB free for staging/recovery, plus package extraction and database storage. Reserve additional space before installing all optional databases.
+
+GitHub's OAuth client ID is now saved under **Settings → Connections → GitHub application** in Manager's database. An existing environment value is imported only when the database setting does not exist. Later saves take effect without restarting Manager. Enable device flow on the GitHub OAuth app; this flow does not use a client secret. GitLab and Gitea settings remain available for institution repositories.
 
 ## Install on Windows Server 2019
 
@@ -43,6 +64,7 @@ Get-ScheduledTask -TaskName 'Manager PM2 Startup'
 Get-ScheduledTaskInfo -TaskName 'Manager PM2 Startup'
 Get-NetTCPConnection -State Listen -LocalPort 80,443,4000,5432,5433 |
     Select-Object LocalAddress,LocalPort,OwningProcess
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\web\manager\scripts\verify-offline-services.ps1
 ```
 
 The database services must run automatically. Manager port 4000 and both database ports must listen only on loopback; Caddy handles client-facing HTTPS. Adjust port numbers if configured differently. Reboot during the server's installation window, wait for startup recovery, and run these checks again. Verify login from another institution device, open a deployed application, and deploy another commit from the internal GitLab or Gitea server. An actual reboot on the target remains an acceptance check; process-restart tests on a build host do not replace it.

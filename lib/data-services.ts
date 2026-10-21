@@ -211,7 +211,7 @@ export async function getSecretConnection(id: string): Promise<SecretConnection>
   return rows[0]
 }
 
-export function connectionPassword(connection: SecretConnection) {
+export function connectionPassword(connection: Pick<SecretConnection, 'password_ciphertext'>) {
   return connection.password_ciphertext ? decryptSecret(connection.password_ciphertext) : ''
 }
 
@@ -301,7 +301,7 @@ export async function deleteDataConnection(id: string) {
   await query('delete from data_connections where id=$1', [id])
 }
 
-async function testProvider(connection: SecretConnection) {
+async function testProvider(connection: Pick<SecretConnection, 'provider' | 'host' | 'port' | 'username' | 'password_ciphertext' | 'tls_enabled' | 'options'>) {
   const password = connectionPassword(connection)
   if (connection.provider === 'postgresql') {
     const { Client } = await import('pg')
@@ -409,6 +409,23 @@ export async function configureManagedMySqlRuntime() {
     await client.query('flush privileges')
     return { connectionId, reused: false }
   } finally { await client.end() }
+}
+
+export async function registerOfflineDataConnection(provider: string, port: number, username: string, password: string) {
+  if (!['mysql', 'mariadb', 'mongodb', 'sqlserver'].includes(provider)) throw new ApiError('Unsupported offline database', 400)
+  await ensureDataServicesSchema()
+  const name = `Managed offline ${provider}`
+  const existing = await query<SecretConnection>('select * from data_connections where name=$1', [name])
+  if (existing.rows[0] && (existing.rows[0].provider !== provider || existing.rows[0].host !== '127.0.0.1' || existing.rows[0].port !== port || !existing.rows[0].options.offlineService)) {
+    throw new ApiError('A different connection uses this managed name. It has not been changed.', 409)
+  }
+  const options = { offlineService: true, ...(provider === 'mongodb' ? { authSource: 'admin' } : {}), ...(provider === 'sqlserver' ? { database: 'master' } : {}) }
+  const candidate = { provider: provider as DataProvider, host: '127.0.0.1', port, username, password_ciphertext: encryptSecret(password), tls_enabled: false, options }
+  await testProvider(candidate)
+  await query(`insert into data_connections (name,provider,host,port,username,password_ciphertext,tls_enabled,options,purpose,managed,is_default,provisioning_enabled,last_status,last_tested_at)
+    values ($1,$2,'127.0.0.1',$3,$4,$5,false,$6::jsonb,'shared_application',true,not exists(select 1 from data_connections where provider=$2 and is_default),true,'healthy',now())
+    on conflict (name) do update set password_ciphertext=excluded.password_ciphertext,last_status='healthy',last_error=null,last_tested_at=now(),updated_at=now()`,
+  [name, provider, port, username, candidate.password_ciphertext, JSON.stringify(options)])
 }
 
 async function provisionProviderDatabase(connection: SecretConnection, databaseName: string, username: string, password: string) {

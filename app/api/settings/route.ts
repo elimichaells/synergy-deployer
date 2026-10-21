@@ -11,6 +11,7 @@ const VALID_KEYS: SettingKey[] = [
   'LOGS_PATH',
   'CADDY_PATH',
   'GITHUB_TOKEN',
+  'GITHUB_CLIENT_ID',
   'NOTIFY_WEBHOOK_URL',
   'BACKUP_DIR',
   'BACKUP_ENABLED',
@@ -58,6 +59,13 @@ export async function PUT(request: Request) {
 
     if (Object.keys(updates).length === 0) {
       return NextResponse.json({ error: 'No valid settings provided' }, { status: 400 })
+    }
+
+    if (updates.GITHUB_CLIENT_ID !== undefined) {
+      updates.GITHUB_CLIENT_ID = updates.GITHUB_CLIENT_ID.trim()
+      if (updates.GITHUB_CLIENT_ID && !/^[A-Za-z0-9_.-]{1,128}$/.test(updates.GITHUB_CLIENT_ID)) {
+        return NextResponse.json({ error: 'Enter a valid GitHub OAuth application client ID.' }, { status: 400 })
+      }
     }
 
     await updateSettings(updates)

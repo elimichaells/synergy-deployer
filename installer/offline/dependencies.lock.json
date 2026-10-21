@@ -109,6 +109,60 @@
       "sha256": "cc0ff0eb1dc3f5188ae6300faef32bf5beeba4bdd6e8e445a9184072096b713b",
       "license": "Microsoft Visual C++ Redistributable",
       "authenticode": true
+    },
+    {
+      "id": "mysql",
+      "version": "8.4.13",
+      "url": "https://cdn.mysql.com/Downloads/MySQL-8.4/mysql-8.4.13-winx64.zip",
+      "file": "mysql.zip",
+      "root": "mysql-8.4.13-winx64",
+      "license": "GPL-2.0",
+      "sha256": "e9cd98b1d23f122987b1afca26ad942efec5891481103d48ae3cde237fa3ea54"
+    },
+    {
+      "id": "mariadb",
+      "version": "11.4.13",
+      "url": "https://archive.mariadb.org/mariadb-11.4.13/winx64-packages/mariadb-11.4.13-winx64.zip",
+      "file": "mariadb.zip",
+      "root": "mariadb-11.4.13-winx64",
+      "license": "GPL-2.0",
+      "sha256": "d62986d433eeebfde218560b276103831604a61e929e87f1a17f5aebd80257e2"
+    },
+    {
+      "id": "mongodb",
+      "version": "7.0.45",
+      "url": "https://fastdl.mongodb.org/windows/mongodb-windows-x86_64-7.0.45.zip",
+      "file": "mongodb.zip",
+      "root": "mongodb-win32-x86_64-windows-7.0.45",
+      "license": "SSPL-1.0",
+      "sha256": "7e3a435fa86e36e8ca4f2618fb41de06d75c28009c63725a20f9badd36eec6f6"
+    },
+    {
+      "id": "sqlserver",
+      "version": "2022",
+      "url": "https://download.microsoft.com/download/3/8/d/38de7036-2433-4207-8eae-06e247e17b25/SQLEXPR_x64_ENU.exe",
+      "file": "sqlserver.exe",
+      "license": "Microsoft SQL Server Express",
+      "authenticode": true,
+      "sha256": "2e61c8bbde6021f9026c54ad9db4bbb1227e68761d4c00a6a50a2c70fe7afe05"
+    },
+    {
+      "id": "sqlserver-update",
+      "version": "16.0.1210.3",
+      "url": "https://download.microsoft.com/download/82f92ae1-1cf3-4c27-9938-0b44f5a0a296/SQLServer2022-KB5128493-x64.exe",
+      "file": "sqlserver-update.exe",
+      "license": "Microsoft SQL Server Express",
+      "authenticode": true,
+      "sha256": "37eb03e75b9e167988a42273ae7f6e61df918d2d78f86870c08d70d2941b0e26"
+    },
+    {
+      "id": "phpmyadmin",
+      "version": "5.2.3",
+      "url": "https://files.phpmyadmin.net/phpMyAdmin/5.2.3/phpMyAdmin-5.2.3-all-languages.zip",
+      "file": "phpmyadmin.zip",
+      "root": "phpMyAdmin-5.2.3-all-languages",
+      "license": "GPL-2.0",
+      "sha256": "2d2e13c735366d318425c78e4ee2cc8fc648d77faba3ddea2cd516e43885733f"
     }
   ]
 }

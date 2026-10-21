@@ -87,7 +87,7 @@ public partial class MainWindow : Window
             if (offline) checkbox.IsChecked = false;
         }
         DatabaseComponentsDescription.Text = offline
-            ? "PostgreSQL 17 is included. Other database engine installers are not in this offline bundle. Connect existing institution database servers from Manager after setup."
+            ? "PostgreSQL 17 is installed during setup. Bundled MySQL, MariaDB, MongoDB, SQL Server Express and phpMyAdmin can be installed offline from Manager's dashboard afterward. Redis uses an existing server."
             : "Choose MySQL or MariaDB for automatic installation; either choice also installs phpMyAdmin.";
     }
 

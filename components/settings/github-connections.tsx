@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Check, Github, Copy, Loader2, Trash2, RefreshCw, Plus } from 'lucide-react'
+import { GitHubApplication } from './github-application'
 
 interface GitHubConnectionRow {
   id: string
@@ -18,6 +19,10 @@ interface GitHubConnectionRow {
 }
 
 export function GitHubConnections({ isAdmin }: { isAdmin: boolean }) {
+  return <div className="space-y-4">{isAdmin && <GitHubApplication />}<GitHubAccountConnections isAdmin={isAdmin} /></div>
+}
+
+function GitHubAccountConnections({ isAdmin }: { isAdmin: boolean }) {
   const [status, setStatus] = useState<'idle' | 'requesting' | 'waiting' | 'polling' | 'connected' | 'error'>('idle')
   const [userCode, setUserCode] = useState('')
   const [verificationUri, setVerificationUri] = useState('')

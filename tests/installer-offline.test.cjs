@@ -30,7 +30,7 @@ test('offline preflight rejects incomplete, altered and mismatched bundles befor
     assert.match(check('2.18.0'),/REJECT:.*does not match/);
     assert.match(check('2.19.0','other'),/REJECT:.*does not match/);
     assert.match(check('2.19.0','abc',"@('python')"),/not bundled: python/);
-    assert.match(check('2.19.0','abc','@()',"@('mysql')"),/Optional database installers are not bundled/);
+    assert.match(check('2.19.0','abc','@()',"@('mysql')"),/Install optional databases from the Manager dashboard/);
     fs.writeFileSync(path.join(root,'node.zip'),'NODE');assert.match(check(),/failed SHA-256 verification: node/);
     fs.writeFileSync(path.join(root,'node.zip'),'node');fs.unlinkSync(path.join(root,'git.zip'));assert.match(check(),/component is missing: git/);
     fs.writeFileSync(path.join(root,'git.zip'),'git');manifest.artifacts.push({...artifacts[0]});save();assert.match(check(),/duplicate offline component/);
@@ -68,6 +68,7 @@ test('offline installation branch installs only local tools and skips online dep
     if(-not $branch){throw 'Offline provisioning branch missing'}
     function Write-Step {param($Message)}
     function Install-ManagerOfflineTools {param($Bundle,$ToolsRoot); @{postgresql='local'}}
+    function Save-ManagerOfflineServiceBundle {param($Bundle,$Destination); Write-Host 'local-service-packages'}
     function Initialize-ManagerOfflineControlPostgres {param($Bin,$Data,$Port,$User,$Password); Write-Host 'local-control'}
     function Initialize-ApplicationPostgres {Write-Host 'local-application'}
     function Add-Result {param($Check,$Status,$Detail);Write-Host $Detail}

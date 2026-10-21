@@ -77,6 +77,7 @@ test('unchecked control PostgreSQL passes an occupied port and skips initializat
     Invoke-Expression $guard.Extent.Text
     function Write-Step {param($Message)}
     function Install-ManagerOfflineTools {param($Bundle,$Root); @{postgresql='bundled'}}
+    function Save-ManagerOfflineServiceBundle {param($Bundle,$Destination)}
     function Initialize-ManagerOfflineControlPostgres {throw 'Existing database must not be initialized'}
     function Initialize-ApplicationPostgres {$script:projectInitialized=$true}
     function Add-Result {param($Check,$Status,$Detail)}

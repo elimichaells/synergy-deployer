@@ -23,13 +23,13 @@ function Read-ManagerOfflineBundle([string]$Root, [string]$Version, [string]$Loc
         throw 'The offline bundle does not match this Manager version, dependency lock, or Windows architecture'
     }
     if ([Environment]::OSVersion.Version.Build -lt $manifest.minimumWindowsBuild) { throw 'The offline bundle requires Windows Server 2019 / Windows 10 build 17763 or newer' }
-    if (@($Engines).Count) { throw ('This offline bundle includes PostgreSQL. Optional database installers are not bundled: ' + ($Engines -join ', ') + '. Deselect these engines; existing institution database servers can be connected after setup.') }
+    if (@($Engines).Count) { throw ('Install optional databases from the Manager dashboard after setup: ' + ($Engines -join ', ') + '. Deselect them in the setup wizard. Redis uses an existing server.') }
     $required = @('application','node','git','caddy','postgresql','pm2','sling','vcredist') + @($Runtimes)
     if ($Runtimes -contains 'composer') { $required += 'php' }
     if ($Pgweb) { $required += 'pgweb' }
     $ids = @{}
     foreach ($item in $manifest.artifacts) {
-        if ($item.id -notin @('application','node','git','caddy','postgresql','pm2','sling','vcredist','go','php','composer','python','pgweb') -or $ids.ContainsKey($item.id)) { throw 'Unknown or duplicate offline component' }
+        if ($item.id -notin @('application','node','git','caddy','postgresql','pm2','sling','vcredist','go','php','composer','python','pgweb','mysql','mariadb','mongodb','sqlserver','sqlserver-update','phpmyadmin') -or $ids.ContainsKey($item.id)) { throw 'Unknown or duplicate offline component' }
         if ($item.sha256 -notmatch '^[A-Fa-f0-9]{64}$' -or [long]$item.bytes -le 0) { throw ('Invalid offline checksum or size: ' + $item.id) }
         $file = Get-ManagerOfflinePath $Root $item.file
         if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw ('Offline component is missing: ' + $item.id) }
@@ -117,6 +117,23 @@ function Install-ManagerOfflineTools($Bundle, [string]$ToolsRoot) {
     $env:Path = ($entries -join ';') + ';' + $env:Path
     $env:PG_BIN_PATH = Join-Path $paths['postgresql'] 'bin'
     return $paths
+}
+
+function Save-ManagerOfflineServiceBundle($Bundle,[string]$Destination) {
+    $sourceManifest = Join-Path $Bundle.Root 'services.json'
+    if (-not (Test-Path -LiteralPath $sourceManifest)) { return } # Older core-only releases.
+    $manifest = Get-Content -LiteralPath $sourceManifest -Raw | ConvertFrom-Json
+    if ($manifest.schemaVersion -ne 1 -or $manifest.architecture -ne 'win-x64') { throw 'Invalid offline services manifest' }
+    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    & icacls.exe $Destination /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not protect offline services bundle' }
+    foreach ($item in $manifest.artifacts) {
+        $original = $Bundle.Items[$item.id]
+        if (-not $original -or $original.sha256 -ne $item.sha256 -or $original.file -ne $item.file -or $original.bytes -ne $item.bytes) { throw 'Services manifest does not match the verified release' }
+        Copy-Item -LiteralPath (Get-ManagerOfflinePath $Bundle.Root $item.file) -Destination (Get-ManagerOfflinePath $Destination $item.file) -Force
+    }
+    Copy-Item -LiteralPath $sourceManifest -Destination (Join-Path $Destination 'services.json') -Force
+    Write-Host '[PASS] Optional service packages saved for offline installation from the dashboard'
 }
 
 function Initialize-ManagerOfflineControlPostgres([string]$Bin, [string]$Data, [int]$Port, [string]$User, [string]$Password) {

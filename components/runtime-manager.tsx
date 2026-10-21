@@ -18,6 +18,8 @@ interface RuntimeStatus {
   canInstall: boolean
   canUpdate: boolean
   canConfigure: boolean
+  offline?: boolean
+  installSource?: string
   versioned: boolean
   installedVersions: string[]
   updateAvailable: boolean
@@ -131,7 +133,7 @@ export function RuntimeManager({ isAdmin, runtimeIds, workspace = false, onChang
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div><p className="text-sm font-medium">{workspace ? `${available.filter(runtime => runtime.installed).length} installed / ${available.length} dependencies` : 'Host dependencies'}</p><p className="mt-1 text-xs text-muted-foreground">{updateCount} update{updateCount === 1 ? '' : 's'} available{anyActive ? ' / Operation in progress' : ''}</p></div>
         <div className="flex flex-wrap gap-1">
-          {isAdmin && <Button variant="outline" size="sm" className="h-8" onClick={() => void checkUpdates()} disabled={checking || anyActive}>{checking ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-2 h-3.5 w-3.5" />}Check updates</Button>}
+          {isAdmin && !runtimes.some(runtime => runtime.offline) && <Button variant="outline" size="sm" className="h-8" onClick={() => void checkUpdates()} disabled={checking || anyActive}>{checking ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-2 h-3.5 w-3.5" />}Check updates</Button>}
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => void load()} disabled={loading} title="Refresh runtimes" aria-label="Refresh runtimes"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></Button>
         </div>
       </div>
@@ -147,12 +149,13 @@ export function RuntimeManager({ isAdmin, runtimeIds, workspace = false, onChang
           <div className="min-w-0 flex-1 basis-56">
             <div className="flex flex-wrap items-center gap-2 text-sm font-medium">{runtime.installed ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : <AlertTriangle className="h-4 w-4 text-amber-500" />}{runtime.name}{runtime.updateAvailable && <Badge variant="outline" className="border-amber-500/30 text-amber-400">{runtime.latestVersion} available{runtime.updateRisk ? ` · ${runtime.updateRisk}` : ''}</Badge>}{runtime.id === 'mysql' && runtime.latestJob?.action === 'configure' && runtime.latestJob.status === 'success' && <Badge variant="secondary">Provisioning ready</Badge>}{runtime.installedVersions.length > 0 && <Badge variant="secondary">{runtime.installedVersions.length} project version{runtime.installedVersions.length === 1 ? '' : 's'}</Badge>}</div>
             <p className="mt-1 break-words pl-6 text-xs text-muted-foreground">{runtime.version || runtime.purpose}</p>
+            {runtime.installSource && <p className="mt-1 pl-6 text-xs text-muted-foreground">{runtime.installSource}</p>}
             {runtime.latestJob?.status === 'failed' && !runtime.activeJob && <button className="mt-1 pl-6 text-left text-[11px] text-destructive hover:underline" onClick={() => watchJob(runtime.latestJob!)}>Last operation failed: {runtime.latestJob.error}</button>}
           </div>
           <div className="flex max-w-full flex-wrap items-center gap-1">
             {runtime.activeJob && <Button variant="outline" size="sm" className="h-8" onClick={() => watchJob(runtime.activeJob!)}><Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />Progress</Button>}
             {!runtime.activeJob && runtime.versioned && <Button variant="ghost" size="sm" className="h-8" onClick={() => void openVersions(runtime)}><Layers3 className="mr-2 h-3.5 w-3.5" />Versions</Button>}
-            {!runtime.activeJob && runtime.installed && runtime.canConfigure && isAdmin && <Button variant="ghost" size="sm" className="h-8" title="Verify the local MySQL service and Manager provisioning credential" onClick={() => void startJob(runtime, 'configure')} disabled={anyActive}><Wrench className="mr-2 h-3.5 w-3.5" />Verify setup</Button>}
+            {!runtime.activeJob && runtime.installed && runtime.canConfigure && isAdmin && <Button variant="ghost" size="sm" className="h-8" title="Verify service startup, saved credentials and persisted data" onClick={() => void startJob(runtime, 'configure')} disabled={anyActive}><Wrench className="mr-2 h-3.5 w-3.5" />Verify setup</Button>}
             {!runtime.activeJob && runtime.updateAvailable && runtime.canUpdate && isAdmin && <Button variant="outline" size="sm" className="h-8" onClick={() => { const compatibility = runtime.updateRisk === 'major' ? ' This is a major update and may require application compatibility changes.' : ''; if (window.confirm(`Update ${runtime.name} to ${runtime.latestVersion}? Stateful services may briefly restart.${compatibility}`)) void startJob(runtime, 'update') }} disabled={anyActive}><ArrowUp className="mr-2 h-3.5 w-3.5" />Update</Button>}
             {!runtime.activeJob && !runtime.installed && runtime.canInstall && isAdmin && <Button variant="outline" size="sm" className="h-8" onClick={() => void startJob(runtime, 'install')} disabled={anyActive}><Download className="mr-2 h-3.5 w-3.5" />Install</Button>}
             {!runtime.activeJob && runtime.latestJob && <Button variant="ghost" size="icon" className="h-8 w-8" title="Latest operation log" onClick={() => watchJob(runtime.latestJob!)}><Eye className="h-3.5 w-3.5" /></Button>}

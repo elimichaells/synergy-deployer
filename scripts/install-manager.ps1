@@ -334,6 +334,7 @@ $env:XDG_CONFIG_HOME = $caddyConfigHome
 if ($offlineInstall) {
     Write-Step 'Installing bundled host dependencies'
     $offlineTools = Install-ManagerOfflineTools $offlineBundle (Join-Path $env:ProgramData 'Manager\tools')
+    Save-ManagerOfflineServiceBundle $offlineBundle (Join-Path $env:ProgramData 'Manager\offline-services')
     if ($installPostgres) { Initialize-ManagerOfflineControlPostgres $env:PG_BIN_PATH (Join-Path $env:ProgramData 'Manager\postgres-control') $dbPort $dbAdminUser $dbAdminPassword }
     if ($installApplicationPostgres) { Initialize-ApplicationPostgres }
     Add-Result 'Offline installation' 'pass' 'Using bundled Node.js, npm, PM2 and server tools'

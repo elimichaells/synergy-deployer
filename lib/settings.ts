@@ -8,6 +8,7 @@ export type SettingKey =
   | 'LOGS_PATH'
   | 'CADDY_PATH'
   | 'GITHUB_TOKEN'
+  | 'GITHUB_CLIENT_ID'
   | 'NOTIFY_WEBHOOK_URL'
   | 'BACKUP_DIR'
   | 'BACKUP_ENABLED'
@@ -22,6 +23,7 @@ const DEFAULTS: Record<SettingKey, string> = {
   LOGS_PATH: path.join(webRoot(), 'logs'),
   CADDY_PATH: webRoot(),
   GITHUB_TOKEN: '',
+  GITHUB_CLIENT_ID: '',
   NOTIFY_WEBHOOK_URL: '',
   BACKUP_DIR: path.join(backupsRoot(), 'postgres'),
   BACKUP_ENABLED: 'false',
@@ -88,6 +90,7 @@ export async function seedSettingsFromEnv(): Promise<void> {
     LOGS_PATH: process.env.LOGS_PATH,
     CADDY_PATH: process.env.CADDY_PATH,
     GITHUB_TOKEN: process.env.GITHUB_TOKEN,
+    GITHUB_CLIENT_ID: process.env.GITHUB_CLIENT_ID,
     NOTIFY_WEBHOOK_URL: process.env.NOTIFY_WEBHOOK_URL,
     BACKUP_DIR: process.env.BACKUP_DIR,
     BACKUP_ENABLED: undefined,

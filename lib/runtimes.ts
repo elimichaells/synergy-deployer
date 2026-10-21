@@ -4,6 +4,7 @@ import { db, query } from '@/lib/db'
 import { runCommand } from '@/lib/exec'
 import { ApiError } from '@/lib/api'
 import { managerScript, mysqlBin, postgresBin, toolsRoot, webRoot } from '@/lib/paths'
+import { offlineMode, offlineServices, offlinePackage, offlineServiceReceipt, serviceStateRoot, offlineCommand } from './offline-runtimes'
 
 /** A PowerShell helper from the manager's scripts folder, wherever the manager is installed. */
 const managerPowerShell = (script: string, args = '') => `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "${managerScript(script)}"${args}`
@@ -118,6 +119,14 @@ function updateRisk(current: string | null | undefined, latest: string | null | 
 }
 
 async function inspectRuntime(definition: RuntimeDefinition) {
+  if (offlineMode() && (offlineServices as readonly string[]).includes(definition.id)) {
+    if (definition.id === 'phpmyadmin') {
+      const installed = existsSync(path.join(serviceStateRoot('phpmyadmin'), 'VERSION'))
+      return { installed, version: installed ? `phpMyAdmin ${offlinePackage('phpmyadmin')?.version || ''} (offline)` : null }
+    }
+    const receipt = offlineServiceReceipt(definition.id)
+    return { installed: receipt?.phase === 'ready', version: receipt ? `${definition.name} ${receipt.version} — ${receipt.phase === 'ready' ? 'installed' : 'setup incomplete'} · port ${receipt.port}` : null }
+  }
   const result = await runCommand(`${executable(definition)} --version`, undefined, 15_000, undefined, runtimeEnv(definition.id))
   const versionResult = result.code === 0 ? result : await runCommand(definition.versionCommand, undefined, 15_000, undefined, runtimeEnv(definition.id))
   return { installed: versionResult.code === 0, version: versionResult.code === 0 ? versionResult.output.trim().split(/\r?\n/)[0].slice(0, 160) : null }
@@ -198,10 +207,12 @@ export async function listRuntimes() {
       name: definition.name,
       purpose: definition.purpose,
       ...inspections[index],
-      canInstall: !!definition.installCommand,
-      canUpdate: !!definition.updateCommand,
-      canConfigure: definition.id === 'mysql',
-      versioned: versionedRuntimeIds.includes(definition.id as VersionedRuntimeId),
+      canInstall: offlineMode() ? !!offlinePackage(definition.id) && (offlineServices as readonly string[]).includes(definition.id) : !!definition.installCommand,
+      canUpdate: !offlineMode() && !!definition.updateCommand,
+      canConfigure: offlineMode() ? !!offlineServiceReceipt(definition.id) && definition.id !== 'phpmyadmin' : definition.id === 'mysql',
+      versioned: !offlineMode() && versionedRuntimeIds.includes(definition.id as VersionedRuntimeId),
+      offline: offlineMode(),
+      installSource: offlineMode() ? (offlinePackage(definition.id) ? `Bundled ${offlinePackage(definition.id)!.version} · no internet required` : definition.id === 'redis' ? 'Connect your existing Redis server in Data connections' : 'Included in setup or supplied by your institution') : 'Online package source',
       installedVersions: versionedRuntimeIds.includes(definition.id as VersionedRuntimeId) ? getInstalledRuntimeVersions(definition.id as VersionedRuntimeId) : [],
       updateAvailable: update?.update_available || false,
       latestVersion: update?.latest_version || null,
@@ -218,6 +229,7 @@ async function appendRuntimeLog(jobId: string, chunk: string) {
 }
 
 function runtimeJobCommand(runtimeId: RuntimeId, action: RuntimeJobAction, requestedVersion?: string | null) {
+  if (offlineMode()) return offlineCommand(runtimeId, action)
   const definition = definitionFor(runtimeId)
   if (action === 'install-version') {
     if (!versionedRuntimeIds.includes(runtimeId as VersionedRuntimeId) || !requestedVersion || !/^\d+\.\d+\.\d+$/.test(requestedVersion)) throw new ApiError('Choose a valid side-by-side runtime version', 400)
@@ -233,13 +245,13 @@ function runtimeJobCommand(runtimeId: RuntimeId, action: RuntimeJobAction, reque
 }
 
 async function activatePhpMyAdmin(jobId: string, installIfMissing: boolean) {
-  const versionFile = toolPath('phpmyadmin', 'VERSION')
+  const versionFile = offlineMode() ? path.join(serviceStateRoot('phpmyadmin'), 'VERSION') : toolPath('phpmyadmin', 'VERSION')
   if (!existsSync(versionFile)) {
     if (!installIfMissing) throw new Error('phpMyAdmin installation did not produce a version marker')
     await appendRuntimeLog(jobId, '[dependency] Installing the secured phpMyAdmin client for this database engine\n')
     let logQueue = Promise.resolve()
     const installer = await runCommand(
-      managerPowerShell('install-phpmyadmin.ps1', ` -ToolsRoot "${toolsRoot()}"`),
+      offlineMode() ? offlineCommand('phpmyadmin', 'install') : managerPowerShell('install-phpmyadmin.ps1', ` -ToolsRoot "${toolsRoot()}"`),
       undefined,
       10 * 60_000,
       (chunk) => { logQueue = logQueue.then(() => appendRuntimeLog(jobId, chunk)) },
@@ -251,11 +263,23 @@ async function activatePhpMyAdmin(jobId: string, installIfMissing: boolean) {
   const runner = path.join(process.cwd(), 'scripts', 'pm2-phpmyadmin-runner.js')
   const existing = await runCommand('pm2 describe "manager-phpmyadmin"')
   const command = existing.code === 0
-    ? 'pm2 restart "manager-phpmyadmin"'
+    ? 'pm2 restart "manager-phpmyadmin" --update-env'
     : `pm2 start "${runner}" --interpreter node --name "manager-phpmyadmin"`
-  const service = await runCommand(command, process.cwd(), 60_000, undefined, { MANAGER_ROOT: process.cwd() }, false)
+  const runtimeEnv: Record<string, string> = { MANAGER_ROOT: process.cwd() }
+  if (offlineMode()) {
+    runtimeEnv.PHPMYADMIN_ROOT = serviceStateRoot('phpmyadmin')
+    runtimeEnv.PHPMYADMIN_PHP = path.join(path.dirname(serviceStateRoot('phpmyadmin')), 'php', 'php.exe')
+  }
+  const service = await runCommand(command, process.cwd(), 60_000, undefined, runtimeEnv, false)
   if (service.code !== 0) throw new Error('phpMyAdmin PM2 service could not be started')
-  await runCommand('pm2 save')
+  const saved = await runCommand('pm2 save')
+  if (saved.code !== 0) throw new Error('phpMyAdmin startup state could not be saved')
+  let ready = false
+  for (let attempt = 0; attempt < 20; attempt++) {
+    try { const response = await fetch('http://127.0.0.1:8433/', { redirect: 'manual', signal: AbortSignal.timeout(2000) }); if (response.status === 200 || response.status === 302) { ready = true; break } } catch { /* startup can take a moment */ }
+    await new Promise(resolve => setTimeout(resolve, 500))
+  }
+  if (!ready) throw new Error('phpMyAdmin did not become ready on its loopback port')
   const { updateCaddyStrict } = await import('@/lib/caddy')
   await updateCaddyStrict(process.env.MANAGER_DOMAIN || 'deploy.smartcloudgh.com', Number(process.env.MANAGER_PORT || 4000))
   await appendRuntimeLog(jobId, '[service] phpMyAdmin is running on the admin-protected /mysql route\n')
@@ -273,7 +297,20 @@ async function executeRuntimeJob(jobId: string) {
     const result = await runCommand(command, undefined, 30 * 60_000, (chunk) => { logQueue = logQueue.then(() => appendRuntimeLog(jobId, chunk)) }, runtimeEnv(job.runtime_id))
     await logQueue
     if (result.code !== 0) throw new Error(`${definition.name} ${job.action} exited with code ${result.code}`)
-    if (job.runtime_id === 'mysql' && job.action !== 'install-version') {
+    if (offlineMode() && ['mysql', 'mariadb', 'mongodb', 'sqlserver'].includes(job.runtime_id)) {
+      // Credentials cross only a private child-process pipe, never the job log.
+      const readCommand = offlineCommand(job.runtime_id, 'configure') as { file: string; args: string[] }
+      readCommand.args[readCommand.args.length - 1] = 'Credential'
+      const response = await runCommand(readCommand, undefined, 30_000)
+      if (response.code !== 0) throw new Error('Could not read the protected service credential')
+      const credential = JSON.parse(response.output) as { username: string; password: string }
+      const receipt = offlineServiceReceipt(job.runtime_id)
+      if (!receipt) throw new Error('Offline service receipt was not saved')
+      const { registerOfflineDataConnection } = await import('@/lib/data-services')
+      await registerOfflineDataConnection(job.runtime_id, receipt.port, credential.username, credential.password)
+      await appendRuntimeLog(jobId, '[configure] Authenticated local database registered with an encrypted provisioning credential\n')
+    }
+    if (!offlineMode() && job.runtime_id === 'mysql' && job.action !== 'install-version') {
       await appendRuntimeLog(jobId, '[security] Restricting MySQL network listeners to this host\n')
       const binding = await runCommand(
         `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "${path.join(process.cwd(), 'scripts', 'configure-database-loopback.ps1')}" -Engine mysql -RepairMissingService`,
@@ -290,7 +327,7 @@ async function executeRuntimeJob(jobId: string) {
         ? '[configure] Existing encrypted provisioning credential is healthy; no credentials were changed\n'
         : '[configure] Fresh MySQL setup was secured and a dedicated provisioning credential was registered\n')
     }
-    if (job.runtime_id === 'mariadb' && job.action !== 'install-version') {
+    if (!offlineMode() && job.runtime_id === 'mariadb' && job.action !== 'install-version') {
       await appendRuntimeLog(jobId, '[security] Restricting MariaDB network listeners to this host\n')
       const binding = await runCommand(
         `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "${path.join(process.cwd(), 'scripts', 'configure-database-loopback.ps1')}" -Engine mariadb`,
@@ -349,6 +386,7 @@ export async function startRuntimeJob(runtimeId: string, action: RuntimeJobActio
 
 export async function checkRuntimeUpdates() {
   await ensureRuntimeSchema()
+  if (offlineMode()) return listRuntimes()
   const packageMap = new Map(definitions.filter((item) => item.packageName).map((item) => [item.packageName!.toLowerCase(), item.id]))
   const result = await runCommand('choco outdated --limit-output --ignore-pinned', undefined, 5 * 60_000)
   const found = new Map<RuntimeId, { current: string; latest: string }>()
@@ -396,6 +434,7 @@ export async function checkRuntimeUpdates() {
 }
 
 export async function getRuntimeVersionCatalog(id: string) {
+  if (offlineMode()) throw new ApiError('Offline servers use the versions in their verified bundle. Online version catalogs are disabled.', 409)
   if (!versionedRuntimeIds.includes(id as VersionedRuntimeId)) throw new ApiError('This runtime does not support side-by-side versions', 400)
   const runtimeId = id as VersionedRuntimeId
   let available: Array<{ version: string; label: string; date?: string }> = []

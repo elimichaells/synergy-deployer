@@ -76,8 +76,10 @@ Manager offline Windows x64 package
 All Manager dependencies and the production app are bundled. No Chocolatey,
 npm registry, GitHub or build downloads are required on the target server.
 Run setup.cmd and select institution/local network access for internal HTTPS.
-PostgreSQL 17, Pgweb and the default language runtimes are included. Other
-optional database engines are not included. Project builds need their own
+PostgreSQL 17, Pgweb and the default language runtimes are included. MySQL,
+MariaDB, MongoDB, SQL Server Express and phpMyAdmin packages are retained for
+offline installation from the dashboard. Redis uses an existing server.
+Project builds need their own
 vendored dependencies or internal package registries.
 See docs/offline-installation.md for installation and reboot verification.
 '@ | Set-Content -LiteralPath (Join-Path $staging 'INSTALL.txt') -Encoding UTF8

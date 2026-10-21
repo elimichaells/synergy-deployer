@@ -53,7 +53,7 @@ async function main() {
   for (const item of lock.artifacts) {
     const downloaded = await download(item);
     if (item.authenticode) ps(`$s=Get-AuthenticodeSignature -LiteralPath ${quote(downloaded)}; if($s.Status -ne 'Valid'){throw 'Invalid publisher signature: ${item.id}'}`);
-    if (['python', 'vcredist'].includes(item.id)) {
+    if (['python', 'vcredist', 'sqlserver', 'sqlserver-update'].includes(item.id)) {
       const file = path.join(output, item.file);
       fs.copyFileSync(downloaded, file);
       await record(item.id, item.version, file, item.url);
@@ -79,6 +79,13 @@ async function main() {
       run(path.join(process.env.SystemRoot, 'System32/tar.exe'), ['-xf', downloaded, '-C', unpacked]);
     }
     const root = path.join(unpacked, item.root || '.');
+    if (['mysql', 'mariadb', 'mongodb'].includes(item.id)) {
+      // Debug symbols are unnecessary on the target; preserve server/client
+      // executables, their libraries, and all licence files.
+      for (const entry of fs.readdirSync(path.join(root, 'bin'))) {
+        if (entry.endsWith('.pdb')) fs.unlinkSync(path.join(root, 'bin', entry));
+      }
+    }
     if (item.id === 'postgresql') {
       // Keep server/tools, extensions, documentation and licences. pgAdmin/Stack
       // Builder are unrelated GUI downloads and are not required by Manager.
@@ -151,6 +158,11 @@ async function main() {
     createdAt: new Date().toISOString(), artifacts,
   };
   fs.writeFileSync(path.join(output, 'manifest.json'), JSON.stringify(manifest, null, 2));
+  const serviceIds = ['mysql', 'mariadb', 'mongodb', 'sqlserver', 'sqlserver-update', 'phpmyadmin', 'php', 'vcredist'];
+  fs.writeFileSync(path.join(output, 'services.json'), JSON.stringify({
+    schemaVersion: 1, architecture: lock.architecture, minimumWindowsBuild: lock.minimumWindowsBuild,
+    managerVersion: version, artifacts: artifacts.filter(item => serviceIds.includes(item.id)),
+  }, null, 2));
   fs.copyFileSync(path.join(source, 'installer/offline/dependencies.lock.json'), path.join(output, 'dependencies.lock.json'));
   fs.writeFileSync(path.join(output, 'THIRD-PARTY.txt'), lock.artifacts.map(item => `${item.id} ${item.version}\nLicense: ${item.license}\nPublisher: ${item.url}\nUpstream archive SHA-256: ${item.sha256}\n`).join('\n') + '\nOriginal licence files are retained inside component archives. PM2 is AGPL-3.0; its licences and dependencies are included in pm2.zip. Manager dependency licences are in application.zip/node_modules.\n');
   console.log('Offline bundle ready:', output);

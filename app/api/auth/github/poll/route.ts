@@ -3,6 +3,7 @@ import { getSessionFromCookie } from '@/lib/auth'
 import { requireRole } from '@/lib/rbac'
 import { jsonError } from '@/lib/api'
 import { createGitHubConnection } from '@/lib/github-connections'
+import { getSetting } from '@/lib/settings'
 
 /**
  * GitHub Device Flow — Step 2: Poll for access token
@@ -14,11 +15,11 @@ export async function POST(request: NextRequest) {
         const user = await getSessionFromCookie()
         requireRole(user, ['admin'])
 
-        const clientId = process.env.GITHUB_CLIENT_ID
+        const clientId = await getSetting('GITHUB_CLIENT_ID')
         if (!clientId) {
             return NextResponse.json(
-                { error: 'GITHUB_CLIENT_ID is not configured' },
-                { status: 500 }
+                { error: 'Save your GitHub OAuth client ID in Settings → Connections → GitHub application, then start a new connection.' },
+                { status: 409 }
             )
         }
 
