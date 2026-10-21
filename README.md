@@ -31,6 +31,12 @@ private repositories, verifies the release SHA-256 manifest, and runs the
 read-only server preflight before enabling installation. The same executable
 offers a direct switch to the embedded package if GitHub cannot find an accessible release (404).
 Target servers do not need .NET because the setup executable is self-contained.
+The wizard supports institution LAN and public installations using an IP address
+or hostname. Local mode uses HTTPS with a local CA and scopes its web firewall
+rules to the chosen client networks. Public domains use automatic public HTTPS;
+IP addresses use a local CA that client devices must trust. See the
+[installer guide](installer/ManagerSetup/README.md) for certificate distribution
+and checks after reboot. Dependencies still require internet access.
 Automatic setup supports either MySQL or MariaDB on a host. The wizard makes
 these choices exclusive and preflight checks existing services before installing
 anything, preventing the MariaDB package from colliding with MySQL. Separately

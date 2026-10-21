@@ -1,5 +1,7 @@
 {
   "ManagerDomain": "deploy.example.com",
+  "ManagerAccessMode": "public",
+  "ManagerAllowedNetworks": ["LocalSubnet"],
   "ManagerPort": 4000,
   "ManagerRoot": "C:\\web\\manager",
   "WebRoot": "C:\\web",

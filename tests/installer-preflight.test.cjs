@@ -94,12 +94,14 @@ test('boot recovery uses saved PM2 paths without the installing user PATH and re
   const startup = path.resolve(__dirname, '../scripts/pm2-resurrect.ps1');
   const env = { ...process.env, ProgramData: root, Path: `${process.env.SystemRoot}\\System32;${process.env.SystemRoot}` };
   try {
-    fs.writeFileSync(pm2, '@echo off\r\necho command=%1\r\necho pm2home=%PM2_HOME%\r\nwhere node.exe\r\nexit /b 0\r\n');
-    fs.writeFileSync(path.join(manager, 'pm2-startup.json'), JSON.stringify({ node: process.execPath, pm2, path: env.Path }));
+    fs.writeFileSync(pm2, '@echo off\r\necho command=%1\r\necho pm2home=%PM2_HOME%\r\necho caddydata=%XDG_DATA_HOME%\r\necho caddyconfig=%XDG_CONFIG_HOME%\r\nwhere node.exe\r\nexit /b 0\r\n');
+    fs.writeFileSync(path.join(manager, 'pm2-startup.json'), JSON.stringify({ node: process.execPath, pm2, path: env.Path, caddyDataHome: path.join(manager, 'caddy-data'), caddyConfigHome: path.join(manager, 'caddy-config') }));
     const output = powershell(`& ${quote(startup)}`, env);
     assert.match(output, /command=resurrect/);
     assert.ok(output.includes(path.join(manager, 'pm2')));
     assert.ok(output.toLowerCase().includes(process.execPath.toLowerCase()));
+    assert.ok(output.includes('caddydata=' + path.join(manager, 'caddy-data')));
+    assert.ok(output.includes('caddyconfig=' + path.join(manager, 'caddy-config')));
     fs.writeFileSync(pm2, '@echo off\r\nexit /b 7\r\n');
     const failure = powershell(`try { & ${quote(startup)} } catch { $_.Exception.Message }`, env);
     assert.match(failure, /boot recovery failed with exit code 7/);

@@ -15,6 +15,8 @@ const tempDir = path.join(webRoot, 'temp', 'phpmyadmin')
 const sessionDir = path.join(webRoot, 'temp', 'phpmyadmin-sessions')
 const port = process.env.PHPMYADMIN_PORT || '8433'
 const managerDomain = managerConfig.MANAGER_DOMAIN || process.env.MANAGER_DOMAIN || 'deploy.smartcloudgh.com'
+const managerAddress = managerDomain.includes(':') && !managerDomain.startsWith('[') ? `[${managerDomain}]` : managerDomain
+const managerUrl = managerConfig.MANAGER_URL || process.env.MANAGER_URL || `https://${managerAddress}`
 const secret = managerConfig.JWT_SECRET || process.env.JWT_SECRET
 
 if (!secret || !fs.existsSync(path.join(root, 'index.php'))) {
@@ -39,7 +41,7 @@ const child = spawn(php, ['-S', `127.0.0.1:${port}`, '-t', root], {
     Path: process.env.Path || process.env.PATH,
     PATH: process.env.Path || process.env.PATH,
     PHPMYADMIN_BLOWFISH_SECRET: createHmac('sha256', secret).update('manager:phpmyadmin').digest('hex'),
-    PHPMYADMIN_PUBLIC_URL: `https://${managerDomain}/mysql/`,
+    PHPMYADMIN_PUBLIC_URL: `${managerUrl}/mysql/`,
     // phpMyAdmin's config reads these with forward slashes.
     PHPMYADMIN_TEMP_DIR: tempDir.split(path.sep).join('/'),
     PHPMYADMIN_SESSION_DIR: sessionDir.split(path.sep).join('/'),

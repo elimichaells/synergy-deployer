@@ -30,7 +30,7 @@ public partial class MainWindow : Window
     private readonly string[] _subtitles =
     [
         "Install from a verified GitHub release or use the package embedded in this setup file.",
-        "Manager runs privately behind Caddy, which provides the public HTTPS endpoint.",
+        "Choose an IP address or hostname and configure access from your institution or the internet.",
         "These credentials initialize Manager and its isolated database roles.",
         "Core dependencies are automatic; choose the runtimes and database engines projects may need.",
         "No changes are made until package verification and the read-only preflight succeed.",
@@ -55,6 +55,7 @@ public partial class MainWindow : Window
         _stepBorders = [StepSource, StepServer, StepAccount, StepComponents, StepReview, StepInstall];
         _stepTexts = [StepSourceText, StepServerText, StepAccountText, StepComponentsText, StepReviewText, StepInstallText];
         UpdateSourceMode();
+        UpdateAccessMode();
         UpdateStep();
     }
 
@@ -87,7 +88,7 @@ public partial class MainWindow : Window
 
         if (_installationComplete)
         {
-            Process.Start(new ProcessStartInfo($"https://{DomainTextBox.Text.Trim()}") { UseShellExecute = true });
+            Process.Start(new ProcessStartInfo(ReadOptions().ManagerUrl) { UseShellExecute = true });
             return;
         }
 
@@ -195,7 +196,9 @@ public partial class MainWindow : Window
             await InstallerRunner.RunAsync(_payload, options, false, AppendLog, _operationCancellation.Token);
             _installationComplete = true;
             InstallStatusText.Text = "Manager installation completed";
-            InstallDetailText.Text = $"Manager is available at https://{options.ManagerDomain}. The detailed report is in C:\\ProgramData\\Manager\\install-report.json.";
+            InstallDetailText.Text = $"Manager is installed for {options.ManagerUrl}. "
+                + (options.UsesLocalCertificate ? "Trust the local CA on client devices before signing in. " : "Public HTTPS requires DNS and reachable ports 80/443. ")
+                + "See C:\\ProgramData\\Manager\\install-report.json for connection and certificate details.";
             AppendLog(string.Empty);
             AppendLog("PASS: Installation and final health verification completed.");
         }
@@ -243,6 +246,18 @@ public partial class MainWindow : Window
         if (sender == MariaDbCheckBox && MySqlCheckBox is not null) MySqlCheckBox.IsChecked = false;
     }
 
+    private void AccessMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!IsInitialized) return;
+        UpdateAccessMode();
+        InvalidatePreflight();
+    }
+
+    private void UpdateAccessMode()
+    {
+        if (AllowedNetworksTextBox is not null) AllowedNetworksTextBox.IsEnabled = AccessModeComboBox.SelectedIndex == 0;
+    }
+
     private bool ValidateStep(int step)
     {
         string? error = null;
@@ -256,8 +271,10 @@ public partial class MainWindow : Window
                     error = "Enter latest or a GitHub release tag.";
                 break;
             case 1:
-                if (!Regex.IsMatch(DomainTextBox.Text.Trim(), "^(?=.{3,253}$)([A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]{2,63}$"))
-                    error = "Enter a valid fully qualified domain name without https:// or a path.";
+                if (!ServerAddress.TryNormalize(DomainTextBox.Text, out _))
+                    error = "Enter a valid IP address or hostname without https://, a path, or a port.";
+                else if (AccessModeComboBox.SelectedIndex == 0 && string.IsNullOrWhiteSpace(AllowedNetworksTextBox.Text))
+                    error = "Enter LocalSubnet or the institution's client IP/CIDR networks.";
                 else if (!int.TryParse(PortTextBox.Text, out var port) || port is < 1 or > 65535)
                     error = "Manager port must be between 1 and 65535.";
                 else if (!Path.IsPathRooted(ManagerRootTextBox.Text) || !Path.IsPathRooted(WebRootTextBox.Text))
@@ -303,7 +320,9 @@ public partial class MainWindow : Window
             GitHubRepository = RepositoryTextBox.Text.Trim(),
             ReleaseTag = ReleaseTagTextBox.Text.Trim(),
             GitHubToken = GitHubTokenPasswordBox.Password,
-            ManagerDomain = DomainTextBox.Text.Trim().ToLowerInvariant(),
+            ManagerDomain = ServerAddress.TryNormalize(DomainTextBox.Text, out var address) ? address : DomainTextBox.Text.Trim(),
+            ManagerAccessMode = AccessModeComboBox.SelectedIndex == 0 ? "local" : "public",
+            ManagerAllowedNetworks = AllowedNetworksTextBox.Text.Split([',', ';'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries),
             ManagerPort = int.TryParse(PortTextBox.Text, out var port) ? port : 4000,
             ManagerRoot = ManagerRootTextBox.Text.Trim(),
             WebRoot = WebRootTextBox.Text.Trim(),
@@ -331,7 +350,10 @@ public partial class MainWindow : Window
         ReviewTextBox.Text = string.Join(Environment.NewLine,
         [
             $"PACKAGE     {source}",
-            $"DOMAIN      https://{options.ManagerDomain}",
+            $"ADDRESS     {options.ManagerUrl}",
+            $"ACCESS      {options.ManagerAccessMode}",
+            $"CLIENTS     {(options.ManagerAccessMode == "local" ? ListOrNone(options.ManagerAllowedNetworks) : "Any (subject to the server's network firewall)")}",
+            $"HTTPS       {(options.UsesLocalCertificate ? "Local CA - client devices must trust its public root certificate" : "Automatic public certificate")}",
             $"APP PORT    127.0.0.1:{options.ManagerPort}",
             $"INSTALL     {options.ManagerRoot}",
             $"WEB ROOT    {options.WebRoot}",

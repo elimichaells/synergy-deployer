@@ -7,6 +7,7 @@ $ProgressPreference = 'SilentlyContinue'
 $packageRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'installer-database-policy.ps1')
 . (Join-Path $PSScriptRoot 'installer-preflight.ps1')
+. (Join-Path $PSScriptRoot 'installer-network.ps1')
 . (Join-Path $PSScriptRoot 'database-service.ps1')
 $results = [System.Collections.Generic.List[object]]::new()
 
@@ -202,6 +203,11 @@ Write-Host 'Manager for Windows Server and Windows 10/11' -ForegroundColor White
 Write-Host 'Preflight, installation, configuration, and verification wizard' -ForegroundColor DarkGray
 
 $managerDomain = [string](Get-Setting 'ManagerDomain' $null -Required)
+$managerAccessMode = [string](Get-Setting 'ManagerAccessMode' 'public')
+$managerAllowedNetworks = @(Get-ListSetting 'ManagerAllowedNetworks' @('LocalSubnet'))
+$network = Get-ManagerNetworkSettings $managerDomain $managerAccessMode $managerAllowedNetworks
+$managerDomain = $network.Address
+$managerUrl = $network.Url
 $managerPort = [int](Get-Setting 'ManagerPort' 4000)
 $managerRoot = [string](Get-Setting 'ManagerRoot' 'C:\web\manager')
 $webRoot = [string](Get-Setting 'WebRoot' 'C:\web')
@@ -238,6 +244,9 @@ $caddyfile = Join-Path $webRoot 'Caddyfile'
 $caddyLogDir = [string](Get-Setting 'CaddyLogDir' $(if (Test-Path -LiteralPath 'C:\Caddy\logs') { 'C:\Caddy\logs' } else { Join-Path $webRoot 'logs\caddy' }))
 $pm2Home = Join-Path $env:ProgramData 'Manager\pm2'
 $reportPath = Join-Path $env:ProgramData 'Manager\install-report.json'
+$caddyDataHome = Join-Path $env:ProgramData 'Manager\caddy-data'
+$caddyConfigHome = Join-Path $env:ProgramData 'Manager\caddy-config'
+$localCaCertificate = Join-Path $caddyDataHome 'caddy\pki\authorities\local\root.crt'
 if ($Plan -and -not $adminPassword) { $adminPassword = 'PLAN_ONLY' }
 if ($Plan -and -not $dbAdminPassword) { $dbAdminPassword = 'PLAN_ONLY' }
 if ($Plan -and -not $appDbAdminPassword) { $appDbAdminPassword = 'PLAN_ONLY' }
@@ -253,6 +262,10 @@ Add-Result 'PostgreSQL package' 'pass' $postgresPackage
 Assert-ManagerInstallPaths $managerRoot $webRoot $packageRoot
 Assert-ManagerInstallPorts $managerPort $dbPort $installApplicationPostgres $appDbPort $installPgweb $installPhpMyAdmin
 Add-Result 'Installation paths and ports' 'pass' 'Dedicated installation directory and required TCP ports are available'
+Add-Result 'Manager address' 'pass' ($managerUrl + ' (' + $managerAccessMode + ', ' + $network.TlsMode + ' HTTPS)')
+if ($network.TlsMode -eq 'internal') {
+    Add-Result 'Client certificate trust' 'warn' 'Client devices must trust the generated local CA certificate. No public DNS or inbound internet access is required for local HTTPS.'
+}
 if ($installPhpMyAdmin) {
     $databaseConflict = Get-ManagerDatabaseConflict $optionalEngines @(Get-CimInstance Win32_Service)
     if ($databaseConflict) { throw $databaseConflict }
@@ -273,7 +286,7 @@ if ($installApplicationPostgres) {
 try {
     $addresses = [Net.Dns]::GetHostAddresses($managerDomain)
     Add-Result 'Manager DNS' 'pass' (($addresses | ForEach-Object IPAddressToString) -join ', ')
-} catch { Add-Result 'Manager DNS' 'warn' 'DNS does not resolve yet. Public TLS will wait for DNS.' }
+} catch { Add-Result 'Manager DNS' 'warn' 'The address does not resolve yet. Configure DNS or client host mappings before browsing to this hostname.' }
 
 if ($Plan) {
     Write-Host ''
@@ -281,6 +294,15 @@ if ($Plan) {
     $results | Format-Table -AutoSize
     exit 0
 }
+
+# Keep Caddy certificates and its local CA stable when boot recovery runs as SYSTEM.
+foreach ($directory in @($caddyDataHome, $caddyConfigHome)) {
+    New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    & icacls.exe $directory /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to secure Caddy certificate storage' }
+}
+$env:XDG_DATA_HOME = $caddyDataHome
+$env:XDG_CONFIG_HOME = $caddyConfigHome
 
 Ensure-Chocolatey
 Write-Step 'Installing host dependencies'
@@ -377,6 +399,11 @@ try {
     $managerEncryptionKey = New-Secret
     $environmentText = @(
         'MANAGER_DOMAIN=' + $managerDomain
+        'MANAGER_URL=' + $managerUrl
+        'MANAGER_ACCESS_MODE=' + $managerAccessMode
+        'MANAGER_TLS_MODE=' + $network.TlsMode
+        'XDG_DATA_HOME=' + $caddyDataHome.Replace('\','\\')
+        'XDG_CONFIG_HOME=' + $caddyConfigHome.Replace('\','\\')
         'MANAGER_PORT=' + $managerPort
         'DATABASE_HOST=' + $dbHost
         'DATABASE_PORT=' + $dbPort
@@ -446,7 +473,8 @@ if ($installPhpMyAdmin) {
 }
 $managerBlock = @"
 # $managerDomain
-$managerDomain {
+$($network.SiteAddress) {
+$(if ($network.TlsMode -eq 'internal') { '    tls internal' })
 $managerRoutes
     handle {
         reverse_proxy 127.0.0.1:$managerPort {
@@ -456,7 +484,7 @@ $managerRoutes
         }
     }
     log {
-        output file "$(Join-Path $caddyLogDir ($managerDomain.Replace('.','-') + '-error.log'))" {
+        output file "$(Join-Path $caddyLogDir ($network.LogName + '-error.log'))" {
             roll_size 10MB
             roll_keep 5
         }
@@ -466,7 +494,7 @@ $managerRoutes
 }
 "@
 if (-not (Test-Path $caddyfile)) { Set-Content $caddyfile $managerBlock -Encoding UTF8 }
-elseif ((Get-Content $caddyfile -Raw) -notmatch [regex]::Escape($managerDomain + ' {')) { Add-Content $caddyfile ([Environment]::NewLine + $managerBlock) }
+elseif ((Get-Content $caddyfile -Raw) -notmatch [regex]::Escape($network.SiteAddress + ' {')) { Add-Content $caddyfile ([Environment]::NewLine + $managerBlock) }
 Invoke-Native $caddyExe @('validate','--config',$caddyfile,'--adapter','caddyfile') 'Validate Caddy configuration'
 
 if ($installPgweb) {
@@ -500,7 +528,7 @@ if ($installPgweb) { Invoke-Native 'pm2.cmd' @('start',(Join-Path $managerRoot '
 if ($installPhpMyAdmin) { Invoke-Native 'pm2.cmd' @('start',(Join-Path $managerRoot 'scripts\pm2-phpmyadmin-runner.js'),'--cwd',$managerRoot,'--name','manager-phpmyadmin') 'Start phpMyAdmin' }
 Invoke-Native 'pm2.cmd' @('save') 'Save PM2 process list'
 $startupConfig = Join-Path $env:ProgramData 'Manager\pm2-startup.json'
-@{ node=(Get-Command node.exe).Source; pm2=(Get-Command pm2.cmd).Source; path=$env:Path } |
+@{ node=(Get-Command node.exe).Source; pm2=(Get-Command pm2.cmd).Source; path=$env:Path; caddyDataHome=$caddyDataHome; caddyConfigHome=$caddyConfigHome } |
     ConvertTo-Json | Set-Content -LiteralPath $startupConfig -Encoding UTF8
 & icacls.exe $startupConfig /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Failed to secure PM2 startup configuration' }
@@ -514,7 +542,7 @@ Write-Step 'Applying firewall policy'
 foreach ($port in @(80,443)) {
     $displayName = 'Manager HTTP ' + $port
     if (-not (Get-NetFirewallRule -DisplayName $displayName -ErrorAction SilentlyContinue)) {
-        New-NetFirewallRule -DisplayName $displayName -Direction Inbound -Action Allow -Protocol TCP -LocalPort $port | Out-Null
+        New-NetFirewallRule -DisplayName $displayName -Direction Inbound -Action Allow -Protocol TCP -LocalPort $port -RemoteAddress $network.RemoteAddresses | Out-Null
     }
 }
 Add-Result 'Database firewall' 'pass' 'No database engine ports were opened'
@@ -529,6 +557,11 @@ Invoke-Native $caddyExe @('validate','--config',$caddyfile,'--adapter','caddyfil
 $report = [ordered]@{
     installedAt=(Get-Date).ToUniversalTime().ToString('o')
     managerDomain=$managerDomain
+    managerUrl=$managerUrl
+    accessMode=$managerAccessMode
+    tlsMode=$network.TlsMode
+    allowedClientNetworks=$network.RemoteAddresses
+    localCaCertificate=if ($network.TlsMode -eq 'internal') { $localCaCertificate } else { $null }
     managerPort=$managerPort
     managerRoot=$managerRoot
     webRoot=$webRoot
@@ -551,6 +584,7 @@ $report = [ordered]@{
 $report | ConvertTo-Json -Depth 6 | Set-Content $reportPath -Encoding UTF8
 Write-Host ''
 Write-Host 'Manager installation completed.' -ForegroundColor Green
-Write-Host ('URL: https://' + $managerDomain) -ForegroundColor Green
+Write-Host ('URL: ' + $managerUrl) -ForegroundColor Green
+if ($network.TlsMode -eq 'internal') { Write-Host ('Client trust: distribute only the public CA certificate ' + $localCaCertificate + '. Never distribute root.key.') -ForegroundColor Yellow }
 Write-Host ('Report: ' + $reportPath) -ForegroundColor DarkGray
 Write-Host 'Manager control and application databases are isolated. Database ports remain private.' -ForegroundColor DarkGray

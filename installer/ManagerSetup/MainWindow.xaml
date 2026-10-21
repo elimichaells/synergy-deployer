@@ -134,10 +134,10 @@
                                     <ColumnDefinition Width="170" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel>
-                                    <Label Content="Manager domain" />
+                                    <Label Content="Server IP address or hostname" />
                                     <TextBox x:Name="DomainTextBox" />
-                                    <TextBlock Text="DNS should resolve to this Windows server before public TLS can complete."
-                                               Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,6,0,0" />
+                                    <TextBlock Text="Examples: 192.168.10.20, deploy.institution.local, or deploy.example.com. Use a stable address, without https:// or a port."
+                                               Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,6,0,0" TextWrapping="Wrap" />
                                 </StackPanel>
                                 <StackPanel Grid.Column="2">
                                     <Label Content="Manager port" />
@@ -145,7 +145,18 @@
                                     <TextBlock Text="Loopback application port" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,6,0,0" />
                                 </StackPanel>
                             </Grid>
-                            <Grid Margin="0,28,0,0">
+                            <StackPanel Margin="0,20,0,0">
+                                <Label Content="Where will this server be accessed?" />
+                                <ComboBox x:Name="AccessModeComboBox" SelectedIndex="0" SelectionChanged="AccessMode_SelectionChanged" Padding="10,8">
+                                    <ComboBoxItem Content="Institution / local network" />
+                                    <ComboBoxItem Content="Public server" />
+                                </ComboBox>
+                                <Label Content="Allowed client networks (local installations)" Margin="0,12,0,0" />
+                                <TextBox x:Name="AllowedNetworksTextBox" Text="LocalSubnet" />
+                                <TextBlock Text="LocalSubnet allows the server's directly connected networks. For other campus networks or VPNs, enter IP/CIDR ranges separated by commas, e.g. 10.20.0.0/16, 192.168.50.0/24."
+                                           Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,6,0,0" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <Grid Margin="0,20,0,0">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="22" />
@@ -161,7 +172,7 @@
                                 </StackPanel>
                             </Grid>
                             <Border Background="#EDF8F6" BorderBrush="#A7D9D2" BorderThickness="1" Padding="16" CornerRadius="5" Margin="0,30,0,0">
-                                <TextBlock Text="Caddy will terminate HTTPS on ports 80 and 443. Database ports remain loopback-only and are not opened in Windows Firewall."
+                                <TextBlock Text="HTTPS is enabled for both networks. Local servers and IP addresses use a local certificate authority that client devices must trust. Public domain names use automatic public certificates. Local mode scopes the installer's web firewall rules to the client networks above; it does not change existing firewall rules."
                                            Foreground="#185B55" TextWrapping="Wrap" />
                             </Border>
                         </StackPanel>

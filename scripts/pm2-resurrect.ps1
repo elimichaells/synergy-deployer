@@ -8,6 +8,8 @@ if (Test-Path -LiteralPath $configPath) {
         throw 'The saved Node.js or PM2 executable is missing. Repair the PM2 startup configuration.'
     }
     $env:Path = (Split-Path -Parent $config.node) + ';' + (Split-Path -Parent $config.pm2) + ';' + $config.path
+    if ($config.caddyDataHome) { $env:XDG_DATA_HOME = $config.caddyDataHome }
+    if ($config.caddyConfigHome) { $env:XDG_CONFIG_HOME = $config.caddyConfigHome }
     $pm2 = $config.pm2
 } else {
     # Compatibility with installations made before startup paths were recorded.

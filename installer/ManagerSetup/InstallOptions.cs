@@ -7,6 +7,10 @@ internal sealed class InstallOptions
     public string ReleaseTag { get; init; } = "latest";
     public string GitHubToken { get; init; } = string.Empty;
     public string ManagerDomain { get; init; } = string.Empty;
+    public string ManagerAccessMode { get; init; } = "public";
+    public IReadOnlyList<string> ManagerAllowedNetworks { get; init; } = ["LocalSubnet"];
+    public string ManagerUrl => ServerAddress.Url(ManagerDomain);
+    public bool UsesLocalCertificate => ServerAddress.UsesLocalCertificate(ManagerDomain, ManagerAccessMode);
     public int ManagerPort { get; init; } = 4000;
     public string ManagerRoot { get; init; } = @"C:\web\manager";
     public string WebRoot { get; init; } = @"C:\web";

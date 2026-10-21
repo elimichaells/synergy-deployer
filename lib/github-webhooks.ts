@@ -2,8 +2,9 @@ import { randomBytes } from 'crypto'
 import { ApiError } from '@/lib/api'
 import { query } from '@/lib/db'
 import { getGitHubConnectionToken } from '@/lib/github-connections'
+import { managerUrl } from './manager-address'
 
-export const GITHUB_WEBHOOK_URL = `https://${process.env.MANAGER_DOMAIN || 'deploy.smartcloudgh.com'}/api/webhooks/github`
+export const GITHUB_WEBHOOK_URL = `${managerUrl()}/api/webhooks/github`
 
 interface ProjectWebhookRecord {
   id: string

@@ -3,6 +3,7 @@ import { tmpdir } from 'os'
 import path from 'path'
 import { runCommand } from './exec'
 import { caddyLogDir, webRoot } from './paths'
+import { isManagerAddress, managerSiteAddress, managerUsesLocalTls, normalizeManagerAddress } from './manager-address'
 
 const CADDY_ROOT = process.env.CADDY_PATH || webRoot()
 const CADDYFILE_PATH = process.env.CADDYFILE_PATH || path.join(CADDY_ROOT, 'Caddyfile')
@@ -28,9 +29,8 @@ const STATIC_APP_PROXY_ROUTES: Record<string, CaddyProxyRoute[]> = {
 
 function appProxyRoutes(domain: string): CaddyProxyRoute[] {
     const routes = [...(STATIC_APP_PROXY_ROUTES[domain] || [])]
-    const managerDomain = process.env.MANAGER_DOMAIN || 'deploy.smartcloudgh.com'
     const managerPort = Number(process.env.MANAGER_PORT || 4000)
-    if (domain === managerDomain) {
+    if (isManagerAddress(domain)) {
         routes.push({
             matcher: 'databaseClient',
             paths: ['/postgres', '/postgres/*'],
@@ -50,6 +50,7 @@ function appProxyRoutes(domain: string): CaddyProxyRoute[] {
 
 function sanitizeDomain(domain: string) {
     const value = domain.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0].replace(/\.$/, '')
+    if (isManagerAddress(value)) return normalizeManagerAddress(value)
     if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(value)) {
         throw new Error('Invalid public domain name')
     }
@@ -122,7 +123,9 @@ function renderWakeHandler() {
 }
 
 export function renderCaddyBlock(domain: string, port: number, stackRoutes: StackDomainRoute[] = [], wake = false) {
-    const logFile = path.join(caddyLogDir(), `${domain.replace(/\./g, '-')}-error.log`)
+    const logFile = path.join(caddyLogDir(), `${domain.replace(/[^a-z0-9-]/gi, '-')}-error.log`)
+    const siteAddress = managerSiteAddress(domain)
+    const tls = isManagerAddress(domain) && managerUsesLocalTls(domain) ? '\ttls internal\n' : ''
     const stack = [...stackRoutes]
         .sort((a, b) => b.path_prefix.length - a.path_prefix.length || a.path_prefix.localeCompare(b.path_prefix))
         .map((route, index): CaddyProxyRoute => ({
@@ -141,8 +144,8 @@ ${renderReverseProxy(port, '\t\t')}
         : renderReverseProxy(port)
 
     return `# ${domain}
-${domain} {
-${proxyBlock}
+${siteAddress} {
+${tls}${proxyBlock}
 ${wake ? renderWakeHandler() : ''}
 \tlog {
 \t\toutput file ${/\s/.test(logFile) ? `"${logFile}"` : logFile} {
@@ -156,7 +159,7 @@ ${wake ? renderWakeHandler() : ''}
 }
 
 function replaceCaddyBlock(content: string, domain: string, newBlock: string) {
-    const startMarker = `${domain} {`
+    const startMarker = `${managerSiteAddress(domain)} {`
     if (!content.includes(startMarker)) {
         return [content.trimEnd(), newBlock.trim()].filter(Boolean).join('\n\n') + '\n'
     }
@@ -246,7 +249,7 @@ export async function refreshCaddyHosts(hosts: string[], port: number) {
     const content = await readFile(CADDYFILE_PATH, 'utf8')
     for (const host of hosts) {
         const domain = sanitizeDomain(host)
-        if (content.includes(`${domain} {`)) await applyCaddyUpdate(domain, port)
+        if (content.includes(`${managerSiteAddress(domain)} {`)) await applyCaddyUpdate(domain, port)
     }
 }
 
@@ -280,7 +283,7 @@ export async function updateCaddy(domain: string, port: number) {
 async function applyCaddyRemove(domain: string) {
     let content = await readFile(CADDYFILE_PATH, 'utf8')
     const sanitizedDomain = sanitizeDomain(domain)
-    const startMarker = `${sanitizedDomain} {`
+    const startMarker = `${managerSiteAddress(sanitizedDomain)} {`
     if (!content.includes(startMarker)) return { domain: sanitizedDomain, removed: false }
 
     const startIndex = content.indexOf(startMarker)

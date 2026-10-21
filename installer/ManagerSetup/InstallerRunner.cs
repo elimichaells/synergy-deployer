@@ -24,6 +24,8 @@ internal static class InstallerRunner
         var config = new Dictionary<string, object?>
         {
             ["ManagerDomain"] = options.ManagerDomain,
+            ["ManagerAccessMode"] = options.ManagerAccessMode,
+            ["ManagerAllowedNetworks"] = options.ManagerAllowedNetworks,
             ["ManagerPort"] = options.ManagerPort,
             ["ManagerRoot"] = options.ManagerRoot,
             ["WebRoot"] = options.WebRoot,
