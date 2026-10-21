@@ -18,9 +18,9 @@ test('review requires checks and rejects blockers but permits explicit warnings'
   assert.equal(setupReady([{ id: 'runtime', step: 'runtime', label: 'Runtime', status: 'fail', detail: 'Missing' }]), false)
 })
 
-test('repository preparation accepts GitHub branches without credential-bearing URLs or shell syntax', () => {
+test('repository preparation accepts HTTPS Git branches without credential-bearing URLs or shell syntax', () => {
   validateSetupRepository('https://github.com/team/application.git', 'release/staging')
-  for (const repo of ['https://token@github.com/team/app', 'http://github.com/team/app', 'https://github.com.evil.test/team/app', 'https://github.com/team/app?token=abc', 'file:///C:/source']) assert.throws(() => validateSetupRepository(repo, 'main'))
+  for (const repo of ['https://token@github.com/team/app', 'http://github.com/team/app', 'https://github.com/team/app?token=abc', 'file:///C:/source']) assert.throws(() => validateSetupRepository(repo, 'main'))
   for (const branch of ['--help', 'main & whoami', 'feature/../main', 'release.lock', 'main\n']) assert.throws(() => validateSetupRepository('https://github.com/team/app', branch))
 })
 

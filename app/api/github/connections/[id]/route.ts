@@ -11,6 +11,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     requireRole(user, ['admin'])
     const body = await request.json().catch(() => ({}))
     const connection = await updateGitHubConnection((await context.params).id, {
+      caPem: body.caPem === undefined ? undefined : String(body.caPem),
       name: body.name === undefined ? undefined : String(body.name),
       token: body.token === undefined ? undefined : String(body.token),
     })

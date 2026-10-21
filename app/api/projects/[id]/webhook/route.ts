@@ -1,3 +1,5 @@
+import { getGitConnection } from '@/lib/github-connections'
+import { gitWebhookUrl } from '@/lib/git-webhooks'
 import { NextResponse } from 'next/server'
 import { randomBytes } from 'crypto'
 import { query } from '@/lib/db'
@@ -10,8 +12,8 @@ export async function GET(_: Request, context: { params: Promise<{ id: string }>
     const user = await getSessionFromCookie()
     requireRole(user, ['admin'])
 
-    const { rows } = await query<{ webhook_secret: string | null }>(
-      'SELECT webhook_secret FROM projects WHERE id = $1',
+    const { rows } = await query<{ webhook_secret: string | null; github_connection_id: string | null }>(
+      'SELECT webhook_secret,github_connection_id FROM projects WHERE id = $1',
       [(await context.params).id]
     )
 
@@ -23,7 +25,7 @@ export async function GET(_: Request, context: { params: Promise<{ id: string }>
     return NextResponse.json({
       hasSecret: !!secret,
       secret: secret || null,
-      webhookUrl: 'https://deploy.smartcloudgh.com/api/webhooks/github',
+      webhookUrl: gitWebhookUrl((await getGitConnection(rows[0].github_connection_id)).provider),
     })
   } catch (error) {
     return jsonError(error)
@@ -55,7 +57,7 @@ export async function POST(_: Request, context: { params: Promise<{ id: string }
 
     return NextResponse.json({
       secret,
-      webhookUrl: 'https://deploy.smartcloudgh.com/api/webhooks/github',
+      webhookUrl: gitWebhookUrl((await getGitConnection((await query('select github_connection_id from projects where id=$1', [(await context.params).id])).rows[0].github_connection_id)).provider),
     })
   } catch (error) {
     return jsonError(error)

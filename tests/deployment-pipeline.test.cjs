@@ -95,6 +95,7 @@ async function pipeline(t, failure, cacheHit = false, options = { trigger: 'manu
     return { rows: [] };
   };
   const command = async (cmd, cwd, _timeout, _stream, env) => {
+    if (typeof cmd !== 'string') cmd = cmd.original;
     calls.push({ kind: 'command', cmd, cwd, env });
     if (cmd === 'pm2 jlist') return { code: 0, output: JSON.stringify([
       ...(status === 'missing' ? [] : [{ name: project.pm2_name, pid: 100, pm2_env: { status, pm_exec_path: 'fixture-server.js', pm_cwd: root, env: { PORT: '3217' } } }]),
@@ -120,7 +121,7 @@ async function pipeline(t, failure, cacheHit = false, options = { trigger: 'manu
     '@/lib/deployment-log': extra.logWriter ? {createDeploymentLogWriter: extra.logWriter} : require('../lib/deployment-log.ts'),
     '@/lib/startup-diagnostics': require('../lib/startup-diagnostics.ts'),
     '@/lib/db': { query }, '@/lib/exec': { runCommand: command },
-    '@/lib/github-connections': { getGitHubConnectionToken: async () => 'fixture-token' },
+    '@/lib/git-access': { ...require('./git-access-fixture.cjs')(async () => 'fixture-token', extra.provider ? {provider:extra.provider,base_url:'https://git.local',account_login:'bot'} : undefined), gitCommand: command => ({file:'git.exe',args:[command.split(' ')[1]],original:command}) },
     '@/lib/project-types': { normalizeProjectType: value => value || 'next', getProjectTypeDefaults: () => ({ installCmd: null, buildCmd: 'npm run build', startCmd: null }), getProjectPortEnvironment: (_type, port) => ({ PORT: String(port) }) },
     '@/lib/notify': { notifyDeploy: async () => {} }, '@/lib/project-databases': { getProjectDatabaseEnv: async () => ({}) },
     '@/lib/data-services': { getProjectDataServiceEnv: async () => ({}) }, '@/lib/runtimes': { projectRuntimeEnvironment: () => ({}) },
@@ -238,6 +239,25 @@ test('a hand edit to a committed file still stops the deployment before anything
 const promoted = 'b'.repeat(40);
 const gitCommands = calls => calls.filter(call => call.kind === 'command' && call.cmd.startsWith('git ')).map(call => call.cmd);
 
+for (const provider of ['gitlab', 'gitea']) test(provider + ' promotion authenticates clone/fetch/push without giving build or PM2 the token', async t => {
+  const { calls, result } = await pipeline(t, undefined, false, { trigger: 'promote', mergeBranch: 'staging', mergeCommit: promoted }, false, null, null,
+    { provider, project: { repo_url: 'https://git.local/team/app.git', github_connection_id: 'institution' } });
+  assert.equal(result.status, 'success', result.log);
+  const basic = Buffer.from('bot:fixture-token').toString('base64');
+  const commands = calls.filter(call => call.kind === 'command');
+  for (const command of commands.filter(call => /^git (clone|fetch|push) /.test(call.cmd))) {
+    assert.ok(Object.values(command.env).includes('Authorization: Basic ' + basic));
+    assert.ok(!command.cmd.includes('fixture-token'));
+  }
+  for (const command of calls.filter(call => call.kind === 'build-command' || (call.kind === 'command' && !/^git (clone|fetch|push) /.test(call.cmd)))) {
+    assert.ok(!JSON.stringify(command.env || {}).includes(basic));
+    assert.ok(!JSON.stringify(command.env || {}).includes('fixture-token'));
+  }
+  const push = calls.findIndex(call => call.kind === 'command' && /^git push "/.test(call.cmd));
+  assert.ok(push > calls.findIndex(call => call.kind === 'activate'));
+  assert.ok(!result.log.includes('fixture-token'));
+});
+
 test('promotion merges the exact commit staging ran and updates GitHub only after production is healthy', async t => {
   const { calls, result, root } = await pipeline(t, undefined, false, { trigger: 'promote', mergeBranch: 'dev', mergeCommit: promoted });
   assert.equal(result.status, 'success');
@@ -256,7 +276,7 @@ test('promotion merges the exact commit staging ran and updates GitHub only afte
   assert.ok(push > activate && push > lastHealth, 'the real push happens after activation and the final health check');
   assert.equal(calls[push].cwd, root, 'the push runs from the live checkout');
   assert.equal(calls.filter(call => call.kind === 'command' && call.cmd.startsWith('git push "')).length, 1);
-  assert.match(result.log, /main on GitHub now matches what production runs/);
+  assert.match(result.log, /main on the Git server now matches what production runs/);
 });
 
 test('a promotion that fails its test start never moves the branch on GitHub', async t => {

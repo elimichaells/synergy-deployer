@@ -8,6 +8,7 @@ import { AppShell } from '@/components/layout/app-shell'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
+import { SelfHostedGit } from '@/components/settings/self-hosted-git'
 import { GitHubConnections } from '@/components/settings/github-connections'
 import { OtherConnections } from '@/components/settings/other-connections'
 import { EDITABLE_SETTINGS, MOVED_SETTINGS_SECTIONS, SETTINGS_SECTIONS, SECTION_FIELDS, settingsChanges, settingsForm, settingsSection, validateSettingsSection, type SettingsField, type SettingsForm, type SettingsSection } from '@/lib/settings-workspace'
@@ -267,7 +268,7 @@ function SettingsWorkspace() {
           </form>}
           {section === 'account' && <YourAccount user={user} />}
           {(section === 'integrations' || visited.includes('integrations')) && <div hidden={section !== 'integrations'} className="space-y-8">
-            <GitHubConnections isAdmin={isAdmin} />
+            <GitHubConnections isAdmin={isAdmin} /><SelfHostedGit isAdmin={isAdmin} />
             <OtherConnections isAdmin={isAdmin} />
           </div>}
           {section === 'notifications' && <form onSubmit={formSubmit}>

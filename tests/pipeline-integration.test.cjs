@@ -111,7 +111,7 @@ test('real Windows PM2: live build, directory activation and failed-health rollb
     '@/lib/health-profiles': { applicationHealthProfile: async () => ({path:'/',statuses:[],timeoutMs:60000}) },
     '@/lib/deployment-log': require('../lib/deployment-log.ts'),
     '@/lib/startup-diagnostics': require('../lib/startup-diagnostics.ts'),
-      '@/lib/db': { query }, '@/lib/exec': { runCommand }, '@/lib/github-connections': { getGitHubConnectionToken: async () => null },
+      '@/lib/db': { query }, '@/lib/exec': { runCommand }, '@/lib/git-access': { ...require('./git-access-fixture.cjs')(), prepareGitAccess: async () => ({config:[],secrets:[]}), gitEnvironment: (_,cwd) => ({ GIT_CONFIG_COUNT:'1',GIT_CONFIG_KEY_0:'safe.directory',GIT_CONFIG_VALUE_0:cwd }) },
       '@/lib/project-types': require('../lib/project-types.ts'), '@/lib/notify': { notifyDeploy: async () => {} },
       '@/lib/project-databases': { getProjectDatabaseEnv: async () => ({}) }, '@/lib/data-services': { getProjectDataServiceEnv: async () => ({}) },
       '@/lib/runtimes': { projectRuntimeEnvironment: () => ({}) }, '@/lib/deployment-health': require('../lib/deployment-health.ts'),

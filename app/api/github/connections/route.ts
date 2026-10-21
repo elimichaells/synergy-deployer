@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     const user = await getSessionFromCookie()
     requireRole(user, ['admin'])
     const body = await request.json().catch(() => null)
-    const connection = await createGitHubConnection(String(body?.name || ''), String(body?.token || ''), user?.id)
+    const connection = await createGitHubConnection(String(body?.name || ''), String(body?.token || ''), user?.id, { provider: body?.provider, baseUrl: body?.baseUrl, caPem: body?.caPem })
     await audit(user?.id, 'github.connection.create', connection.id, { name: connection.name, account: connection.account_login })
     return NextResponse.json(connection, { status: 201 })
   } catch (error) {

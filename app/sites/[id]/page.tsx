@@ -167,6 +167,7 @@ export default function SitePage() {
     runtimeVersions: {} as { node?: string; php?: string; go?: string },
   })
   const [githubConnections, setGithubConnections] = useState<GitHubConnectionOption[]>([])
+  const [webhookUrl, setWebhookUrl] = useState('')
   const [webhookSecret, setWebhookSecret] = useState<string | null>(null)
   const [webhookHasSecret, setWebhookHasSecret] = useState(false)
   const [webhookGenerating, setWebhookGenerating] = useState(false)
@@ -229,7 +230,7 @@ export default function SitePage() {
       const [projectRes, deploymentsRes, connectionsRes, dataServicesRes, runtimesRes, domainsRes, stackRes] = await Promise.all([
         fetch(`/api/sites/${siteId}`),
         fetch(`/api/deployments?project_id=${encodeURIComponent(siteId || '')}`, { cache: 'no-store' }),
-        fetch('/api/github/connections'),
+        fetch('/api/git/connections'),
         fetch(`/api/sites/${siteId}/data-services`, { cache: 'no-store' }),
         fetch('/api/system/runtimes?toolchains=true'),
         fetch(`/api/domains?project=${siteId}`, { cache: 'no-store' }),
@@ -470,13 +471,15 @@ export default function SitePage() {
     if (!siteId) return
     setGhHookError(null)
     try {
-      const [secretRes, ghRes] = await Promise.all([fetch(`/api/projects/${siteId}/webhook`), fetch(`/api/projects/${siteId}/webhook/github`)])
+      const [secretRes, ghRes] = await Promise.all([fetch(`/api/projects/${siteId}/webhook`), fetch(`/api/projects/${siteId}/webhook/git`)])
       if (secretRes.ok) {
         const data = await secretRes.json()
-        setWebhookHasSecret(data.hasSecret)
+        setWebhookHasSecret(data.hasSecret); setWebhookUrl(data.webhookUrl || '')
         setWebhookSecret(data.secret)
       }
-      if (ghRes.ok) setGhHookInstalled((await ghRes.json()).installed ?? false)
+      const hook = await ghRes.json().catch(() => ({}))
+      setGhHookInstalled(ghRes.ok ? hook.installed ?? false : false)
+      if (!ghRes.ok) setGhHookError(hook.error || 'Could not check Git webhook')
     } catch { /* webhook status is optional */ }
   }
 
@@ -488,7 +491,7 @@ export default function SitePage() {
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || 'Failed to generate secret')
       setWebhookSecret(data.secret)
-      setWebhookHasSecret(true)
+      setWebhookHasSecret(true); setWebhookUrl(data.webhookUrl || '')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to generate secret')
     } finally {
@@ -501,12 +504,12 @@ export default function SitePage() {
     setGhHookInstalling(true)
     setGhHookError(null)
     try {
-      const res = await fetch(`/api/projects/${siteId}/webhook/github`, { method: 'POST' })
+      const res = await fetch(`/api/projects/${siteId}/webhook/git`, { method: 'POST' })
       const body = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(body.error || 'Failed to install webhook')
       setGhHookInstalled(true)
     } catch (err) {
-      setGhHookError(err instanceof Error ? err.message : 'Failed to install webhook on GitHub')
+      setGhHookError(err instanceof Error ? err.message : 'Failed to install webhook on the Git server')
     } finally {
       setGhHookInstalling(false)
     }
@@ -517,20 +520,20 @@ export default function SitePage() {
     setGhHookRemoving(true)
     setGhHookError(null)
     try {
-      const res = await fetch(`/api/projects/${siteId}/webhook/github`, { method: 'DELETE' })
+      const res = await fetch(`/api/projects/${siteId}/webhook/git`, { method: 'DELETE' })
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         throw new Error(body.error || 'Failed to remove webhook')
       }
       setGhHookInstalled(false)
     } catch (err) {
-      setGhHookError(err instanceof Error ? err.message : 'Failed to remove webhook from GitHub')
+      setGhHookError(err instanceof Error ? err.message : 'Failed to remove webhook from the Git server')
     } finally {
       setGhHookRemoving(false)
     }
   }
 
-  const webhookUrl = 'https://deploy.smartcloudgh.com/api/webhooks/github'
+
   const handleCopyWebhook = async (type: 'url' | 'secret') => {
     const text = type === 'url' ? webhookUrl : webhookSecret
     if (!text) return
@@ -1065,7 +1068,7 @@ export default function SitePage() {
               }}>{Object.entries(projectTypeDefaults).map(([value, item]) => <option key={value} value={value}>{item.label}</option>)}</select></label>
               <label className="field-label">Repository<input className={cn(inputClass, 'font-mono text-xs')} value={projectForm.repoUrl} onChange={e => setProjectForm({ ...projectForm, repoUrl: e.target.value })} placeholder="https://github.com/org/repo" /></label>
               <label className="field-label">Branch<input className={cn(inputClass, 'font-mono')} value={projectForm.defaultBranch} onChange={e => setProjectForm({ ...projectForm, defaultBranch: e.target.value })} placeholder="main" /></label>
-              <label className="field-label md:col-span-2">GitHub account<select className={inputClass} value={projectForm.githubConnectionId} onChange={e => setProjectForm({ ...projectForm, githubConnectionId: e.target.value })}>
+              <label className="field-label md:col-span-2">Git connection<select className={inputClass} value={projectForm.githubConnectionId} onChange={e => setProjectForm({ ...projectForm, githubConnectionId: e.target.value })}>
                 <option value="">Legacy default connection</option>
                 {githubConnections.map(connection => <option key={connection.id} value={connection.id}>{connection.name} (@{connection.account_login})</option>)}
               </select></label>
@@ -1084,7 +1087,7 @@ export default function SitePage() {
             <SecurityGateSetting projectId={project.id} appName={project.name} gate={securityGate.gate} canTurnOff={securityGate.canTurnOff} canWrite={canWrite} onChanged={securityGate.setGate} />
           </Section>
 
-          <Section title="Git & automatic deploys" description={project.environment === 'staging' ? `Pushes to ${project.default_branch} deploy this staging copy. The GitHub webhook is managed on the production application.` : 'Connect a GitHub webhook so pushes trigger deployments.'}>
+          <Section title="Git & automatic deploys" description={project.environment === 'staging' ? `Pushes to ${project.default_branch} deploy this staging copy. The Git webhook is managed on the production application.` : 'Connect a Git webhook so pushes trigger deployments.'}>
             <div className="space-y-4">
               <label className="flex items-center justify-between gap-4 rounded-lg border border-border px-4 py-3 text-sm">
                 <span><span className="block font-medium">Deploy on every push</span><span className="block text-xs text-muted-foreground">To <span className="font-mono">{project.default_branch}</span></span></span>
@@ -1094,13 +1097,13 @@ export default function SitePage() {
                 project.production_id && <Button asChild variant="outline" size="sm"><Link href={`/sites/${project.production_id}?tab=settings`}>Open production webhook settings<ArrowUpRight className="ml-1.5 h-3.5 w-3.5" /></Link></Button>
               ) : !webhookHasSecret ? (
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed border-border px-4 py-4 text-sm">
-                  <span className="text-muted-foreground">No webhook yet. Generate a secret to connect GitHub.</span>
+                  <span className="text-muted-foreground">No webhook yet. Generate a secret to connect your Git server.</span>
                   <Button size="sm" onClick={() => void handleGenerateSecret()} disabled={webhookGenerating || !canWrite}>{webhookGenerating ? 'Generating…' : 'Set up webhook'}</Button>
                 </div>
               ) : (
                 <div className="space-y-3">
                   <div className={cn('flex items-center justify-between rounded-lg border px-4 py-3', ghHookInstalled ? 'border-status-ready/30 bg-status-ready/5' : 'border-border')}>
-                    <span className="flex items-center gap-2 text-sm"><span className={cn('h-2 w-2 rounded-full', ghHookInstalled ? 'bg-status-ready' : 'bg-white/25')} />{ghHookInstalled === null ? 'Checking GitHub…' : ghHookInstalled ? 'Connected to GitHub' : 'Not connected to GitHub'}</span>
+                    <span className="flex items-center gap-2 text-sm"><span className={cn('h-2 w-2 rounded-full', ghHookInstalled ? 'bg-status-ready' : 'bg-white/25')} />{ghHookInstalled === null ? 'Checking Git server…' : ghHookInstalled ? 'Connected to Git server' : 'Not connected to Git server'}</span>
                     {ghHookInstalled
                       ? <Button variant="ghost" size="sm" onClick={() => void handleRemoveGithubWebhook()} disabled={ghHookRemoving || !canWrite}>{ghHookRemoving ? 'Removing…' : 'Disconnect'}</Button>
                       : <Button size="sm" onClick={() => void handleInstallGithubWebhook()} disabled={ghHookInstalling || !canWrite}>{ghHookInstalling ? 'Connecting…' : 'Connect'}</Button>}

@@ -1,6 +1,6 @@
 import { query } from '@/lib/db'
 import { runCommand } from '@/lib/exec'
-import { getGitHubConnectionToken } from '@/lib/github-connections'
+import { prepareGitAccess, gitEnvironment, gitCommand } from '@/lib/git-access'
 import { existsSync, readFileSync } from 'fs'
 import net from 'net'
 import { rm, writeFile } from 'fs/promises'
@@ -307,25 +307,6 @@ async function runGitCommandWithRetry(
   return { code: 1, output: 'Max retries reached' } // Should return last result ideally, but this loop structure returns last result if code != 0
 }
 
-async function withGithubToken(project: DeployProject) {
-  const token = await getGitHubConnectionToken(project.github_connection_id)
-  if (!token) return project.repo_url
-  if (project.repo_url.startsWith('https://github.com/')) {
-    // Use token directly as username (works for both classic and fine-grained tokens)
-    return project.repo_url.replace('https://', `https://${token}@`)
-  }
-  return project.repo_url
-}
-
-async function requireGithubToken(project: DeployProject) {
-  if (project.repo_url.startsWith('https://')) {
-    const token = await getGitHubConnectionToken(project.github_connection_id)
-    if (!token) {
-      throw new Error('Assign a GitHub connection to this project before deploying.')
-    }
-  }
-}
-
 /** Check if a deploy is already running for this project */
 async function isDeployRunning(projectId: string): Promise<boolean> {
   const TIMEOUT_MINUTES = 30
@@ -475,12 +456,15 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
     await query('UPDATE deployments SET phase=$1 WHERE id=$2', [phase, deploymentId])
     await append('[stage] ' + phase + '\n')
   }
+  let access: Awaited<ReturnType<typeof prepareGitAccess>> | undefined
   const git = async (command: string, cwd = root) => {
     check()
     // Trust only the explicitly configured checkout for this one Git invocation.
     // This avoids per-account global settings when Windows restores PM2 as SYSTEM.
-    const gitEnv = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'safe.directory', GIT_CONFIG_VALUE_0: path.resolve(cwd).replace(/\\/g, '/') }
-    const result = await runCommand(command, cwd, GIT_NETWORK_TIMEOUT, undefined, gitEnv, false)
+    const invocation = gitCommand(command, project.root_path)
+    const network = ['clone', 'fetch', 'pull', 'push', 'ls-remote'].includes(invocation.args[0])
+    const gitEnv = gitEnvironment(network ? access?.config || [] : [], cwd)
+    const result = await runCommand(invocation, cwd, GIT_NETWORK_TIMEOUT, undefined, gitEnv, false, { redact: access?.secrets || [] })
     check()
     return result
   }
@@ -535,8 +519,8 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
     if (/(?:^|[\n;&|])\s*(?:pm2|caddy|taskkill|net\s+stop|sc\s+stop)\b/i.test(commands)) {
       throw new Error('Deployment scripts cannot control live services; Manager activates the candidate after verification')
     }
-    await requireGithubToken(project)
-    const repoUrl = await withGithubToken(project)
+    access = await prepareGitAccess(project)
+    const repoUrl = project.repo_url
     await prepareProjectParent(project.root_path)
     // Files the previous deployment's own install or build rewrote are not someone's edits.
     // Everything else that differs from the commit still stops the deployment.
@@ -918,13 +902,13 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
     await pm2('pm2 save')
     await append('[release] Active on original port; previous source retained at ' + release.previous + '\n')
     if (options.mergeBranch) {
-      // Production is live and healthy; now make the branch on GitHub match it. The deployment is still
+      // Production is live and healthy; now make the branch on the Git server match it. The deployment is still
       // marked as running, so the push webhook cannot start a second deployment of the same commit.
-      const pushed = await runCommand(`git push "${repoUrl}" "${branch}"`, project.root_path, GIT_NETWORK_TIMEOUT, undefined, undefined, false)
+      const pushed = await git(`git push "${repoUrl}" "${branch}"`, project.root_path)
       await append(pushed.output)
       await append(pushed.code === 0
-        ? `[release] ${branch} on GitHub now matches what production runs\n`
-        : `[release] WARNING: production is live on the promoted code, but GitHub did not accept the push to ${branch}. Push ${branch} from ${project.root_path} before anyone else pushes to it; otherwise the next deployment will not include this promotion\n`)
+        ? `[release] ${branch} on the Git server now matches what production runs\n`
+        : `[release] WARNING: production is live on the promoted code, but the Git server did not accept the push to ${branch}. Push ${branch} from ${project.root_path} before anyone else pushes to it; otherwise the next deployment will not include this promotion\n`)
     }
     await flush()
     await query("UPDATE deployments SET status='success',phase='complete',finished_at=now(),log=$1 WHERE id=$2", [log, deploymentId])

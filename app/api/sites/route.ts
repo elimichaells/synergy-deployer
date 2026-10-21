@@ -1,3 +1,5 @@
+import { getGitConnection } from '@/lib/github-connections'
+import { repositoryPath } from '@/lib/git-provider-policy'
 import { NextResponse } from 'next/server'
 import { db, query } from '@/lib/db'
 import { getSessionFromCookie } from '@/lib/auth'
@@ -77,7 +79,7 @@ export async function POST(request: Request) {
 
     const body = await request.json().catch(() => null)
     if (!body?.repoUrl && !body?.name) {
-      return NextResponse.json({ error: 'Select a GitHub repo or enter a site name' }, { status: 400 })
+      return NextResponse.json({ error: 'Select a Git repo or enter a site name' }, { status: 400 })
     }
     if (body.deployScript !== undefined && body.deployScript !== null &&
         (typeof body.deployScript !== 'string' || body.deployScript.length > 50_000)) {
@@ -107,7 +109,12 @@ export async function POST(request: Request) {
     const githubConnectionId = body.githubConnectionId ? String(body.githubConnectionId) : null
     if (githubConnectionId) {
       const { rows } = await query<{ id: string }>('select id from github_connections where id=$1', [githubConnectionId])
-      if (!rows[0]) return NextResponse.json({ error: 'GitHub connection not found' }, { status: 404 })
+      if (!rows[0]) return NextResponse.json({ error: 'Git connection not found' }, { status: 404 })
+    }
+
+    if (body.repoUrl) {
+      try { validateSetupRepository(body.repoUrl, body.defaultBranch || 'main'); repositoryPath(body.repoUrl, await getGitConnection(githubConnectionId)) }
+      catch (error) { return NextResponse.json({ error: (error as Error).message }, { status: 400 }) }
     }
 
     const inferredName = body.name || inferRepoName(body.repoUrl || '')
@@ -209,8 +216,8 @@ export async function POST(request: Request) {
     })()
     if (body.autoDeploy === true) {
       try {
-        const { ensureGitHubWebhook } = await import('@/lib/github-webhooks')
-        await ensureGitHubWebhook(production.id)
+        const { ensureGitWebhook } = await import('@/lib/git-webhooks')
+        await ensureGitWebhook(production.id)
         await query(
           'update projects set auto_deploy = true, updated_at = now() where id = any($1::uuid[])',
           [[production.id, ...(staging ? [staging.id] : [])]]

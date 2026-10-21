@@ -1,7 +1,8 @@
 import { randomBytes } from 'crypto'
 import { ApiError } from '@/lib/api'
 import { query } from '@/lib/db'
-import { getGitHubConnectionToken } from '@/lib/github-connections'
+import { getGitHubConnectionToken, getGitConnection } from '@/lib/github-connections'
+import { repositoryPath } from './git-provider-policy'
 import { managerUrl } from './manager-address'
 
 export const GITHUB_WEBHOOK_URL = `${managerUrl()}/api/webhooks/github`
@@ -55,6 +56,9 @@ async function projectAndToken(projectId: string) {
 
   const repository = parseGitHubRepo(project.repo_url)
   if (!repository) throw new ApiError('Auto deploy currently requires a GitHub repository URL', 400)
+  const host = await getGitConnection(project.github_connection_id)
+  if (host.provider !== 'github') throw new ApiError('Use the selected Git provider for this repository', 400)
+  repositoryPath(project.repo_url, host)
 
   const token = await getGitHubConnectionToken(project.github_connection_id)
   if (!token) throw new ApiError('Assign a GitHub connection before enabling auto deploy', 400)

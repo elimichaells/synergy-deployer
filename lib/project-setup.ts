@@ -1,12 +1,11 @@
-import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { readdir, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { ApiError } from '@/lib/api'
 import { query } from '@/lib/db'
-import { getGitHubConnectionToken } from '@/lib/github-connections'
+import { prepareGitAccess, gitEnvironment, installedGit } from '@/lib/git-access'
 import { detectCheckoutProjectType, prepareProjectParent, prepareProjectCheckout } from '@/lib/deployment-preparation'
-import { runCommand, killProcessTree } from '@/lib/exec'
+import { runCommand } from '@/lib/exec'
 import { projectRuntimeEnvironment } from '@/lib/runtimes'
 import { detectGoBuildCommand } from '@/lib/deployment-go'
 import { setupReady, validateSetupRepository, type SetupCheck, type SetupDecisions } from '@/lib/project-setup-policy'
@@ -94,25 +93,10 @@ export async function prepareSetupRepository(id: string, append: (text: string) 
   const parent = await realpath(path.dirname(root))
   const manager = await realpath(process.cwd())
   if (root.toLowerCase() === manager.toLowerCase() || parent.toLowerCase() === manager.toLowerCase() || parent.toLowerCase().startsWith(manager.toLowerCase() + path.sep)) throw new ApiError('Application directory cannot be inside Manager', 400)
-  const token = await getGitHubConnectionToken(project.github_connection_id)
-  const runtimeEnv = projectRuntimeEnvironment({})
-  const env: NodeJS.ProcessEnv = { ...runtimeEnv, NODE_ENV: 'production', Path: process.env.Path || process.env.PATH, SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP, USERPROFILE: process.env.USERPROFILE, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never', GIT_ASKPASS: '', GIT_CONFIG_COUNT: token ? '2' : '1', GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: '' }
-  if (token) { env.GIT_CONFIG_KEY_1 = 'http.https://github.com/.extraheader'; env.GIT_CONFIG_VALUE_1 = `Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}` }
+  const access = await prepareGitAccess(project)
   append(`[repository] Cloning ${project.default_branch}\n`)
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn('git', ['clone', '--progress', '--branch', project.default_branch, '--', project.repo_url, root], { shell: false, windowsHide: true, env })
-    const abort = () => { if (child.pid) killProcessTree(child.pid) }
-    const timer = setTimeout(abort, 300000)
-    signal.addEventListener('abort', abort, { once: true })
-    if (signal.aborted) abort()
-    // Git never receives a credential-bearing URL. Do not stream server-supplied URL errors.
-    child.stderr.on('data', chunk => {
-      const text = chunk.toString()
-      if (/^(Cloning|remote: (Enumerating|Counting|Compressing|Total)|Receiving objects|Resolving deltas|Updating files)/m.test(text)) append(text)
-    })
-    const cleanup = () => { clearTimeout(timer); signal.removeEventListener('abort', abort) }
-    child.once('error', () => { cleanup(); reject(new Error('Git could not start. Check the host Git installation.')) })
-    child.once('close', code => { cleanup(); code === 0 ? resolve() : reject(new Error('Repository preparation failed. Check repository access, branch and Git installation. Existing files were preserved.')) })
-  })
+  const result = await runCommand({ file: installedGit(root), args: ['clone', '--progress', '--branch', project.default_branch, '--', project.repo_url, root] },
+    parent, 300000, append, gitEnvironment(access.config, root), false, { signal, redact: access.secrets })
+  if (result.code) throw new Error('Repository preparation failed. Check repository access, branch, certificate and Git installation. Existing files were preserved.')
   append('[repository] Checkout ready.\n')
 }

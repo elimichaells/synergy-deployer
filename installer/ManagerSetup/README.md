@@ -53,6 +53,10 @@ is restored for SYSTEM startup. Do not manually start services before checking
 automatic recovery. GitHub.com webhooks require an endpoint reachable and
 trusted by GitHub; an isolated LAN address/local CA alone does not provide that.
 
+For institution-hosted repositories, release 2.18.0 adds GitLab and Gitea HTTPS
+connections alongside GitHub. Follow [Self-hosted Git setup and reboot checks](../../docs/self-hosted-git.md)
+to configure tokens, institutional CA trust and provider-specific webhooks.
+
 Setup is for a new installation. Preflight rejects a destination containing
 `.env.local` so existing encryption keys and stored credentials cannot be
 replaced. If an installation is interrupted after that file is created, keep

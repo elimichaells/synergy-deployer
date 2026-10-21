@@ -10,14 +10,14 @@ import { Button } from '@/components/ui/button'
 import { ChoiceCard, roleLabels } from '@/components/app/section'
 import { RolePicker } from '@/components/app/stack-panel'
 import { FrameworkLogo } from '@/components/synergy/framework-logo'
+import { repositoryUrl, repositoryPath, type GitProvider } from '@/lib/git-provider-policy'
 import { cn } from '@/lib/utils'
 
 interface Repo { id: number; name: string; fullName: string; avatarUrl: string; private: boolean; defaultBranch: string; cloneUrl: string; registered: boolean }
-interface Connection { id: string; name: string; account_login: string }
+interface Connection { id: string; name: string; account_login: string; provider: GitProvider; base_url: string }
 interface ProjectOption { id: string; name: string; apps: { id: string; name: string; project_type: string; environment: string; component_role: string }[] }
 
-const GitHubIcon = ({ className = 'h-4 w-4' }: { className?: string }) => <svg viewBox="0 0 16 16" className={className} fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" /></svg>
-const repoFromUrl = (url: string) => url.trim().replace(/^https?:\/\/(www\.)?github\.com\//, '').replace(/\.git$/, '').replace(/\/$/, '')
+const GitHubIcon = GitBranch
 
 export default function NewSitePage() {
   const router = useRouter()
@@ -44,11 +44,11 @@ export default function NewSitePage() {
 
   useEffect(() => {
     const abort = new AbortController()
-    void Promise.all([fetch('/api/auth/me', { signal: abort.signal }), fetch('/api/github/connections', { signal: abort.signal }), fetch('/api/groups', { signal: abort.signal })]).then(async ([me, res, groups]) => {
+    void Promise.all([fetch('/api/auth/me', { signal: abort.signal }), fetch('/api/git/connections', { signal: abort.signal }), fetch('/api/groups', { signal: abort.signal })]).then(async ([me, res, groups]) => {
       if (!me.ok || !res.ok || !groups.ok) throw new Error('Could not load account connections and projects')
       const loaded: ProjectOption[] = ((await groups.json()).projects || []).filter((item: ProjectOption) => item.apps.some(app => app.environment === 'production'))
       setProjects(loaded)
-      // Arriving from a project's "Import from GitHub" preselects that project.
+      // Arriving from a project's "Import from Git" preselects that project.
       const params = new URLSearchParams(window.location.search)
       const requested = params.get('project')
       if (requested && loaded.some(item => item.id === requested)) chooseProject(requested, loaded, params.get('role') || undefined)
@@ -65,7 +65,7 @@ export default function NewSitePage() {
     if (!connectionId) { setRepos([]); return }
     const abort = new AbortController()
     setLoading(true); setError(''); setRepos([])
-    void fetch('/api/github/repos?connectionId=' + encodeURIComponent(connectionId), { signal: abort.signal }).then(async res => {
+    void fetch('/api/git/repos?connectionId=' + encodeURIComponent(connectionId), { signal: abort.signal }).then(async res => {
       const body = await res.json(); if (!res.ok) throw new Error(body.error || 'Could not load repositories'); setRepos(body.repos || [])
     }).catch(err => { if (err.name !== 'AbortError') setError(err.message) }).finally(() => { if (!abort.signal.aborted) setLoading(false) })
     return () => abort.abort()
@@ -81,10 +81,13 @@ export default function NewSitePage() {
     window.scrollTo({ top: 0 })
   }
   const importUrl = () => {
-    const fullName = repoFromUrl(urlInput)
-    if (!/^[\w.-]+\/[\w.-]+$/.test(fullName)) { setError('Enter a GitHub repository URL like https://github.com/org/repo'); return }
+    let url: string, fullName: string
+    try {
+      url = repositoryUrl(urlInput.trim())
+      fullName = repositoryPath(url, connections.find(row => row.id === connectionId) || { provider: 'github', base_url: 'https://github.com' })
+    } catch (error) { setError((error as Error).message); return }
     setConfiguring({ fullName })
-    setForm(current => ({ ...current, name: fullName.split('/')[1], repoUrl: `https://github.com/${fullName}`, branch: 'main' }))
+    setForm(current => ({ ...current, name: fullName.split('/').at(-1)!, repoUrl: url, branch: 'main' }))
     setError('')
   }
 
@@ -114,7 +117,7 @@ export default function NewSitePage() {
             <div className="flex flex-wrap items-center gap-3 border-b border-border bg-black px-6 py-5">
               {configuring.avatarUrl ? <Image src={configuring.avatarUrl} alt="" width={36} height={36} unoptimized className="h-9 w-9 rounded-full" /> : <span className="flex h-9 w-9 items-center justify-center rounded-full border border-border"><GitHubIcon /></span>}
               <div className="min-w-0 flex-1">
-                <p className="text-xs text-muted-foreground">Importing from GitHub</p>
+                <p className="text-xs text-muted-foreground">Importing from Git</p>
                 <p className="flex items-center gap-1.5 truncate font-medium">{configuring.fullName}{configuring.private && <LockKeyhole className="h-3.5 w-3.5 text-muted-foreground" aria-label="Private repository" />}</p>
               </div>
               <span className="flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 font-mono text-xs"><GitBranch className="h-3.5 w-3.5" />{form.branch || 'main'}</span>
@@ -196,9 +199,9 @@ export default function NewSitePage() {
             <div className="mt-4 flex flex-wrap gap-2">
               <div className="relative min-w-[180px]">
                 <GitHubIcon className="pointer-events-none absolute left-3 top-2.5 h-4 w-4" />
-                <select aria-label="GitHub account" className="control-input pl-9" value={connectionId} onChange={event => setConnectionId(event.target.value)}>
-                  {!connections.length && <option value="">No GitHub account</option>}
-                  {connections.map(connection => <option key={connection.id} value={connection.id}>{connection.account_login}</option>)}
+                <select aria-label="Git connection" className="control-input pl-9" value={connectionId} onChange={event => setConnectionId(event.target.value)}>
+                  <option value="">Public GitHub (no connection)</option>
+                  {connections.map(connection => <option key={connection.id} value={connection.id}>{connection.name} · {connection.provider} · {connection.account_login}</option>)}
                 </select>
               </div>
               <div className="relative min-w-[200px] flex-1"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><input aria-label="Search repositories" className="control-input pl-9" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search…" /></div>
@@ -209,9 +212,9 @@ export default function NewSitePage() {
               : !connections.length ? (
                 <div className="px-6 py-14 text-center">
                   <GitHubIcon className="mx-auto mb-3 h-6 w-6" />
-                  <p className="text-sm font-medium">Connect GitHub to see your repositories</p>
+                  <p className="text-sm font-medium">Connect Git provider to see your repositories</p>
                   <p className="mt-1 text-xs text-muted-foreground">Or paste a public repository URL on the right.</p>
-                  <Button asChild size="sm" variant="outline" className="mt-4"><Link href="/settings?section=github">Connect GitHub</Link></Button>
+                  <Button asChild size="sm" variant="outline" className="mt-4"><Link href="/settings?section=github">Connect Git provider</Link></Button>
                 </div>
               ) : !visible.length ? <p className="py-14 text-center text-sm text-muted-foreground">No repositories match “{search}”.</p>
               : <div className="divide-y divide-border">{visible.map(repo => (
@@ -230,7 +233,7 @@ export default function NewSitePage() {
         <aside className="space-y-4">
           <section className="rounded-xl border border-border bg-card p-5">
             <h2 className="flex items-center gap-2 text-sm font-semibold"><Link2 className="h-4 w-4" />Import from a URL</h2>
-            <p className="mt-1 text-xs text-muted-foreground">Any public GitHub repository, or a private one your connected account can read.</p>
+            <p className="mt-1 text-xs text-muted-foreground">Select a GitHub, GitLab or Gitea connection, then paste an HTTPS clone URL from that server.</p>
             <form className="mt-4 flex gap-2" onSubmit={event => { event.preventDefault(); importUrl() }}>
               <input aria-label="Repository URL" className="control-input font-mono text-xs" value={urlInput} onChange={event => setUrlInput(event.target.value)} placeholder="https://github.com/org/repo" />
               <Button type="submit" variant="outline" disabled={!urlInput.trim() || role === 'viewer'}>Continue</Button>

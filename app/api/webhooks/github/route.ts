@@ -101,7 +101,7 @@ export async function POST(request: Request) {
       })
     }
 
-    const targetProjects = branchProjects.filter(p => p.auto_deploy)
+    const targetProjects = branchProjects.filter(p => p.auto_deploy && p.repo_url.startsWith('https://github.com/') && p.webhook_secret && verifySignature(rawBody, signature, p.webhook_secret))
     if (targetProjects.length === 0) {
       return NextResponse.json({
         status: 'ignored',

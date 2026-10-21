@@ -31,7 +31,7 @@ async function harness(t, { healthy, status = 'online' }) {
     '@/lib/startup-diagnostics': require('../lib/startup-diagnostics.ts'),
     '@/lib/deployment-diagnostics': require('../lib/deployment-diagnostics.ts'),
     '@/lib/db': { query }, '@/lib/exec': { runCommand },
-    '@/lib/github-connections': { getGitHubConnectionToken: async () => '' },
+    '@/lib/git-access': {},
     '@/lib/project-types': { normalizeProjectType: value => value || 'next', getProjectTypeDefaults: () => ({ installCmd: null, buildCmd: null, startCmd: null }), getProjectPortEnvironment: (_type, port) => ({ PORT: String(port) }) },
     '@/lib/notify': { notifyDeploy: async () => {}, sendNotification: async () => false }, '@/lib/project-databases': { getProjectDatabaseEnv: async () => ({}) },
     '@/lib/data-services': { getProjectDataServiceEnv: async () => ({}) }, '@/lib/runtimes': { projectRuntimeEnvironment: () => ({}) },

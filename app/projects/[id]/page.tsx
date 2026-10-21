@@ -180,7 +180,7 @@ export default function ProjectPage() {
       <DropdownMenu.Trigger asChild><Button variant="outline" size="sm" disabled={!access.canWrite}><Plus className="mr-1.5 h-4 w-4" />Add app<ChevronDown className="ml-1 h-3.5 w-3.5" /></Button></DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content align="end" sideOffset={6} className="z-50 w-64 rounded-lg border border-white/10 bg-popover p-1 shadow-2xl shadow-black/60">
-          <DropdownMenu.Item asChild className={menuItem}><Link href={`/sites/new?project=${project.id}`}><Github className="h-4 w-4" /><span><span className="block text-foreground">Import from GitHub</span><span className="block text-xs">A new repo, e.g. the backend API</span></span></Link></DropdownMenu.Item>
+          <DropdownMenu.Item asChild className={menuItem}><Link href={`/sites/new?project=${project.id}`}><Github className="h-4 w-4" /><span><span className="block text-foreground">Import from Git</span><span className="block text-xs">A new repo, e.g. the backend API</span></span></Link></DropdownMenu.Item>
           <DropdownMenu.Item className={menuItem} onSelect={() => void openLink()}><Link2 className="h-4 w-4" /><span><span className="block text-foreground">Add an existing app</span><span className="block text-xs">Move an app already on this server here</span></span></DropdownMenu.Item>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
@@ -260,7 +260,7 @@ export default function ProjectPage() {
               <div className="space-y-2">
                 <p className="eyebrow flex items-center gap-1.5"><Layers className="h-3 w-3" />Apps</p>
                 {apps.map(appCard)}
-                {access.canWrite && <Link href={`/sites/new?project=${project.id}`} className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-3 text-xs text-muted-foreground hover:border-white/25 hover:text-foreground"><Plus className="h-3.5 w-3.5" />Add an app from GitHub</Link>}
+                {access.canWrite && <Link href={`/sites/new?project=${project.id}`} className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-3 text-xs text-muted-foreground hover:border-white/25 hover:text-foreground"><Plus className="h-3.5 w-3.5" />Add an app from Git</Link>}
               </div>
               <ArrowRight className="mx-auto hidden h-4 w-4 text-muted-foreground lg:mt-9 lg:block" />
               <div className="space-y-2">
@@ -411,10 +411,10 @@ export default function ProjectPage() {
               <option value="">Choose an app</option>
               {candidates.map(candidate => <option key={candidate.appId} value={candidate.appId}>{candidate.name}{candidate.projectName !== candidate.name ? ` (in ${candidate.projectName})` : ''}</option>)}
             </select></label>
-            {!candidates.length && <p className="text-xs text-muted-foreground">Only apps that are alone in their own project can be moved. To import a new repository instead, use Import from GitHub.</p>}
+            {!candidates.length && <p className="text-xs text-muted-foreground">Only apps that are alone in their own project can be moved. To import a new repository instead, use Import from Git.</p>}
             <div className="space-y-2"><p className="text-sm font-medium">It is the…</p><RolePicker value={link.role} onChange={value => setLink({ ...link, role: value })} /></div>
             <Button className="w-full" onClick={() => void linkApp()} disabled={busy === 'link' || !link.appId}>{busy === 'link' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Link2 className="mr-2 h-4 w-4" />}Add to {project.name}</Button>
-            <p className="text-center text-xs text-muted-foreground">or <Link href={`/sites/new?project=${project.id}`} className="text-foreground underline-offset-4 hover:underline">import a new repository from GitHub</Link></p>
+            <p className="text-center text-xs text-muted-foreground">or <Link href={`/sites/new?project=${project.id}`} className="text-foreground underline-offset-4 hover:underline">import a new repository from Git</Link></p>
           </div>
         </SheetContent>
       </Sheet>

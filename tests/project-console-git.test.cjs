@@ -8,7 +8,7 @@ const token = 'github_fixture_secret_123456';
 const basic = Buffer.from('x-access-token:' + token).toString('base64');
 const app = { root_path: process.cwd(), repo_url: 'https://github.com/example/private.git', github_connection_id: 'selected-connection' };
 function gitModule(getToken = async () => token) {
-  return load('lib/project-console-git.ts', { '@/lib/api': { ApiError }, '@/lib/github-connections': { getGitHubConnectionToken: getToken } });
+  return load('lib/project-console-git.ts', { '@/lib/api': { ApiError }, '@/lib/git-access': require('./git-access-fixture.cjs')(getToken) });
 }
 
 test('only standalone Git network commands can receive the selected connection', async () => {
@@ -32,8 +32,7 @@ test('only standalone Git network commands can receive the selected connection',
 
 test('HTTPS GitHub credentials are scoped to one repository using actual Git URL matching', async () => {
   const api = gitModule();
-  assert.deepEqual(api.githubRepositoryUrls('https://old-user:old-password@github.com/example/private.git/'), ['https://github.com/example/private', 'https://github.com/example/private.git']);
-  for (const url of ['http://github.com/example/private', 'https://github.com.evil.test/example/private', 'https://github.com:444/example/private', 'git@github.com:example/private.git', 'https://github.com/example/private/extra']) assert.deepEqual(api.githubRepositoryUrls(url), []);
+  for (const url of ['https://old-user:password@github.com/example/private.git', 'https://github.com.evil.test/example/private', 'https://github.com:444/example/private', 'https://github.com/example/private/extra']) await assert.rejects(() => api.prepareConsoleGit('git fetch origin', {...app,repo_url:url}));
   const prepared = await api.prepareConsoleGit('git fetch origin', app);
   const env = { ...process.env, ...prepared.env };
   const match = url => execFileSync(prepared.command.file, ['config', '--get-urlmatch', 'http.extraheader', url], { env, windowsHide: true, encoding: 'utf8' }).trim();
@@ -51,7 +50,7 @@ test('non-GitHub repositories do not retrieve a token; public repositories can w
   assert.equal(reads, 0);
   const prepared = await api.prepareConsoleGit('git fetch origin', app);
   assert.equal(prepared.authenticated, false);
-  assert.deepEqual(prepared.env, {});
+  assert.equal(prepared.env.GIT_CONFIG_NOSYSTEM, '1');
 });
 
 test('secret redaction survives every chunk boundary and redacts truncated credentials', () => {
@@ -109,6 +108,6 @@ test('console route passes the selected project connection and releases the oper
   assert.equal(response.status, 200);
   const output = await response.text();
   assert.deepEqual(run[0].args, ['fetch', 'origin']); assert.equal(run[5], false); assert.deepEqual(run[6].redact, [token, basic]);
-  assert.ok(output.includes('saved GitHub connection')); assert.ok(output.includes('Settings > Connections > GitHub accounts')); assert.ok(output.includes('code 128'));
+  assert.ok(output.includes('saved Git connection')); assert.ok(output.includes('Settings > Connections > Git connections')); assert.ok(output.includes('code 128'));
   assert.ok(!output.includes(token)); assert.equal(unlocks, 1);
 });

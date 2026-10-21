@@ -1,3 +1,5 @@
+import { repositoryUrl } from './git-provider-policy'
+
 export const SETUP_STEPS = ['repository', 'runtime', 'database', 'environment', 'domain', 'review'] as const
 export type SetupStep = typeof SETUP_STEPS[number]
 export interface SetupDecisions { database?: 'attached' | 'none'; environment?: 'file' | 'runtime'; domain?: 'configured' | 'later' }
@@ -23,9 +25,6 @@ export function setupReady(checks: SetupCheck[]) {
 }
 
 export function validateSetupRepository(repo: string, branch: string) {
-  const url = new URL(repo)
-  if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.port || url.username || url.password || url.search || url.hash || !/^\/[\w.-]+\/[\w.-]+(?:\.git)?$/.test(url.pathname)) {
-    throw new Error('Select a GitHub HTTPS repository without embedded credentials')
-  }
+  repositoryUrl(repo)
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(branch) || branch.includes('..') || branch.endsWith('/') || branch.endsWith('.lock')) throw new Error('Invalid branch name')
 }

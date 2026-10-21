@@ -138,7 +138,7 @@ export function StackPanel({ projectId, environment, compact = false }: { projec
       description={<>This app is the <strong className="font-medium text-foreground">{roleLabels[snapshot.component_role] || snapshot.component_role}</strong> of this project. Apps in a project can share databases and a domain.</>}
       action={<>
         <Button asChild variant="outline" size="sm"><Link href={`/projects/${snapshot.application_group_id}`}>Open project</Link></Button>
-        {snapshot.canWrite && <Button asChild variant="outline" size="sm"><Link href={`/sites/new?project=${snapshot.application_group_id}`}><Github className="mr-1.5 h-4 w-4" />Import app from GitHub</Link></Button>}
+        {snapshot.canWrite && <Button asChild variant="outline" size="sm"><Link href={`/sites/new?project=${snapshot.application_group_id}`}><Github className="mr-1.5 h-4 w-4" />Import app from Git</Link></Button>}
         {snapshot.canWrite && !linking && <Button variant="ghost" size="sm" onClick={() => setLinking(true)} disabled={!snapshot.candidates.length}><Link2 className="mr-1.5 h-4 w-4" />Add existing app</Button>}
         {snapshot.canWrite && visible.length > 1 && <Button variant="ghost" size="sm" onClick={() => void leave()} disabled={busy}><Unlink className="mr-1.5 h-4 w-4" />Move out</Button>}
       </>}

@@ -37,7 +37,7 @@ export function GitHubConnections({ isAdmin }: { isAdmin: boolean }) {
     const response = await fetch('/api/github/connections')
     if (!response.ok) throw new Error('Unable to load GitHub connections')
     const data = await response.json()
-    const nextConnections = data.connections || []
+    const nextConnections = (data.connections || []).filter((connection: { provider?: string }) => !connection.provider || connection.provider === 'github')
     setConnections(nextConnections)
     setHasToken(nextConnections.length > 0)
   }

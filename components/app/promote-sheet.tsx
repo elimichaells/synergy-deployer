@@ -65,7 +65,7 @@ export function PromoteSheet({ stagingId, open, onOpenChange, onStarted }: { sta
 
             <p className="text-xs leading-5 text-muted-foreground">
               {plan.mode === 'merge'
-                ? <>Synergy merges commit <span className="font-mono text-foreground">{short(plan.staging.commit)}</span> into <span className="font-mono text-foreground">{plan.production.branch}</span>, builds and test-starts it, then switches production over. <span className="font-mono text-foreground">{plan.production.branch}</span> on GitHub is updated only after production is live and healthy.</>
+                ? <>Synergy merges commit <span className="font-mono text-foreground">{short(plan.staging.commit)}</span> into <span className="font-mono text-foreground">{plan.production.branch}</span>, builds and test-starts it, then switches production over. <span className="font-mono text-foreground">{plan.production.branch}</span> on the Git server is updated only after production is live and healthy.</>
                 : <>Staging and production share the <span className="font-mono text-foreground">{plan.production.branch}</span> branch, so production moves to exactly commit <span className="font-mono text-foreground">{short(plan.staging.commit)}</span>. Newer commits that staging has not run are left out.</>}
               {' '}If anything fails, production keeps running its current version.
             </p>
@@ -85,7 +85,7 @@ export function PromoteSheet({ stagingId, open, onOpenChange, onStarted }: { sta
                     </div>
                   ))}
                 </div>
-              ) : <p className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-xs text-muted-foreground">{plan.historyKnown ? 'No new commits.' : 'The commit list is not available here. Check the branch on GitHub.'}</p>}
+              ) : <p className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-xs text-muted-foreground">{plan.historyKnown ? 'No new commits.' : 'The commit list is not available here. Check the branch on the Git server.'}</p>}
               {count >= 50 && <p className="mt-2 text-xs text-muted-foreground">Showing the newest 50.</p>}
             </div>
 

@@ -63,6 +63,8 @@ async function createProject(body, role = 'admin') {
     return { rows: [] };
   }, release() {} };
   const api = load('app/api/sites/route.ts', {
+    '@/lib/github-connections': { getGitConnection: async () => ({provider:'github',base_url:'https://github.com'}) },
+    '@/lib/git-provider-policy': require('../lib/git-provider-policy.ts'),
     '@/lib/db': { query, db: { connect: async () => client } }, '@/lib/auth': { getSessionFromCookie: async () => ({ id: id1, role }) },
     '@/lib/rbac': { requireRole: (_user, allowed) => { if (!allowed.includes(role)) throw new ApiError('Forbidden', 403); } },
     '@/lib/api': { jsonError: error => Response.json({ error: error.message }, { status: error.status || 500 }) },

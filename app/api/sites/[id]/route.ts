@@ -1,3 +1,6 @@
+import { getGitConnection } from '@/lib/github-connections'
+import { repositoryPath } from '@/lib/git-provider-policy'
+import { validateSetupRepository } from '@/lib/project-setup-policy'
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { getSessionFromCookie } from '@/lib/auth'
@@ -61,19 +64,28 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       await assertProjectSetupComplete((await context.params).id)
     }
 
-    const { rows: previousRows } = await query<{ auto_deploy: boolean; github_connection_id: string | null }>(
-      'select auto_deploy,github_connection_id from projects where id=$1',
+    const { rows: previousRows } = await query<{ auto_deploy: boolean; github_connection_id: string | null; repo_url: string; default_branch: string }>(
+      'select auto_deploy,github_connection_id,repo_url,default_branch from projects where id=$1',
       [(await context.params).id]
     )
     if (!previousRows[0]) return NextResponse.json({ error: 'Not found' }, { status: 404 })
     const previous = previousRows[0]
 
     if (body.githubConnectionId !== undefined && body.githubConnectionId !== null) {
-      if (typeof body.githubConnectionId !== 'string') return NextResponse.json({ error: 'Invalid GitHub connection' }, { status: 400 })
+      if (typeof body.githubConnectionId !== 'string') return NextResponse.json({ error: 'Invalid Git connection' }, { status: 400 })
       const { rows } = await query<{ id: string }>('select id from github_connections where id=$1', [body.githubConnectionId])
-      if (!rows[0]) return NextResponse.json({ error: 'GitHub connection not found' }, { status: 404 })
+      if (!rows[0]) return NextResponse.json({ error: 'Git connection not found' }, { status: 404 })
     }
 
+    if (body.repoUrl !== undefined || body.githubConnectionId !== undefined || body.defaultBranch !== undefined) {
+      const repo = body.repoUrl === undefined ? previous.repo_url : body.repoUrl
+      if (repo) {
+        try {
+          validateSetupRepository(repo, body.defaultBranch ?? previous.default_branch)
+          repositoryPath(repo, await getGitConnection(body.githubConnectionId === undefined ? previous.github_connection_id : body.githubConnectionId))
+        } catch (error) { return NextResponse.json({ error: (error as Error).message }, { status: 400 }) }
+      }
+    }
     const fieldMap: Record<string, string> = {
       name: 'name',
       repoUrl: 'repo_url',
@@ -125,15 +137,15 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       await query(`update project_setup set completed_at=null,updated_at=now() where project_id=$1 and not exists(select 1 from deployments where project_id=$1 and status='success')`, [(await context.params).id])
     }
     let webhook: { action: 'created' | 'updated'; repository: string } | null = null
-    const shouldEnsureWebhook = body.autoDeploy === true || (body.githubConnectionId !== undefined && previous.auto_deploy)
+    const shouldEnsureWebhook = body.autoDeploy === true || ((body.githubConnectionId !== undefined || body.repoUrl !== undefined) && previous.auto_deploy && body.autoDeploy !== false)
     if (shouldEnsureWebhook) {
       try {
-        const { ensureGitHubWebhook } = await import('@/lib/github-webhooks')
-        webhook = await ensureGitHubWebhook((await context.params).id)
+        const { ensureGitWebhook } = await import('@/lib/git-webhooks')
+        webhook = await ensureGitWebhook((await context.params).id)
       } catch (error) {
         await query(
-          'update projects set auto_deploy=$1,github_connection_id=$2,updated_at=now() where id=$3',
-          [previous.auto_deploy, previous.github_connection_id, (await context.params).id]
+          'update projects set auto_deploy=$1,github_connection_id=$2,repo_url=$4,default_branch=$5,updated_at=now() where id=$3',
+          [previous.auto_deploy, previous.github_connection_id, (await context.params).id, previous.repo_url, previous.default_branch]
         )
         throw error
       }

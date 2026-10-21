@@ -27,7 +27,7 @@ test('operation release is idempotent and does not leak an advisory lock', async
 function setupModule(rows) {
   return load('lib/project-setup.ts', {
     '@/lib/api': { ApiError }, '@/lib/db': { query: async sql => ({ rows: sql.startsWith('select completed_at') ? rows : [] }) },
-    '@/lib/github-connections': {}, '@/lib/deployment-preparation': {}, '@/lib/exec': {}, '@/lib/runtimes': {}, '@/lib/deployment-go': {}, '@/lib/project-setup-policy': {},
+    '@/lib/git-access': {}, '@/lib/deployment-preparation': {}, '@/lib/exec': {}, '@/lib/runtimes': {}, '@/lib/deployment-go': {}, '@/lib/project-setup-policy': {},
   });
 }
 test('draft applications cannot deploy before setup completion; legacy applications remain compatible', async () => {

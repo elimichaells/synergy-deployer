@@ -75,7 +75,7 @@ export async function POST(request: Request, context: Context) {
     const stream = new ReadableStream({
       start(controller) {
         const write = (text: string) => { try { controller.enqueue(encoder.encode(text)) } catch { /* Client disconnected. */ } }
-        if (git?.authenticated) write('[git] Using the application’s saved GitHub connection\n')
+        if (git?.authenticated) write('[git] Using the application’s saved Git connection\n')
         void runCommand(git?.command || prepareConsoleCommand(command), workingDirectory, 900000, write, env, false, { signal: abort.signal, heartbeatMs: 30000, redact: git?.secrets })
           .then(result => {
             if (git && result.code !== 0) write(consoleGitFailureHint(result.output))
