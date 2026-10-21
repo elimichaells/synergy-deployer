@@ -16,6 +16,14 @@ internal static class PackageResolver
     private const string ManifestResource = "ManagerSetup.Assets.manager-package.sha256.json";
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
+    public static bool HasEmbeddedOfflineDependencies()
+    {
+        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(ManifestResource);
+        if (stream is null) return false;
+        using var document = JsonDocument.Parse(stream);
+        return document.RootElement.TryGetProperty("offline", out var offline) && offline.ValueKind == JsonValueKind.True;
+    }
+
     public static async Task<PackagePayload> ResolveAsync(
         InstallOptions options,
         Action<string> progress,
@@ -82,8 +90,10 @@ internal static class PackageResolver
         }
 
         ValidatePayload(payloadRoot);
+        if (manifest.Offline && !File.Exists(Path.Combine(payloadRoot, "offline", "manifest.json")))
+            throw new InvalidDataException("The offline dependency manifest is missing. No downloads will be attempted.");
         progress($"Manager {manifest.Version} package is verified and ready.");
-        return new PackagePayload(payloadRoot, manifest.Version, actualHash, source);
+        return new PackagePayload(payloadRoot, manifest.Version, actualHash, source, manifest.Offline);
     }
 
     public static async Task<PackageValidation> ValidateEmbeddedPackageAsync()
@@ -113,6 +123,8 @@ internal static class PackageResolver
                 throw new InvalidDataException($"The embedded package is missing {required}.");
             }
         }
+        if (manifest.Offline && !names.Contains("offline/manifest.json"))
+            throw new InvalidDataException("The offline package is missing its dependency manifest.");
         return new PackageValidation(manifest.Version, actualHash);
     }
 
@@ -325,6 +337,7 @@ internal static class PackageResolver
         [JsonPropertyName("file")] public string File { get; init; } = string.Empty;
         [JsonPropertyName("sha256")] public string Sha256 { get; init; } = string.Empty;
         [JsonPropertyName("version")] public string Version { get; init; } = string.Empty;
+        [JsonPropertyName("offline")] public bool Offline { get; init; }
     }
 
     private sealed class GitHubRelease

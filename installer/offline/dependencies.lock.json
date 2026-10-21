@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 1,
+  "architecture": "win-x64",
+  "minimumWindowsBuild": 17763,
+  "pm2Version": "7.1.0",
+  "artifacts": [
+    {
+      "id": "caddy",
+      "version": "v2.11.7",
+      "url": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_windows_amd64.zip",
+      "file": "caddy.zip",
+      "sha256": "0a1edc0b799512051c57071ce0e798d3f2cf67dc98171366f1d2b326072e3b06",
+      "root": ".",
+      "bin": ".",
+      "license": "Apache-2.0"
+    },
+    {
+      "id": "composer",
+      "version": "2.10.3",
+      "url": "https://getcomposer.org/download/2.10.3/composer.phar",
+      "file": "composer.phar",
+      "sha256": "7a2d379d5b8ffdaa028580ef26494c36d2feef4b178d3dd1473a4dbc5e17c8d6",
+      "license": "MIT"
+    },
+    {
+      "id": "git",
+      "version": "v2.56.0.windows.2",
+      "url": "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/MinGit-2.56.0.2-64-bit.zip",
+      "file": "git.zip",
+      "sha256": "da35e72aa21c005a5a0d298cfbae110bc1609a815730ea0dde84b01a1b3cd3be",
+      "root": ".",
+      "bin": "cmd",
+      "license": "GPL-2.0"
+    },
+    {
+      "id": "go",
+      "version": "go1.27.3",
+      "url": "https://go.dev/dl/go1.27.3.windows-amd64.zip",
+      "file": "go.zip",
+      "sha256": "f26081f438319757f8a1b46d7d0b2c5ec7583d4038e485e0aa725cfde7885fff",
+      "root": "go",
+      "bin": "bin",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "id": "node",
+      "version": "v22.23.4",
+      "url": "https://nodejs.org/dist/v22.23.4/node-v22.23.4-win-x64.zip",
+      "file": "node.zip",
+      "sha256": "cbc74b5e0982c9dbb41525fd8fb5dcd32fbee237863f7829072f4639a1ce5f20",
+      "root": "node-v22.23.4-win-x64",
+      "bin": ".",
+      "license": "MIT"
+    },
+    {
+      "id": "pgweb",
+      "version": "v0.17.0",
+      "url": "https://github.com/sosedoff/pgweb/releases/download/v0.17.0/pgweb_windows_amd64.zip",
+      "file": "pgweb.zip",
+      "sha256": "7471bb79175549622f90877f5aec69c20ec014b3d4b3df288c1121f8775728bc",
+      "root": ".",
+      "bin": ".",
+      "license": "MIT"
+    },
+    {
+      "id": "php",
+      "version": "8.3.35",
+      "url": "https://downloads.php.net/~windows/releases/php-8.3.35-nts-Win32-vs16-x64.zip",
+      "file": "php.zip",
+      "sha256": "25a8e2ac9ff30f1d768d1447c09a600617fa6e6082729f6e95f008b59c91fe45",
+      "root": ".",
+      "bin": ".",
+      "license": "PHP-3.01"
+    },
+    {
+      "id": "postgresql",
+      "version": "17.11",
+      "url": "https://get.enterprisedb.com/postgresql/postgresql-17.11-5-windows-x64-binaries.zip",
+      "file": "postgresql.zip",
+      "sha256": "80379b2c04d51c30225532e0ae04509899141e9957ed096fe749d7fd9df8f82f",
+      "root": "pgsql",
+      "bin": "bin",
+      "license": "PostgreSQL"
+    },
+    {
+      "id": "python",
+      "version": "3.13.16",
+      "url": "https://www.python.org/ftp/python/3.13.16/python-3.13.16-amd64.exe",
+      "file": "python.exe",
+      "sha256": "fb4f9f5d438b2396da0086dc70b935c530cb578e37adc6d354f7ad2037fee83b",
+      "license": "PSF-2.0",
+      "authenticode": true
+    },
+    {
+      "id": "sling",
+      "version": "v1.5.23",
+      "url": "https://github.com/slingdata-io/sling-cli/releases/download/v1.5.23/sling_windows_amd64.tar.gz",
+      "file": "sling.tar.gz",
+      "sha256": "8bddef2259d3db6ba4e44dfc1c18ee52ae0c38537f0d9d050c509700dcdf86ae",
+      "root": ".",
+      "bin": ".",
+      "license": "GPL-3.0"
+    },
+    {
+      "id": "vcredist",
+      "version": "14.44.35211.0",
+      "url": "https://download.visualstudio.microsoft.com/download/pr/990c720a-46ce-4dc7-87b9-c2eb615d34b9/CC0FF0EB1DC3F5188AE6300FAEF32BF5BEEBA4BDD6E8E445A9184072096B713B/VC_redist.x64.exe",
+      "file": "vcredist.exe",
+      "sha256": "cc0ff0eb1dc3f5188ae6300faef32bf5beeba4bdd6e8e445a9184072096b713b",
+      "license": "Microsoft Visual C++ Redistributable",
+      "authenticode": true
+    }
+  ]
+}

@@ -1,5 +1,9 @@
 # Manager Setup executable
 
+## Offline setup edition
+
+Use `npm run package:windows:offline` on a connected Windows build machine to create a self-contained installer with Manager's production build and pinned host dependencies. The target server needs no internet, Chocolatey or npm downloads. See [offline installation and reboot checks](../../docs/offline-installation.md). The regular embedded-source edition still requires dependency downloads.
+
 `ManagerSetup.exe` is the graphical Windows Server installer. It is a
 self-contained .NET 8 WPF application, so the target server does not need the
 .NET runtime or SDK.
@@ -31,8 +35,9 @@ also allow the required traffic. Database ports are not opened by setup.
 For a hostname, configure DNS or client host mappings to the server; direct
 IP access does not require DNS. Manager's internal port (4000 by default), Caddy's
 ports (80/443), and enabled database web-client ports (8432/8433) must be free.
-Internet access is required for dependencies even with the embedded package.
-An internal-network installation is not a fully offline dependency installer.
+The regular embedded-source package needs internet access for dependencies.
+For disconnected institutions, use the offline setup edition described in
+[offline installation](../../docs/offline-installation.md).
 
 For local CA HTTPS, the installation report identifies the public root
 certificate, normally

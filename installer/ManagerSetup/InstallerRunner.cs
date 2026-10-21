@@ -23,6 +23,7 @@ internal static class InstallerRunner
 
         var config = new Dictionary<string, object?>
         {
+            ["OfflineInstall"] = payload.Offline,
             ["ManagerDomain"] = options.ManagerDomain,
             ["ManagerAccessMode"] = options.ManagerAccessMode,
             ["ManagerAllowedNetworks"] = options.ManagerAllowedNetworks,

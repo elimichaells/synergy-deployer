@@ -3,6 +3,7 @@ param(
     [string]$OutputDirectory,
     [string]$Version,
     [string]$DotNetPath,
+    [switch]$Offline,
     [string]$CodeSigningCertificateThumbprint,
     [string]$TimestampServer = 'http://timestamp.digicert.com'
 )
@@ -58,7 +59,7 @@ function Resolve-DotNet {
 New-Item -ItemType Directory -Force -Path $payloadDirectory,$publishDirectory,$assetsDirectory | Out-Null
 try {
     Write-Host 'Building the versioned Manager application package...' -ForegroundColor Cyan
-    & (Join-Path $PSScriptRoot 'package-manager.ps1') -OutputDirectory $payloadDirectory -Version $Version
+    & (Join-Path $PSScriptRoot 'package-manager.ps1') -OutputDirectory $payloadDirectory -Version $Version -Offline:$Offline
     if ($LASTEXITCODE -ne 0) { throw 'Manager application packaging failed' }
     $package = Get-ChildItem -LiteralPath $payloadDirectory -Filter '*.zip' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if (-not $package) { throw 'The Manager application package was not created' }
@@ -78,7 +79,7 @@ try {
     $publishedExe = Join-Path $publishDirectory 'ManagerSetup.exe'
     if (-not (Test-Path -LiteralPath $publishedExe -PathType Leaf)) { throw 'ManagerSetup.exe was not published' }
     $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    $exeName = 'manager-setup-' + $Version + '-' + $timestamp + '.exe'
+    $exeName = $(if ($Offline) { 'manager-setup-offline-' } else { 'manager-setup-' }) + $Version + '-' + $timestamp + '.exe'
     $finalExe = Join-Path $OutputDirectory $exeName
     Copy-Item -LiteralPath $publishedExe -Destination $finalExe -Force
     Copy-Item -LiteralPath $package.FullName -Destination (Join-Path $OutputDirectory $package.Name) -Force
@@ -111,6 +112,7 @@ try {
         sourceCommit=$packageMetadata.sourceCommit
         sourceDirty=$packageMetadata.sourceDirty
         architecture='win-x64'
+        offline=[bool]$Offline
         package=$package.Name
         packageSha256=(Get-FileHash -LiteralPath $package.FullName -Algorithm SHA256).Hash
         signatureStatus=[string]$signature.Status

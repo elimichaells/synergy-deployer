@@ -28,5 +28,5 @@ internal sealed class InstallOptions
     public IReadOnlyList<string> OptionalDatabaseEngines { get; init; } = [];
 }
 
-internal sealed record PackagePayload(string RootPath, string Version, string Sha256, string Source);
+internal sealed record PackagePayload(string RootPath, string Version, string Sha256, string Source, bool Offline);
 internal sealed record PackageValidation(string Version, string Sha256);

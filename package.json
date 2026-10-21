@@ -1,6 +1,6 @@
 {
   "name": "trueid-manager-v2",
-  "version": "2.18.0",
+  "version": "2.19.0",
   "private": true,
   "scripts": {
     "dev": "next dev -p 4000",
@@ -12,7 +12,8 @@
     "package:windows": "powershell -ExecutionPolicy Bypass -File ./scripts/package-manager.ps1",
     "package:windows:exe": "powershell -ExecutionPolicy Bypass -File ./scripts/package-manager-exe.ps1",
     "build:production": "npm run build && npm ci --omit=dev --ignore-scripts --no-audit --no-fund",
-    "release:check": "node scripts/check-release.cjs"
+    "release:check": "node scripts/check-release.cjs",
+    "package:windows:offline": "powershell -ExecutionPolicy Bypass -File ./scripts/package-manager-exe.ps1 -Offline"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.0.5",

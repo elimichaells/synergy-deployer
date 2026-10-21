@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([string]$OutputDirectory, [string]$Version)
+param([string]$OutputDirectory, [string]$Version, [switch]$Offline)
 
 $ErrorActionPreference = 'Stop'
 # Windows PowerShell can inherit a PowerShell 7-only module search path.
@@ -7,7 +7,7 @@ $env:PSModulePath = (Join-Path $PSHOME 'Modules') + ';' + $env:PSModulePath
 $root = Split-Path -Parent $PSScriptRoot
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $root 'packages' }
 if (-not $Version) { $Version = (Get-Content (Join-Path $root 'package.json') -Raw | ConvertFrom-Json).version }
-$name = 'manager-windows-' + $Version + '-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+$name = $(if ($Offline) { 'manager-windows-offline-' } else { 'manager-windows-' }) + $Version + '-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
 $staging = Join-Path $env:TEMP $name
 $archive = Join-Path $OutputDirectory ($name + '.zip')
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
@@ -38,7 +38,7 @@ try {
         Copy-Item -LiteralPath $source -Destination $target
     }
     Copy-Item (Join-Path $root 'installer\manager-install.example.json') (Join-Path $staging 'manager-install.json')
-    @{version=$Version;sourceCommit=$sourceCommit;sourceDirty=$sourceDirty} |
+    @{version=$Version;sourceCommit=$sourceCommit;sourceDirty=$sourceDirty;offline=[bool]$Offline} |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $staging 'release-source.json') -Encoding UTF8
     @'
 Manager Windows Server Package
@@ -61,9 +61,31 @@ required. Prefer MANAGER_INSTALL_* environment variables for passwords.
 '@ | Set-Content (Join-Path $staging 'INSTALL.txt') -Encoding UTF8
 } finally { Pop-Location }
 
-Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $archive -CompressionLevel Optimal
+if ($Offline) {
+    $offlineConfigPath = Join-Path $staging 'manager-install.json'
+    $offlineConfig = Get-Content -LiteralPath $offlineConfigPath -Raw | ConvertFrom-Json
+    $offlineConfig | Add-Member -NotePropertyName OfflineInstall -NotePropertyValue $true -Force
+    $offlineConfig.ManagerAccessMode = 'local'
+    $offlineConfig.ManagerDomain = 'deploy.institution.local'
+    $offlineConfig.InstallLatestNpm = $false
+    $offlineConfig | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $offlineConfigPath -Encoding UTF8
+    & node.exe (Join-Path $PSScriptRoot 'build-offline-bundle.cjs') --source $staging --output (Join-Path $staging 'offline') --cache (Join-Path $root 'packages\offline-cache')
+    if ($LASTEXITCODE -ne 0) { throw 'Offline dependency packaging failed' }
+    @'
+Manager offline Windows x64 package
+All Manager dependencies and the production app are bundled. No Chocolatey,
+npm registry, GitHub or build downloads are required on the target server.
+Run setup.cmd and select institution/local network access for internal HTTPS.
+PostgreSQL 17, Pgweb and the default language runtimes are included. Other
+optional database engines are not included. Project builds need their own
+vendored dependencies or internal package registries.
+See docs/offline-installation.md for installation and reboot verification.
+'@ | Set-Content -LiteralPath (Join-Path $staging 'INSTALL.txt') -Encoding UTF8
+}
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[IO.Compression.ZipFile]::CreateFromDirectory($staging,$archive,[IO.Compression.CompressionLevel]::Optimal,$false)
 $hash = (Get-FileHash $archive -Algorithm SHA256).Hash
-@{file=[IO.Path]::GetFileName($archive);sha256=$hash;version=$Version;sourceCommit=$sourceCommit;sourceDirty=$sourceDirty;createdAt=(Get-Date).ToUniversalTime().ToString('o')} |
+@{file=[IO.Path]::GetFileName($archive);sha256=$hash;version=$Version;sourceCommit=$sourceCommit;sourceDirty=$sourceDirty;offline=[bool]$Offline;createdAt=(Get-Date).ToUniversalTime().ToString('o')} |
     ConvertTo-Json | Set-Content ($archive + '.sha256.json') -Encoding UTF8
 Remove-Item -LiteralPath $resolvedStaging -Recurse -Force
 Write-Host ('Package: ' + $archive) -ForegroundColor Green

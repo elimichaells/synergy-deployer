@@ -8,6 +8,7 @@ $packageRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'installer-database-policy.ps1')
 . (Join-Path $PSScriptRoot 'installer-preflight.ps1')
 . (Join-Path $PSScriptRoot 'installer-network.ps1')
+. (Join-Path $PSScriptRoot 'installer-offline.ps1')
 . (Join-Path $PSScriptRoot 'database-service.ps1')
 $results = [System.Collections.Generic.List[object]]::new()
 
@@ -202,6 +203,11 @@ $script:Config = if ($ConfigPath) {
 Write-Host 'Manager for Windows Server and Windows 10/11' -ForegroundColor White
 Write-Host 'Preflight, installation, configuration, and verification wizard' -ForegroundColor DarkGray
 
+$releaseMetadata = Get-Content -LiteralPath (Join-Path $packageRoot 'release-source.json') -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json
+$bundledOffline = (Test-Path -LiteralPath (Join-Path $packageRoot 'offline') -PathType Container) -or ($releaseMetadata -and $releaseMetadata.offline)
+$offlineInstall = Get-BoolSetting 'OfflineInstall' $bundledOffline
+if ($bundledOffline -and -not $offlineInstall) { throw 'This package is an offline release. Use the online installer to download dependencies.' }
+
 $managerDomain = [string](Get-Setting 'ManagerDomain' $null -Required)
 $managerAccessMode = [string](Get-Setting 'ManagerAccessMode' 'public')
 $managerAllowedNetworks = @(Get-ListSetting 'ManagerAllowedNetworks' @('LocalSubnet'))
@@ -237,7 +243,8 @@ $optionalRuntimes = @(Get-ListSetting 'OptionalRuntimes' @('go','php','composer'
 $optionalEngines = @(Get-ListSetting 'OptionalDatabaseEngines' @())
 $installPhpMyAdmin = @($optionalEngines | Where-Object { $_ -in @('mysql','mariadb') }).Count -gt 0
 $postgresPackage = [string](Get-Setting 'PostgreSqlPackage' 'auto')
-if ($postgresPackage -eq 'auto') { $postgresPackage = Get-ManagerPostgresPackage ([Environment]::OSVersion.Version.Build) }
+if ($postgresPackage -eq 'auto') { $postgresPackage = if ($offlineInstall) { 'postgresql17' } else { Get-ManagerPostgresPackage ([Environment]::OSVersion.Version.Build) } }
+if ($offlineInstall -and $postgresPackage -ne 'postgresql17') { throw 'The offline release bundles PostgreSQL 17' }
 $caddyExe = Join-Path $webRoot 'caddy.exe'
 $caddyfile = Join-Path $webRoot 'Caddyfile'
 # Earlier installs logged to C:\Caddy\logs; keep using it there so existing sites stay consistent.
@@ -288,6 +295,22 @@ try {
     Add-Result 'Manager DNS' 'pass' (($addresses | ForEach-Object IPAddressToString) -join ', ')
 } catch { Add-Result 'Manager DNS' 'warn' 'The address does not resolve yet. Configure DNS or client host mappings before browsing to this hostname.' }
 
+if ($offlineInstall) {
+    Write-Step 'Verifying offline dependency bundle'
+    $offlineBundle = Read-ManagerOfflineBundle (Join-Path $packageRoot 'offline') ((Get-Content (Join-Path $packageRoot 'package.json') -Raw | ConvertFrom-Json).version) ((Get-FileHash (Join-Path $packageRoot 'package-lock.json') -Algorithm SHA256).Hash) $optionalRuntimes $optionalEngines $installPgweb
+    $release = Get-Content (Join-Path $packageRoot 'release-source.json') -Raw | ConvertFrom-Json
+    if ($offlineBundle.Manifest.sourceCommit -ne $release.sourceCommit) { throw 'Offline application build does not match the source release' }
+    if ($network.TlsMode -ne 'internal') { throw 'Offline setup requires local access mode for HTTPS. Public certificates require internet access.' }
+    if ($dbHost -notin @('127.0.0.1','localhost') -and $installPostgres) { throw 'Offline control PostgreSQL installation must use 127.0.0.1 or localhost' }
+    $null = Get-ManagerPgpassEntry $dbHost $dbPort $dbAdminUser $dbAdminPassword
+    if ($installPostgres -and (Get-NetTCPConnection -State Listen -LocalPort $dbPort -ErrorAction SilentlyContinue)) { throw 'Control PostgreSQL port is occupied. Deselect its installation to use the existing database.' }
+    $bundleBytes = [long](($offlineBundle.Manifest.artifacts | Measure-Object -Property bytes -Sum).Sum)
+    $systemDriveName = [IO.Path]::GetPathRoot($env:ProgramData).TrimEnd('\').TrimEnd(':')
+    $systemDrive = Get-PSDrive -Name $systemDriveName
+    if ($drive.Free -lt [Math]::Max(10GB, $bundleBytes * 6) -or $systemDrive.Free -lt [Math]::Max(10GB, $bundleBytes * 6)) { throw 'Insufficient disk space for offline extraction; at least 10 GB or six times the bundle size is required on the system and installation drives' }
+    Add-Result 'Offline dependencies' 'pass' 'All bundled checksums and selected components verified; no dependency downloads or target build required'
+}
+
 if ($Plan) {
     Write-Host ''
     Write-Host 'Plan completed. No changes were made.' -ForegroundColor Yellow
@@ -304,6 +327,13 @@ foreach ($directory in @($caddyDataHome, $caddyConfigHome)) {
 $env:XDG_DATA_HOME = $caddyDataHome
 $env:XDG_CONFIG_HOME = $caddyConfigHome
 
+if ($offlineInstall) {
+    Write-Step 'Installing bundled host dependencies'
+    $offlineTools = Install-ManagerOfflineTools $offlineBundle (Join-Path $env:ProgramData 'Manager\tools')
+    if ($installPostgres) { Initialize-ManagerOfflineControlPostgres $env:PG_BIN_PATH (Join-Path $env:ProgramData 'Manager\postgres-control') $dbPort $dbAdminUser $dbAdminPassword }
+    if ($installApplicationPostgres) { Initialize-ApplicationPostgres }
+    Add-Result 'Offline installation' 'pass' 'Using bundled Node.js, npm, PM2 and server tools'
+} else {
 Ensure-Chocolatey
 Write-Step 'Installing host dependencies'
 Ensure-Package 'git.exe' 'git'
@@ -354,6 +384,7 @@ if ($optionalEngines -contains 'redis') {
     Add-Result 'Redis licence' 'warn' 'Memurai Developer is licensed for development and testing. Production workloads need a Memurai licence or an external Redis.'
 }
 if (-not (Test-Command 'pm2.cmd')) { Invoke-Native 'npm.cmd' @('install','--global','pm2') 'Install PM2' }
+}
 
 Write-Step 'Preparing directories and application files'
 @($webRoot,$managerRoot,(Join-Path $webRoot 'production'),(Join-Path $webRoot 'staging'),(Join-Path $webRoot 'logs'),(Join-Path $webRoot 'tools'),(Join-Path $env:ProgramData 'Manager'),$pm2Home,$caddyLogDir) |
@@ -361,7 +392,7 @@ Write-Step 'Preparing directories and application files'
 & icacls.exe $pm2Home /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Failed to secure PM2 state and saved process environments' }
 if ([IO.Path]::GetFullPath($packageRoot).TrimEnd('\') -ne [IO.Path]::GetFullPath($managerRoot).TrimEnd('\')) {
-    & robocopy.exe $packageRoot $managerRoot /E /XD .git node_modules .next packages /XF .env.local *.log /NFL /NDL /NJH /NJS
+    & robocopy.exe $packageRoot $managerRoot /E /XD .git node_modules .next packages offline /XF .env.local *.log /NFL /NDL /NJH /NJS
     if ($LASTEXITCODE -ge 8) { throw ('Application copy failed: ' + $LASTEXITCODE) }
 }
 $installedCaddy = (Get-Command caddy.exe).Source
@@ -370,7 +401,17 @@ if ([IO.Path]::GetFullPath($installedCaddy) -ne [IO.Path]::GetFullPath($caddyExe
 Write-Step 'Creating the Manager control database'
 $psql = Find-PostgresTool 'psql'
 if (-not $psql) { throw 'psql.exe was not found' }
-$env:PGPASSWORD = $dbAdminPassword
+$connectionPasswordFile = $null
+if ($offlineInstall) {
+    # Windows libpq reads environment passwords through the ANSI code page. A
+    # private UTF-8 pgpass file preserves non-ASCII passwords created by initdb.
+    $connectionPasswordFile = Join-Path $env:TEMP ('manager-pgpass-' + [guid]::NewGuid() + '.conf')
+    [IO.File]::WriteAllText($connectionPasswordFile,(Get-ManagerPgpassEntry $dbHost $dbPort $dbAdminUser $dbAdminPassword),[Text.UTF8Encoding]::new($false))
+    & icacls.exe $connectionPasswordFile /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
+    if ($LASTEXITCODE -ne 0) { Remove-Item -LiteralPath $connectionPasswordFile -Force; throw 'Failed to secure PostgreSQL connection password file' }
+    Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+    $env:PGPASSFILE = $connectionPasswordFile
+} else { $env:PGPASSWORD = $dbAdminPassword }
 $sqlPath = Join-Path $env:TEMP ('manager-init-' + [guid]::NewGuid() + '.sql')
 $sqlTemplate = @'
 DO $manager$
@@ -388,12 +429,19 @@ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{4}')\gexec
 $sql = $sqlTemplate -f (Escape-Sql $dbAppUser),$dbAppUser.Replace('"','""'),(Escape-Sql $dbAppPassword),$dbName.Replace('"','""'),(Escape-Sql $dbName)
 $sql | Set-Content -LiteralPath $sqlPath -Encoding UTF8
 try { Invoke-Native $psql @('-h',$dbHost,'-p',$dbPort,'-U',$dbAdminUser,'-d','postgres','-v','ON_ERROR_STOP=1','-f',$sqlPath) 'Initialize control database' }
-finally { Remove-Item $sqlPath -Force -ErrorAction SilentlyContinue; Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue }
+finally {
+    Remove-Item $sqlPath -Force -ErrorAction SilentlyContinue
+    Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+    if ($connectionPasswordFile) { Remove-Item -LiteralPath $connectionPasswordFile -Force -ErrorAction SilentlyContinue; Remove-Item Env:PGPASSFILE -ErrorAction SilentlyContinue }
+}
 
 Write-Step 'Installing and building Manager'
 Push-Location $managerRoot
 try {
-    Invoke-Native 'npm.cmd' @('ci') 'Install application dependencies'
+    if ($offlineInstall) {
+        Expand-ManagerOfflineArchive (Get-ManagerOfflinePath $offlineBundle.Root $offlineBundle.Items['application'].file) $managerRoot
+        if (-not (Test-Path -LiteralPath (Join-Path $managerRoot '.next\BUILD_ID'))) { throw 'The bundled Manager production build is missing' }
+    } else { Invoke-Native 'npm.cmd' @('ci') 'Install application dependencies' }
     $envPath = Join-Path $managerRoot '.env.local'
     $jwtSecret = New-Secret
     $managerEncryptionKey = New-Secret
@@ -405,6 +453,9 @@ try {
         'XDG_DATA_HOME=' + $caddyDataHome.Replace('\','\\')
         'XDG_CONFIG_HOME=' + $caddyConfigHome.Replace('\','\\')
         'MANAGER_PORT=' + $managerPort
+        'MANAGER_OFFLINE_INSTALL=' + $(if ($offlineInstall) { '1' } else { '0' })
+        $(if ($offlineInstall) { 'PG_BIN_PATH=' + $env:PG_BIN_PATH.Replace('\','\\') })
+        $(if ($offlineInstall) { 'SLING_EXE=' + (Join-Path $offlineTools['sling'] 'sling.exe').Replace('\','\\') })
         'DATABASE_HOST=' + $dbHost
         'DATABASE_PORT=' + $dbPort
         'DATABASE_NAME=' + $dbName
@@ -440,10 +491,12 @@ try {
         $env:APP_POSTGRES_CONNECTION_NAME=$appDbConnectionName; $env:APP_POSTGRES_SERVICE_NAME=$appDbServiceName
     }
     Invoke-Native 'node.exe' @('scripts\initialize-manager.js') 'Apply schema and create administrator'
+    if (-not $offlineInstall) {
     $previousPreview = $env:MANAGER_PREVIEW
     try { $env:MANAGER_PREVIEW='1'; Invoke-Native 'npm.cmd' @('run','build') 'Build Manager without starting background services' }
     finally { $env:MANAGER_PREVIEW=$previousPreview }
     Invoke-Native 'npm.cmd' @('ci','--omit=dev','--ignore-scripts','--no-audit','--no-fund') 'Install locked runtime dependencies'
+    }
 } finally { Pop-Location }
 
 Write-Step 'Configuring and validating Caddy'
@@ -503,12 +556,17 @@ if ($installPgweb) {
     $pgwebExe = Join-Path $pgwebDirectory 'pgweb.exe'
     New-Item -ItemType Directory -Force -Path $pgwebDirectory | Out-Null
     if (-not (Test-Path $pgwebExe)) {
+        if ($offlineInstall) {
+            Copy-Item -LiteralPath (Join-Path $offlineTools['pgweb'] 'pgweb.exe') -Destination $pgwebExe
+        } else {
         $zipPath = Join-Path $env:TEMP 'pgweb_windows_amd64.zip'
         Invoke-WebRequest 'https://github.com/sosedoff/pgweb/releases/download/v0.17.0/pgweb_windows_amd64.zip' -OutFile $zipPath -UseBasicParsing
         Expand-Archive $zipPath $pgwebDirectory -Force
         Remove-Item $zipPath -Force
-        $downloaded = Get-ChildItem $pgwebDirectory -Filter 'pgweb*.exe' | Select-Object -First 1
+        $downloaded = Get-ChildItem $pgwebDirectory -Filter 'pgweb*' -File | Where-Object { $_.Name -match '^pgweb(?:_windows_amd64)?(?:\.exe)?$' } | Select-Object -First 1
+        if (-not $downloaded) { throw 'The Pgweb archive is missing its Windows executable' }
         if ($downloaded.FullName -ne $pgwebExe) { Move-Item $downloaded.FullName $pgwebExe -Force }
+        }
     }
 }
 if ($installPhpMyAdmin) {
@@ -556,6 +614,8 @@ Invoke-Native $caddyExe @('validate','--config',$caddyfile,'--adapter','caddyfil
 
 $report = [ordered]@{
     installedAt=(Get-Date).ToUniversalTime().ToString('o')
+    offlineInstall=$offlineInstall
+    offlineBundleSha256=if ($offlineInstall) { $offlineBundle.Hash } else { $null }
     managerDomain=$managerDomain
     managerUrl=$managerUrl
     accessMode=$managerAccessMode

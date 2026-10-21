@@ -45,6 +45,7 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _operationCancellation;
     private readonly string _dbAppPassword = CreateSecret();
     private readonly string _appDbAdminPassword = CreateSecret();
+    private readonly bool _hasOfflineDependencies = PackageResolver.HasEmbeddedOfflineDependencies();
 
     public MainWindow()
     {
@@ -71,6 +72,23 @@ public partial class MainWindow : Window
         if (OnlineFields is null || OnlineSourceRadio is null) return;
         OnlineFields.IsEnabled = OnlineSourceRadio.IsChecked == true;
         OnlineFields.Opacity = OnlineFields.IsEnabled ? 1 : 0.45;
+        var offline = _hasOfflineDependencies && !OnlineFields.IsEnabled;
+        if (EmbeddedPackageDescription is not null)
+            EmbeddedPackageDescription.Text = _hasOfflineDependencies
+                ? "Includes the prebuilt Manager app and all its dependencies. Install without internet access using local HTTPS."
+                : "Includes Manager source. Internet access is required to download dependencies. For isolated servers, use the offline setup edition.";
+        if (LatestNpmCheckBox is null || DatabaseComponentsDescription is null) return;
+        LatestNpmCheckBox.IsEnabled = !offline;
+        LatestNpmCheckBox.Content = offline ? "Bundled npm (no downloads)" : "Current npm release";
+        if (offline) LatestNpmCheckBox.IsChecked = false;
+        foreach (var checkbox in new[] { MySqlCheckBox, MariaDbCheckBox, MongoDbCheckBox, RedisCheckBox, SqlServerCheckBox })
+        {
+            checkbox.IsEnabled = !offline;
+            if (offline) checkbox.IsChecked = false;
+        }
+        DatabaseComponentsDescription.Text = offline
+            ? "PostgreSQL 17 is included. Other database engine installers are not in this offline bundle. Connect existing institution database servers from Manager after setup."
+            : "Choose MySQL or MariaDB for automatic installation; either choice also installs phpMyAdmin.";
     }
 
     private void BackButton_Click(object sender, RoutedEventArgs e)
@@ -346,7 +364,7 @@ public partial class MainWindow : Window
         var options = ReadOptions();
         var source = options.UseOnlinePackage
             ? $"GitHub release: {options.GitHubRepository} ({options.ReleaseTag})"
-            : "Embedded offline package";
+            : (_hasOfflineDependencies ? "Embedded offline app and dependencies" : "Embedded source (dependency downloads required)");
         ReviewTextBox.Text = string.Join(Environment.NewLine,
         [
             $"PACKAGE     {source}",
@@ -367,7 +385,7 @@ public partial class MainWindow : Window
             $"RUNTIMES    {ListOrNone(options.OptionalRuntimes)}",
             $"EXTRA DBS   {ListOrNone(options.OptionalDatabaseEngines)}",
             string.Empty,
-            "SECURITY     Passwords are excluded from setup JSON. PostgreSQL setup passes its admin password to Chocolatey; provisioning credentials are cleared before services start."
+            "SECURITY     Passwords are excluded from setup JSON; provisioning credentials are cleared before services start."
         ]);
     }
 

@@ -92,7 +92,7 @@
                                     <RadioButton x:Name="OfflineSourceRadio" GroupName="PackageSource" IsChecked="True" Checked="SourceMode_Checked" VerticalAlignment="Top" Margin="0,3,15,0" />
                                     <StackPanel Grid.Column="1">
                                         <TextBlock Text="Embedded package (recommended)" FontSize="16" FontWeight="SemiBold" />
-                                        <TextBlock Text="Install the verified Manager version included in this setup file. No GitHub release or token is required. Internet is still needed to install dependencies."
+                                        <TextBlock x:Name="EmbeddedPackageDescription" Text="Install the verified Manager version included in this setup file. No GitHub release or token is required. Internet is still needed to install dependencies."
                                                    Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,5,0,0" />
                                     </StackPanel>
                                 </Grid>
@@ -245,7 +245,7 @@
                             </Grid>
                             <Border Height="1" Background="{StaticResource BorderBrush}" Margin="0,22,0,24" />
                             <TextBlock Text="Optional project database engines" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,8" />
-                            <TextBlock Text="Choose MySQL or MariaDB for automatic installation; they share the default service and port. Either choice also installs the secured phpMyAdmin web client."
+                            <TextBlock x:Name="DatabaseComponentsDescription" Text="Choose MySQL or MariaDB for automatic installation; they share the default service and port. Either choice also installs the secured phpMyAdmin web client."
                                        Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,0,0,18" />
                             <UniformGrid Columns="2">
                                 <CheckBox x:Name="MySqlCheckBox" Content="MySQL" Checked="DatabaseEngine_Checked" />
