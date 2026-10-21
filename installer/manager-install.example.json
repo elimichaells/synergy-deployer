@@ -25,5 +25,5 @@
   "InstallLatestNpm": true,
   "OptionalRuntimes": ["go", "php", "composer", "python"],
   "OptionalDatabaseEngines": [],
-  "PostgreSqlPackage": "postgresql18"
+  "PostgreSqlPackage": "auto"
 }

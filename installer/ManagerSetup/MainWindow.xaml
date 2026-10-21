@@ -44,7 +44,7 @@
                     </Border>
                 </StackPanel>
                 <StackPanel Grid.Row="3">
-                    <TextBlock Text="Manager 2.0" Foreground="#AAB4BF" FontSize="12" />
+                    <TextBlock x:Name="SetupVersionText" Text="Manager Setup" Foreground="#AAB4BF" FontSize="12" />
                     <TextBlock Text="Administrator access enabled" Foreground="#6EE7B7" FontSize="12" Margin="0,5,0,0" />
                 </StackPanel>
             </Grid>

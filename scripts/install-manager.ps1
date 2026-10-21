@@ -6,6 +6,7 @@ $env:PSModulePath = (Join-Path $PSHOME 'Modules') + ';' + $env:PSModulePath
 $ProgressPreference = 'SilentlyContinue'
 $packageRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'installer-database-policy.ps1')
+. (Join-Path $PSScriptRoot 'installer-preflight.ps1')
 . (Join-Path $PSScriptRoot 'database-service.ps1')
 $results = [System.Collections.Generic.List[object]]::new()
 
@@ -229,7 +230,8 @@ $installLatestNpm = Get-BoolSetting 'InstallLatestNpm' $true
 $optionalRuntimes = @(Get-ListSetting 'OptionalRuntimes' @('go','php','composer','python'))
 $optionalEngines = @(Get-ListSetting 'OptionalDatabaseEngines' @())
 $installPhpMyAdmin = @($optionalEngines | Where-Object { $_ -in @('mysql','mariadb') }).Count -gt 0
-$postgresPackage = [string](Get-Setting 'PostgreSqlPackage' 'postgresql18')
+$postgresPackage = [string](Get-Setting 'PostgreSqlPackage' 'auto')
+if ($postgresPackage -eq 'auto') { $postgresPackage = Get-ManagerPostgresPackage ([Environment]::OSVersion.Version.Build) }
 $caddyExe = Join-Path $webRoot 'caddy.exe'
 $caddyfile = Join-Path $webRoot 'Caddyfile'
 # Earlier installs logged to C:\Caddy\logs; keep using it there so existing sites stay consistent.
@@ -247,6 +249,10 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 Add-Result 'Administrator' 'pass' $identity.Name
 if (-not [Environment]::Is64BitOperatingSystem) { throw 'A 64-bit Windows installation is required' }
 Add-Result 'Operating system' 'pass' ([Environment]::OSVersion.VersionString)
+Add-Result 'PostgreSQL package' 'pass' $postgresPackage
+Assert-ManagerInstallPaths $managerRoot $webRoot $packageRoot
+Assert-ManagerInstallPorts $managerPort $dbPort $installApplicationPostgres $appDbPort $installPgweb $installPhpMyAdmin
+Add-Result 'Installation paths and ports' 'pass' 'Dedicated installation directory and required TCP ports are available'
 if ($installPhpMyAdmin) {
     $databaseConflict = Get-ManagerDatabaseConflict $optionalEngines @(Get-CimInstance Win32_Service)
     if ($databaseConflict) { throw $databaseConflict }
@@ -256,8 +262,6 @@ $driveName = [IO.Path]::GetPathRoot($webRoot).TrimEnd('\').TrimEnd(':')
 $drive = Get-PSDrive -Name $driveName
 if ($drive.Free -lt 5GB) { throw 'At least 5 GB of free disk space is required' }
 Add-Result 'Disk space' 'pass' ('{0:N1} GB free' -f ($drive.Free/1GB))
-if (Get-NetTCPConnection -State Listen -LocalPort $managerPort -ErrorAction SilentlyContinue) { Add-Result 'Manager port' 'warn' ($managerPort.ToString() + ' is already in use') }
-else { Add-Result 'Manager port' 'pass' ($managerPort.ToString() + ' is available') }
 if ($installApplicationPostgres) {
     if ($appDbPort -eq $dbPort) { throw 'AppDbPort must differ from the Manager control database port' }
     $appService = Get-Service -Name $appDbServiceName -ErrorAction SilentlyContinue
@@ -288,7 +292,7 @@ else {
     Add-Result 'npm' 'pass' ((Get-NativeVersion 'npm.cmd' @('--version')) + ' (bundled with Node.js)')
 }
 Ensure-Package 'caddy.exe' 'caddy'
-Invoke-Native 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $packageRoot 'scripts\install-sling.ps1')) 'Install database migration engine'
+Invoke-Native 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $packageRoot 'scripts\install-sling.ps1'),'-InstallDirectory',(Join-Path $webRoot 'tools\sling')) 'Install database migration engine'
 if (($installPostgres -or $installApplicationPostgres) -and -not (Find-PostgresTool 'psql')) {
     Ensure-Package 'psql.exe' $postgresPackage @('--params',('/Password:' + $dbAdminPassword + ' /Port:' + $dbPort))
 }
@@ -332,8 +336,10 @@ if (-not (Test-Command 'pm2.cmd')) { Invoke-Native 'npm.cmd' @('install','--glob
 Write-Step 'Preparing directories and application files'
 @($webRoot,$managerRoot,(Join-Path $webRoot 'production'),(Join-Path $webRoot 'staging'),(Join-Path $webRoot 'logs'),(Join-Path $webRoot 'tools'),(Join-Path $env:ProgramData 'Manager'),$pm2Home,$caddyLogDir) |
     ForEach-Object { New-Item -ItemType Directory -Force -Path $_ | Out-Null }
+& icacls.exe $pm2Home /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Failed to secure PM2 state and saved process environments' }
 if ([IO.Path]::GetFullPath($packageRoot).TrimEnd('\') -ne [IO.Path]::GetFullPath($managerRoot).TrimEnd('\')) {
-    & robocopy.exe $packageRoot $managerRoot /MIR /XD .git node_modules .next packages /XF .env.local *.log /NFL /NDL /NJH /NJS
+    & robocopy.exe $packageRoot $managerRoot /E /XD .git node_modules .next packages /XF .env.local *.log /NFL /NDL /NJH /NJS
     if ($LASTEXITCODE -ge 8) { throw ('Application copy failed: ' + $LASTEXITCODE) }
 }
 $installedCaddy = (Get-Command caddy.exe).Source
@@ -396,6 +402,7 @@ try {
     ) -join [Environment]::NewLine
     Set-Content -LiteralPath $envPath -Value $environmentText -Encoding UTF8
     & icacls.exe $envPath /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to secure the Manager environment file' }
     $env:DATABASE_HOST=$dbHost; $env:DATABASE_PORT=$dbPort; $env:DATABASE_NAME=$dbName
     $env:DATABASE_USER=$dbAppUser; $env:DATABASE_PASSWORD=$dbAppPassword
     $env:ADMIN_EMAIL=$adminEmail; $env:ADMIN_NAME=$adminName; $env:ADMIN_PASSWORD=$adminPassword
@@ -478,18 +485,25 @@ if ($installPgweb) {
 }
 if ($installPhpMyAdmin) {
     Write-Step 'Installing phpMyAdmin for MySQL and MariaDB'
-    Invoke-Native 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $managerRoot 'scripts\install-phpmyadmin.ps1')) 'Install phpMyAdmin'
+    Invoke-Native 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $managerRoot 'scripts\install-phpmyadmin.ps1'),'-ToolsRoot',(Join-Path $webRoot 'tools')) 'Install phpMyAdmin'
 }
 
 Write-Step 'Starting services and configuring boot recovery'
+# Provisioning credentials must not be inherited by long-lived PM2 processes.
+Get-ChildItem Env: | Where-Object { $_.Name -like 'MANAGER_INSTALL_*' -or $_.Name -in @('ADMIN_PASSWORD','APP_POSTGRES_ADMIN_PASSWORD') } |
+    ForEach-Object { Remove-Item -LiteralPath ('Env:' + $_.Name) }
 $env:PM2_HOME = $pm2Home
-foreach ($processName in @('manager','manager-caddy','manager-pgweb','manager-phpmyadmin')) { & pm2.cmd delete $processName 2>$null | Out-Null }
 $nextBin = Join-Path $managerRoot 'node_modules\next\dist\bin\next'
-Invoke-Native 'pm2.cmd' @('start',$nextBin,'--interpreter','node','--name','manager','--','start','-p',$managerPort) 'Start Manager'
-Invoke-Native 'pm2.cmd' @('start',$caddyExe,'--name','manager-caddy','--interpreter','none','--','run','--config',$caddyfile,'--adapter','caddyfile') 'Start Caddy'
-if ($installPgweb) { Invoke-Native 'pm2.cmd' @('start',(Join-Path $managerRoot 'scripts\pm2-pgweb-runner.js'),'--name','manager-pgweb') 'Start Pgweb' }
-if ($installPhpMyAdmin) { Invoke-Native 'pm2.cmd' @('start',(Join-Path $managerRoot 'scripts\pm2-phpmyadmin-runner.js'),'--name','manager-phpmyadmin') 'Start phpMyAdmin' }
+Invoke-Native 'pm2.cmd' @('start',$nextBin,'--cwd',$managerRoot,'--interpreter','node','--name','manager','--','start','-p',$managerPort,'--hostname','127.0.0.1') 'Start Manager'
+Invoke-Native 'pm2.cmd' @('start',$caddyExe,'--cwd',$webRoot,'--name','manager-caddy','--interpreter','none','--','run','--config',$caddyfile,'--adapter','caddyfile') 'Start Caddy'
+if ($installPgweb) { Invoke-Native 'pm2.cmd' @('start',(Join-Path $managerRoot 'scripts\pm2-pgweb-runner.js'),'--cwd',$managerRoot,'--name','manager-pgweb') 'Start Pgweb' }
+if ($installPhpMyAdmin) { Invoke-Native 'pm2.cmd' @('start',(Join-Path $managerRoot 'scripts\pm2-phpmyadmin-runner.js'),'--cwd',$managerRoot,'--name','manager-phpmyadmin') 'Start phpMyAdmin' }
 Invoke-Native 'pm2.cmd' @('save') 'Save PM2 process list'
+$startupConfig = Join-Path $env:ProgramData 'Manager\pm2-startup.json'
+@{ node=(Get-Command node.exe).Source; pm2=(Get-Command pm2.cmd).Source; path=$env:Path } |
+    ConvertTo-Json | Set-Content -LiteralPath $startupConfig -Encoding UTF8
+& icacls.exe $startupConfig /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Failed to secure PM2 startup configuration' }
 $startupScript = Join-Path $managerRoot 'scripts\pm2-resurrect.ps1'
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $startupScript + '"')
 $trigger = New-ScheduledTaskTrigger -AtStartup
@@ -508,6 +522,8 @@ Add-Result 'Database firewall' 'pass' 'No database engine ports were opened'
 Write-Step 'Verifying installation'
 $status = Wait-Http ('http://127.0.0.1:' + $managerPort + '/login')
 Add-Result 'Manager health' 'pass' ('Local login returned HTTP ' + $status)
+$publicManagerListener = @(Get-NetTCPConnection -State Listen -LocalPort $managerPort -ErrorAction Stop | Where-Object { $_.LocalAddress -notin @('127.0.0.1','::1') })
+if ($publicManagerListener.Count) { throw 'Manager must listen only on loopback behind Caddy' }
 Invoke-Native $caddyExe @('validate','--config',$caddyfile,'--adapter','caddyfile') 'Final Caddy validation'
 
 $report = [ordered]@{

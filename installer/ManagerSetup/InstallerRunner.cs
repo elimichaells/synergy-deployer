@@ -46,7 +46,7 @@ internal static class InstallerRunner
             ["InstallLatestNpm"] = options.InstallLatestNpm,
             ["OptionalRuntimes"] = options.OptionalRuntimes,
             ["OptionalDatabaseEngines"] = options.OptionalDatabaseEngines,
-            ["PostgreSqlPackage"] = "postgresql18"
+            ["PostgreSqlPackage"] = "auto"
         };
 
         await File.WriteAllTextAsync(configPath,

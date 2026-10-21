@@ -49,6 +49,8 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        var version = typeof(MainWindow).Assembly.GetName().Version;
+        SetupVersionText.Text = version is null ? "Manager Setup" : $"Manager {version.Major}.{version.Minor}.{version.Build}";
         _panels = [SourcePanel, ServerPanel, AccountPanel, ComponentsPanel, ReviewPanel, InstallPanel];
         _stepBorders = [StepSource, StepServer, StepAccount, StepComponents, StepReview, StepInstall];
         _stepTexts = [StepSourceText, StepServerText, StepAccountText, StepComponentsText, StepReviewText, StepInstallText];
@@ -200,7 +202,7 @@ public partial class MainWindow : Window
         catch (OperationCanceledException)
         {
             InstallStatusText.Text = "Installation cancelled";
-            InstallDetailText.Text = "Provisioning was interrupted. Review the log before retrying; completed idempotent steps will be detected.";
+            InstallDetailText.Text = "Provisioning was interrupted. Review the log before retrying. If .env.local was created, preserve it and its encryption keys and use the recovery procedure.";
             AppendLog("CANCELLED: Installation was stopped.");
         }
         catch (Exception exception)
@@ -343,7 +345,7 @@ public partial class MainWindow : Window
             $"RUNTIMES    {ListOrNone(options.OptionalRuntimes)}",
             $"EXTRA DBS   {ListOrNone(options.OptionalDatabaseEngines)}",
             string.Empty,
-            "SECURITY     Database ports remain private; secrets are not written to setup JSON or process arguments."
+            "SECURITY     Passwords are excluded from setup JSON. PostgreSQL setup passes its admin password to Chocolatey; provisioning credentials are cleared before services start."
         ]);
     }
 
