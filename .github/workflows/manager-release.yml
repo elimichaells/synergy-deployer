@@ -14,12 +14,17 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 env:
   RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
 
 jobs:
   windows-installer:
+    strategy:
+      matrix:
+        node: [22, 24]
     runs-on: windows-latest
     timeout-minutes: 30
     defaults:
@@ -62,13 +67,15 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: ${{ matrix.node }}
           cache: npm
           cache-dependency-path: release-source/package-lock.json
 
       - name: Validate release identity
         shell: pwsh
-        run: node scripts/check-release.cjs "$env:RELEASE_TAG" --write
+        run: |
+          if ('${{ github.ref }}' -ne ('refs/tags/' + $env:RELEASE_TAG)) { throw 'Run this workflow from the release tag so update attestations identify that tag.' }
+          node scripts/check-release.cjs "$env:RELEASE_TAG" --write
 
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
@@ -90,21 +97,69 @@ jobs:
         run: npm run build
 
       - name: Install .NET 8 SDK
+        if: matrix.node == 22
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
 
       - name: Build application package and setup executable
+        if: matrix.node == 22
         shell: pwsh
         run: |
           $version = (Get-Content ./package.json -Raw | ConvertFrom-Json).version
           node scripts/check-release.cjs "$env:RELEASE_TAG"
           ./scripts/package-manager-exe.ps1 -OutputDirectory ./release -Version $version
 
-      - name: Publish immutable GitHub release assets
+      - name: Prepare prebuilt update payload
+        shell: pwsh
+        run: node scripts/build-manager-update.cjs prepare . ./update-stage
+
+      - name: Attest update manifest
+        id: attest
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: ${{ github.workspace }}/release-source/update-stage/manifest.json
+
+      - name: Assemble offline-capable update package
+        shell: pwsh
+        run: |
+          node scripts/build-manager-update.cjs verify ./update-stage '${{ steps.attest.outputs.bundle-path }}'
+          if ($LASTEXITCODE -ne 0) { throw 'Offline publisher verification failed' }
+          node scripts/build-manager-update.cjs assemble ./update-stage '${{ steps.attest.outputs.bundle-path }}' ./release
+
+      - name: Build one-time bootstrap for existing Managers
+        if: matrix.node == 22
+        shell: pwsh
+        run: node scripts/build-manager-bootstrap.cjs . ./release
+
+      - name: Attest bootstrap runtime and entry script
+        if: matrix.node == 22
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            ${{ github.workspace }}/release-source/release/manager-bootstrap-runtime.zip
+            ${{ github.workspace }}/release-source/release/bootstrap-manager-upgrade.ps1
+
+      - name: Collect release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: manager-release-node${{ matrix.node }}
+          path: release-source/release/*
+
+  publish:
+    needs: windows-installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: manager-release-node*
+          path: release
+          merge-multiple: true
+      - name: Publish GitHub release assets
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           $assets = Get-ChildItem -LiteralPath ./release -File | ForEach-Object FullName
-          gh release create "$env:RELEASE_TAG" $assets --verify-tag --generate-notes --title "Manager $env:RELEASE_TAG"
+          gh release create "$env:RELEASE_TAG" $assets --verify-tag --notes-file ./release/RELEASE-NOTES.md --title "Manager $env:RELEASE_TAG"

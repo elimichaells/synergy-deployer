@@ -647,6 +647,8 @@ $report = [ordered]@{
     checks=$results
 }
 $report | ConvertTo-Json -Depth 6 | Set-Content $reportPath -Encoding UTF8
+& (Join-Path $managerRoot 'scripts\install-manager-updater.ps1') -ManagerRoot $managerRoot
+if ($LASTEXITCODE -ne 0) { throw 'Manager updater registration failed' }
 Write-Host ''
 Write-Host 'Manager installation completed.' -ForegroundColor Green
 Write-Host ('URL: ' + $managerUrl) -ForegroundColor Green

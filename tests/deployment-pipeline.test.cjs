@@ -95,7 +95,13 @@ async function pipeline(t, failure, cacheHit = false, options = { trigger: 'manu
     return { rows: [] };
   };
   const command = async (cmd, cwd, _timeout, _stream, env) => {
-    if (typeof cmd !== 'string') cmd = cmd.original;
+    if (typeof cmd !== 'string') {
+      if (path.basename(cmd.file).toLowerCase() === 'icacls.exe') {
+        assert.equal(env, undefined, 'Workspace permissions must not receive Git credentials');
+        calls.push({kind:'workspace-acl',cwd,args:cmd.args}); return {code:0,output:''};
+      }
+      cmd = cmd.original;
+    }
     calls.push({ kind: 'command', cmd, cwd, env });
     if (cmd === 'pm2 jlist') return { code: 0, output: JSON.stringify([
       ...(status === 'missing' ? [] : [{ name: project.pm2_name, pid: 100, pm2_env: { status, pm_exec_path: 'fixture-server.js', pm_cwd: root, env: { PORT: '3217' } } }]),
@@ -121,7 +127,7 @@ async function pipeline(t, failure, cacheHit = false, options = { trigger: 'manu
     '@/lib/deployment-log': extra.logWriter ? {createDeploymentLogWriter: extra.logWriter} : require('../lib/deployment-log.ts'),
     '@/lib/startup-diagnostics': require('../lib/startup-diagnostics.ts'),
     '@/lib/db': { query }, '@/lib/exec': { runCommand: command },
-    '@/lib/git-access': { ...require('./git-access-fixture.cjs')(async () => 'fixture-token', extra.provider ? {provider:extra.provider,base_url:'https://git.local',account_login:'bot'} : undefined), gitCommand: command => ({file:'git.exe',args:[command.split(' ')[1]],original:command}) },
+    '@/lib/git-access': { ...require('./git-access-fixture.cjs')(async () => 'fixture-token', extra.provider ? {provider:extra.provider,base_url:'https://git.local',account_login:'bot'} : undefined), gitCommand: command => { assert.match(command, /^git /, 'Only Git may use the credential-bearing runner'); return {file:'git.exe',args:[command.split(' ')[1]],original:command}; } },
     '@/lib/project-types': { normalizeProjectType: value => value || 'next', getProjectTypeDefaults: () => ({ installCmd: null, buildCmd: 'npm run build', startCmd: null }), getProjectPortEnvironment: (_type, port) => ({ PORT: String(port) }) },
     '@/lib/notify': { notifyDeploy: async () => {} }, '@/lib/project-databases': { getProjectDatabaseEnv: async () => ({}) },
     '@/lib/data-services': { getProjectDataServiceEnv: async () => ({}) }, '@/lib/runtimes': { projectRuntimeEnvironment: () => ({}) },
@@ -147,7 +153,7 @@ async function pipeline(t, failure, cacheHit = false, options = { trigger: 'manu
     },
     '@/lib/deployment-release': { sourceFingerprint: async () => 'same', DeploymentRelease: class {
       constructor() { this.base = base; this.candidate = candidate; this.previous = path.join(base, 'previous'); this.cache = path.join(base, 'cache'); }
-      async prepare() { calls.push({ kind: 'prepare' }); }
+      async prepare(_git, system) { calls.push({ kind: 'prepare' }); if(process.platform==='win32') await system({file:'C:\\Windows\\System32\\icacls.exe',args:[base,'/inheritance:r']},base); }
       async activate(recoverLock) { calls.push({ kind: 'activate' }); if (failure === 'terminal-lock') await recoverLock(); }
       async rollback() { calls.push({ kind: 'rollback' }); }
       async complete() { calls.push({ kind: 'complete' }); }

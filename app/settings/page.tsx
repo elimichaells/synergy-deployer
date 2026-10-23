@@ -11,12 +11,13 @@ import { Switch } from '@/components/ui/switch'
 import { SelfHostedGit } from '@/components/settings/self-hosted-git'
 import { GitHubConnections } from '@/components/settings/github-connections'
 import { OtherConnections } from '@/components/settings/other-connections'
+import { ManagerUpdates } from '@/components/settings/manager-updates'
 import { EDITABLE_SETTINGS, MOVED_SETTINGS_SECTIONS, SETTINGS_SECTIONS, SECTION_FIELDS, settingsChanges, settingsForm, settingsSection, validateSettingsSection, type SettingsField, type SettingsForm, type SettingsSection } from '@/lib/settings-workspace'
 
 interface SessionUser { id: string; email: string; name: string; role: 'admin' | 'operator' | 'viewer' }
 interface UserRow { id: string; email: string; name: string; role: string; status: string; created_at: string; last_login_at: string | null }
 type Notice = { kind: 'success' | 'error'; text: string }
-const icons = { account: UserRound, access: Users, integrations: Github, notifications: Bell, general: Folder, backups: HardDrive }
+const icons = { account: UserRound, access: Users, integrations: Github, notifications: Bell, general: Folder, backups: HardDrive, updates: RefreshCw }
 const roleNames: Record<string, string> = { admin: 'Administrator', operator: 'Operator', viewer: 'Viewer' }
 
 function FieldRow({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
@@ -267,6 +268,7 @@ function SettingsWorkspace() {
             {saveControls}
           </form>}
           {section === 'account' && <YourAccount user={user} />}
+          {section === 'updates' && <ManagerUpdates isAdmin={isAdmin} />}
           {(section === 'integrations' || visited.includes('integrations')) && <div hidden={section !== 'integrations'} className="space-y-8">
             <GitHubConnections isAdmin={isAdmin} /><SelfHostedGit isAdmin={isAdmin} />
             <OtherConnections isAdmin={isAdmin} />

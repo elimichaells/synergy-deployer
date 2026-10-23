@@ -44,7 +44,7 @@ $null=Invoke-CaddyRepairNative 'icacls.exe' @($recovery,'/inheritance:r','/grant
 $stage=Join-Path $recovery 'stage';$previous=Join-Path $recovery 'previous'
 New-Item -ItemType Directory -Path $stage,$previous | Out-Null
 Expand-ManagerOfflineArchive (Get-ManagerOfflinePath $bundle.Root $bundle.Items['application'].file) $stage
-$names=@('.next','node_modules','scripts','public','db','app','components','lib','types','package.json','package-lock.json','next.config.js','tsconfig.json','next-env.d.ts')
+$names=@('.next','node_modules','scripts','public','db','app','components','lib','types','package.json','package-lock.json','next.config.js','tsconfig.json','next-env.d.ts','instrumentation.ts','middleware.ts','release-source.json')
 foreach($name in $names | Where-Object {$_ -notin @('.next','node_modules')}){
  $source=Join-Path $packageRoot $name
  if(Test-Path -LiteralPath $source){Copy-Item -LiteralPath $source -Destination (Join-Path $stage $name) -Recurse}
@@ -89,4 +89,7 @@ try{
   }catch{throw ($failure+'. Rollback needs attention: '+$_.Exception.Message+'. Recovery: '+$recovery)}
  }
  throw ($failure+'. Previous application restored. Recovery: '+$recovery)
+}
+if(Test-Path -LiteralPath (Join-Path $target 'scripts\install-manager-updater.ps1')) {
+ & (Join-Path $target 'scripts\install-manager-updater.ps1') -ManagerRoot $target
 }

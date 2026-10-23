@@ -5,6 +5,7 @@ import path from 'path'
 import { getSetting, updateSettings } from '@/lib/settings'
 import { connectionConfig, assertDatabase, createDatabase, dropDatabase, listDatabases, validateIdentifier } from '@/lib/db-admin'
 import { sendNotification } from '@/lib/notify'
+import { updateProtected } from '@/lib/update-maintenance'
 
 const BACKUP_TIMEOUT_MS = 30 * 60_000 // 30 minutes per database
 
@@ -91,6 +92,10 @@ export async function resolveBackupFile(file: string): Promise<string> {
 }
 
 export async function createBackup(database: string): Promise<BackupFile> {
+  return updateProtected('Database backup',() => createBackupNow(database))
+}
+
+async function createBackupNow(database: string): Promise<BackupFile> {
   await assertDatabase(database)
   const dir = await getBackupDir()
   const cfg = connectionConfig(database)
@@ -120,6 +125,10 @@ export async function createBackup(database: string): Promise<BackupFile> {
 
 /** Restore a backup into a NEW database (never overwrites an existing one) */
 export async function restoreBackup(file: string, targetDb: string): Promise<void> {
+  return updateProtected('Database restore',() => restoreBackupNow(file,targetDb))
+}
+
+async function restoreBackupNow(file: string, targetDb: string): Promise<void> {
   const nameError = validateIdentifier(targetDb, 'Target database name')
   if (nameError) throw new Error(nameError)
 

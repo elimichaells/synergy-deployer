@@ -13,8 +13,14 @@ for (const entry of entries) {
   fs.mkdirSync(path.dirname(dest), { recursive: true })
   fs.cpSync(path.join(source, entry), dest, { recursive: true })
 }
+for (const entry of ['app/infrastructure/servers', 'lib/managed-server-types.ts']) {
+  const dest = path.join(root, entry)
+  fs.mkdirSync(path.dirname(dest), { recursive: true })
+  fs.cpSync(path.join(source, entry), dest, { recursive: true })
+}
 fs.mkdirSync(path.join(root, 'app/api/[[...path]]'), { recursive: true })
 fs.copyFileSync(path.join(source, 'tests/fixtures/workspace-api.ts'), path.join(root, 'app/api/[[...path]]/route.ts'))
+fs.copyFileSync(path.join(source, 'tests/fixtures/remote-servers-api.ts'), path.join(root, 'app/api/[[...path]]/remote-servers-api.ts'))
 fs.mkdirSync(path.join(root, 'app/preview-viewports'), { recursive: true })
 fs.copyFileSync(path.join(source, 'tests/fixtures/workspace-viewports.tsx'), path.join(root, 'app/preview-viewports/page.tsx'))
 fs.symlinkSync(path.join(source, 'node_modules'), path.join(root, 'node_modules'), 'junction')

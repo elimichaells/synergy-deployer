@@ -23,7 +23,7 @@ async function fixture(t) {
   for (const [file, value] of Object.entries({ '.git/HEAD': 'old head', 'index.js': 'old code', 'public/app.js': 'old asset', 'database/migrations/old.sql': 'old migration', 'node_modules/module.js': 'old dependency', '.env': 'fixture-private-setting', 'database/database.sqlite': 'existing database', 'storage/app/private/crypto/key.txt': 'existing key', 'public/uploads/upload.txt': 'existing upload' })) await fs.writeFile(path.join(root, file), value);
   const release = new DeploymentRelease(root, 'fixture-project', 'fixture-deployment', { activationMode: 'contents' });
   const execute = async command => ({ code: 0, output: command === 'git ls-files -z' ? 'index.js\0public/app.js\0database/migrations/old.sql\0' : command.includes('--ignored') ? '.env\0storage/\0public/uploads/\0database/database.sqlite\0node_modules/\0' : '' });
-  await release.prepare(execute);
+  await release.prepare(execute, async () => ({code:0,output:''}));
   for (const [file, value] of Object.entries({ 'index.js': 'new code', 'public/app.js': 'new asset', 'database/migrations/new.sql': 'new migration', 'node_modules/module.js': 'new dependency' })) {
     await fs.mkdir(path.dirname(path.join(release.candidate, file)), { recursive: true });
     await fs.writeFile(path.join(release.candidate, file), value);
@@ -122,7 +122,7 @@ test('stable activation creates a new project and keeps its failed candidate dat
   const { base } = await fixture(t);
   const root = path.join(base, 'new-project');
   const release = new DeploymentRelease(root, 'new-project', 'new-deployment', { activationMode: 'contents' });
-  await release.prepare(async () => ({ code: 0, output: '' }));
+  await release.prepare(async () => ({ code: 0, output: '' }), async () => ({code:0,output:''}));
   await fs.mkdir(path.join(release.candidate, '.git'), { recursive: true });
   await fs.mkdir(path.join(release.candidate, 'storage'));
   await fs.writeFile(path.join(release.candidate, 'index.js'), 'new app');

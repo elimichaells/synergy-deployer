@@ -5,6 +5,12 @@ try { sourceCommit = require('./release-source.json').sourceCommit || '' } catch
 const nextConfig = {
   reactStrictMode: true,
   experimental: { cpus: 2 },
+  serverExternalPackages: ['ssh2'],
+  outputFileTracingIncludes: {
+    '/api/manager-updates': ['./scripts/manager-update-*.cjs', './scripts/update-trusted-root.json'],
+    '/api/servers/**/*': ['./scripts/manager-agent.cjs', './scripts/bootstrap-remote-agent.*', './db/migrations/025_managed_servers.sql'],
+    '/api/server-agent/*': ['./db/migrations/025_managed_servers.sql'],
+  },
   env: { NEXT_PUBLIC_MANAGER_VERSION: version, NEXT_PUBLIC_MANAGER_COMMIT: sourceCommit },
 }
 

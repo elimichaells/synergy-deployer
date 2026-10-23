@@ -1,11 +1,26 @@
 # Server Manager (PM2 + GitHub)
 
-Centralized server management for multiple projects on a single host. This build targets:
+Centralized server management for local projects and remote Windows/Linux servers. This build supports:
 
-- Single server
+- Local server management plus enrolled remote servers
 - GitHub-based deployments
 - PM2 for runtime
 - Multi-user roles (admin, operator, viewer)
+
+## Remote servers
+
+**Infrastructure → Servers** enrolls Windows and Linux agents on your LAN or in
+other locations. Enter the server IP/hostname, SSH username and password for guided
+setup, or use manual enrollment. SSH setup installs Node.js, Git, PM2 and Caddy and
+configures startup; it checks the host fingerprint and does not save the password.
+Each server supports multiple apps with independent Git deployments,
+environment variables, ports and logs. Agents report resource and process status over
+outbound HTTPS. Caddy routes readable hostnames using a local CA for LAN installations
+or public certificates for WAN domains, with optional dedicated HTTPS ports for IP
+access. Internal DNS and client certificate trust must be configured by the institution.
+
+See [remote server setup and operations](docs/remote-servers.md) for prerequisites,
+startup at boot, multi-app examples, network requirements and recovery behavior.
 
 ## Windows Server Package
 
@@ -427,3 +442,10 @@ pm2 start npm --name "<pm2Name>" -- <startCmd-without-npm>
   - `operator`: create projects + deploy
   - `viewer`: read-only
  - Auto-register looks under `PRODUCTION_PATH` and adds any missing folders as projects.
+
+## Manager self-updates
+
+Administrators can use **Settings → Manager updates** to install verified GitHub
+releases or import an offline update package, with retained backups and automatic
+recovery. Existing installations require a one-time bootstrap. See
+[Manager updates and recovery](docs/manager-updates.md).

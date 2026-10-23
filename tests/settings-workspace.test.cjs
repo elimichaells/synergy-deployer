@@ -4,7 +4,7 @@ const { EDITABLE_SETTINGS, SETTINGS_SECTIONS, MOVED_SETTINGS_SECTIONS, settingsS
 const initial = { ...EDITABLE_SETTINGS, PRODUCTION_PATH: 'C:\\apps\\production', STAGING_PATH: 'C:\\apps\\staging', BACKUP_DIR: 'C:\\backups', PG_BIN_PATH: 'C:\\postgres\\bin' };
 
 test('settings sections have stable deep links and unknown sections fall back safely', () => {
-  assert.equal(SETTINGS_SECTIONS.length, 6);
+  assert.equal(SETTINGS_SECTIONS.length, 7);
   for (const section of SETTINGS_SECTIONS) assert.equal(settingsSection(section.id), section.id);
   assert.equal(settingsSection(null), 'account');
   assert.equal(settingsSection('unsupported'), 'account');

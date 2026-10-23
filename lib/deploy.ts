@@ -544,7 +544,8 @@ async function runDeployAsync(project: DeployProject, options: DeployOptions, de
       }
     }
     const originalFingerprint = await sourceFingerprint(project.root_path, git)
-    await release.prepare(git)
+    // Folder permissions are an OS operation, never a Git invocation carrying repository credentials.
+    await release.prepare(git, (command, cwd) => runCommand(command, cwd, 60_000, undefined, undefined, false))
     await query('UPDATE deployments SET release_path=$1 WHERE id=$2', [release.base, deploymentId])
     await append('[release] Candidate: ' + root + '\n')
     if (!existsSync(path.join(root, '.git'))) {

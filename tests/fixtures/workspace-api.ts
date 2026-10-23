@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { dataServiceRemovalReason, migrationRemovalReason } from '@/lib/data-removal-policy'
+import { remoteServersFixture } from './remote-servers-api'
 
 // Synthetic preview API. Never copied into the production application.
 const initialProject = { id: 'fixture-app', name: 'Payments API', slug: 'payments-api', repo_url: 'https://github.com/example/payments-api', default_branch: 'staging', project_type: 'go', root_path: 'C:\\web\\production\\payments-api', pm2_name: 'payments-api', port: 3117, url: null, auto_deploy: false, runtime_versions: {}, install_cmd: null, build_cmd: null, start_cmd: null, deploy_script: null, environment: 'production', is_active: true, github_connection_id: 'github-one', github_connection_name: 'Engineering', github_account_login: 'example', setup_required: true, step: 'repository', decisions: {}, completed_at: null }
@@ -8,11 +9,15 @@ export const dynamic = 'force-dynamic'
 const result = (data: unknown, status = 200) => NextResponse.json(data, { status })
 const settingsDefaults = { PRODUCTION_PATH: 'C:\\web\\production', STAGING_PATH: 'C:\\web\\staging', LOGS_PATH: 'C:\\web\\logs', CADDY_PATH: 'C:\\web', NOTIFY_WEBHOOK_URL: 'https://example.test/notifications', BACKUP_DIR: 'C:\\web\\backups\\postgres', BACKUP_ENABLED: 'false', BACKUP_RETENTION_DAYS: '14', PG_BIN_PATH: 'C:\\Program Files\\PostgreSQL\\18\\bin' }
 const settingsState = (globalThis as unknown as { __settingsFixture?: { values: Record<string, string>; writes: Record<string, string>[]; notifications: number } }).__settingsFixture ??= { values: { ...settingsDefaults }, writes: [], notifications: 0 }
+const updateState=(globalThis as unknown as { __updateFixture?: { job: any; version: string } }).__updateFixture ??= {job:null,version:'2.21.0'}
 const dataState = (globalThis as unknown as { __dataFixture?: { enabled: boolean; services: any[]; migrations: any[]; deleted: string[] } }).__dataFixture ??= { enabled: false, services: [], migrations: [], deleted: [] }
 const listedServices = () => dataState.services.map(service => ({ ...service, removal_blocked_reason: dataServiceRemovalReason({ ...service, migration_count: dataState.migrations.filter(job => job.source_service_id === service.id || job.target_service_id === service.id).length, migration_active: dataState.migrations.some(job => (job.source_service_id === service.id || job.target_service_id === service.id) && ['queued', 'running', 'validating'].includes(job.status)) }) }))
 const fixtureRuntimes = () => ['git', 'node', 'go', 'php', 'composer', 'angular', 'postgresql', 'mysql', 'mariadb', 'caddy', 'sling', 'phpmyadmin'].map(id => ({ id, name: ({ node: 'Node.js', go: 'Go', php: 'PHP', mysql: 'MySQL', postgresql: 'PostgreSQL tools', phpmyadmin: 'phpMyAdmin', angular: 'Angular CLI', caddy: 'Caddy', git: 'Git', composer: 'Composer', mariadb: 'MariaDB', sling: 'Sling migration engine' } as Record<string, string>)[id], purpose: 'Application host dependency', installed: !['mariadb', 'angular'].includes(id), version: ['mariadb', 'angular'].includes(id) ? null : id === 'node' ? 'v24.13.0' : '1.0.0', installedVersions: ['node', 'php', 'go'].includes(id) ? ['1.0.0', '2.0.0'] : [], canInstall: true, canUpdate: true, canConfigure: id === 'mysql', versioned: ['node', 'php', 'go'].includes(id), updateAvailable: id === 'node', latestVersion: id === 'node' ? '24.14.0' : null, updateRisk: 'minor', activeJob: null, latestJob: null }))
 export async function GET(request: Request) {
+  const remote = await remoteServersFixture(request); if (remote) return remote
   const url = new URL(request.url); const pathname = url.pathname
+  if(pathname==='/api/manager-updates') return result(url.searchParams.get('check')==='1'?{version:'2.22.0',newer:true,available:true,url:'https://github.com/elimichaells/synergy-deployer/releases',notes:'Example release notes for the isolated UI preview.'}:{version:updateState.version,configured:true,assetName:'manager-update-win32-x64-node24.tar',recoveryDirectory:'C:\\ProgramData\\Manager\\updates',job:updateState.job,history:updateState.job?[updateState.job]:[]})
+  if (pathname === '/api/server/health') return result({ checkedAt: new Date().toISOString(), stale: false, unavailable: false, incidents: [], snapshot: null })
   if (pathname === '/api/auth/me') return result({ user: { id: 'fixture-user', name: 'Alex Morgan', email: 'alex@example.test', role: state.role } })
   if (pathname === '/api/settings') return state.failure === 'settings-load' ? result({ error: 'Fixture settings service unavailable' }, 503) : result({ ...settingsState.values, GITHUB_TOKEN: 'fixture-legacy-secret' })
   if (pathname === '/api/__fixture/settings') return result(settingsState)
@@ -44,8 +49,16 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const remote = await remoteServersFixture(request); if (remote) return remote
   const pathname = new URL(request.url).pathname
   const body = await request.json().catch(() => ({}))
+  if(pathname==='/api/manager-updates') {
+    if(body.action==='download')updateState.job={id:'fixture-update',source:'github',fromVersion:'2.21.0',version:'2.22.0',phase:'ready',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),events:[{at:new Date().toISOString(),message:'Publisher verified. Package staged and ready to install.'}]}
+    if(body.action==='install'&&updateState.job){updateState.job.phase='checking';setTimeout(()=>{updateState.job.phase='succeeded';updateState.version='2.22.0';updateState.job.events.push({at:new Date().toISOString(),message:'Manager is healthy. Recovery backup retained.'})},1500)}
+    if(body.action==='rollback'&&updateState.job){updateState.job.phase='rolled_back';updateState.version='2.21.0';updateState.job.events.push({at:new Date().toISOString(),message:'Previous release restored and healthy.'})}
+    if(body.action==='cancel')updateState.job=null
+    return result({ok:true})
+  }
   if (pathname === '/api/settings/test-notification') { settingsState.notifications++; return result({ ok: true }) }
   if (pathname === '/api/system/runtimes/check-updates') return result({ runtimes: fixtureRuntimes() })
   if (pathname === '/api/auth/github/device') return result({ deviceCode: 'fixture-device', userCode: 'ABCD-EFGH', verificationUri: 'https://github.com/login/device', interval: 5 })

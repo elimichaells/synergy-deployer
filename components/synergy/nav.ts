@@ -12,6 +12,7 @@ export const navItems = [
 
 /** Server-level areas, shown in the Infrastructure side menu. */
 export const infrastructureItems = [
+  { href: '/infrastructure/servers', label: 'Servers', icon: Server, description: 'Windows and Linux servers, monitoring and remote deployments' },
   { href: '/infrastructure/operations', label: 'AI Operations', icon: ShieldCheck, description: 'Diagnosis, reviewed recovery and sampled uptime' },
   { href: '/infrastructure/health', label: 'Health & alerts', icon: Gauge, description: 'Disk, process and response warnings before an outage' },
   { href: '/domains', label: 'Domains & DNS', icon: Globe2, description: 'Cloudflare accounts and every public address' },

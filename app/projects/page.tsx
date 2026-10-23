@@ -55,6 +55,7 @@ export default function ProjectsPage() {
       title="Projects"
       subtitle={view === 'apps' ? appsSummary : projects ? `${projects.length} projects · ${appCount} apps` : 'Everything you ship, grouped by product.'}
       actions={<>
+        <Button asChild variant="outline" size="sm"><Link href="/infrastructure/servers">Remote apps</Link></Button>
         {view === 'projects' && <Button variant="outline" size="sm" onClick={() => void load()}><RefreshCw className="mr-1.5 h-3.5 w-3.5" />Refresh</Button>}
         <Button asChild size="sm"><Link href="/sites/new"><Plus className="mr-1.5 h-4 w-4" />New app</Link></Button>
       </>}

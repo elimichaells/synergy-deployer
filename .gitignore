@@ -29,3 +29,5 @@ start
 /security-exceptions.json
 /release-source.json
 /_prod_deploy_log.txt
+.manager-updater.json
+.manager-maintenance.json

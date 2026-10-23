@@ -6,6 +6,7 @@ import { renameReleasePath as rename } from './deployment-filesystem'
 const artifacts = new Set(['node_modules', 'vendor', '.next', '.next.backup', 'dist', '.angular', '.turbo', 'app.exe'])
 const defaults = ['uploads', 'storage', 'public/uploads', 'public/storage', '.env', '.env.local', '.env.production', '.env.production.local']
 type Execute = (command: string, cwd: string) => Promise<{ code: number; output: string }>
+type ExecuteSystem = (command: { file: string; args: string[] }, cwd: string) => Promise<{ code: number; output: string }>
 type ContentMove = { path: string; from: 'root' | 'candidate'; to: 'previous' | 'root'; state: 'planned' | 'pending' | 'done' | 'reverted' }
 const exists = async (filename: string) => !!await lstat(filename).catch(error => {
   if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
@@ -220,7 +221,7 @@ export class DeploymentRelease {
     await visit(linksRoot)
   }
 
-  async prepare(execute: Execute) {
+  async prepare(execute: Execute, executeSystem: ExecuteSystem) {
     if (await exists(this.base)) throw new Error('Release workspace already exists; inspect its journal before retrying')
     const projectBase = path.dirname(this.base)
     await mkdir(projectBase, { recursive: true })
@@ -240,7 +241,10 @@ export class DeploymentRelease {
     // Reapplying ACLs to projectBase traverses every retained dependency tree and can
     // take many minutes for Node/Angular applications.
     if (process.platform === 'win32') {
-      const secured = await execute(`icacls "${this.base}" /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F"`, path.dirname(this.root))
+      const secured = await executeSystem({
+        file: path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'icacls.exe'),
+        args: [this.base, '/inheritance:r', '/grant:r', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F'],
+      }, path.dirname(this.root))
       if (secured.code) throw new Error('Could not protect the private release workspace')
     }
     if (await exists(this.root)) {

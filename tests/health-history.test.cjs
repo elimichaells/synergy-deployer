@@ -67,7 +67,7 @@ test('preview instrumentation exits before importing any production service',asy
 });
 test('preview middleware rejects mutation and wake requests but retains normal authentication',()=>{
  const before=process.env.MANAGER_PREVIEW;process.env.MANAGER_PREVIEW='1';
- try{const {middleware}=load('middleware.ts',{});assert.equal(middleware(new NextRequest('http://test/api/sites',{method:'POST'})).status,503);assert.equal(middleware(new NextRequest('http://test/api/wake')).status,503);assert.equal(middleware(new NextRequest('http://test/api/server/health')).status,401);assert.equal(middleware(new NextRequest('http://test/login')).status,200);}finally{if(before===undefined)delete process.env.MANAGER_PREVIEW;else process.env.MANAGER_PREVIEW=before;}
+ try{const {middleware}=load('middleware.ts',{'./scripts/manager-update-state.cjs':{maintenance:()=>false}});assert.equal(middleware(new NextRequest('http://test/api/sites',{method:'POST'})).status,503);assert.equal(middleware(new NextRequest('http://test/api/wake')).status,503);assert.equal(middleware(new NextRequest('http://test/api/server/health')).status,401);assert.equal(middleware(new NextRequest('http://test/login')).status,200);}finally{if(before===undefined)delete process.env.MANAGER_PREVIEW;else process.env.MANAGER_PREVIEW=before;}
 });
 test('history reader fails visibly on missing, oversized or corrupt data',async()=>{
  for(const fixture of ['missing','oversized','corrupt']){

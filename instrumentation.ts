@@ -1,8 +1,23 @@
 export async function register() {
+  if (process.env.MANAGER_PREVIEW === '1' || process.env.NEXT_RUNTIME !== 'nodejs') return
+  const { maintenance } = await import('@/lib/update-maintenance')
+  if (!maintenance()) { await initialize(); return }
+  // Start HTTP readiness while the independent worker checks the new release.
+  // Schedulers, migrations and proxy changes wait until activation is committed.
+  const timer=setInterval(() => {
+    if (!maintenance()) { clearInterval(timer); void initialize() }
+  },2000)
+}
+
+async function initialize() {
   // An isolated release preview must not run schedulers, migrations, job recovery
   // or proxy rewrites against the production control plane.
   if (process.env.MANAGER_PREVIEW === '1') return
   if (process.env.NEXT_RUNTIME === 'nodejs') {
+    const { maintenance, updateProtected } = await import('@/lib/update-maintenance')
+    const tick = (name: string, work: () => Promise<unknown>) => {
+      if (!maintenance()) void updateProtected(name, work).catch(error => console.error('[System] Background operation failed:', error))
+    }
     const { seedSettingsFromEnv } = await import('@/lib/settings')
     await seedSettingsFromEnv()
 
@@ -21,10 +36,10 @@ export async function register() {
       const { dataServiceBackupSchedulerTick, recoverInterruptedDataServiceBackups } = await import('@/lib/data-service-backups')
       await recoverInterruptedBackupSchedules()
       await recoverInterruptedDataServiceBackups()
-      setInterval(() => void backupSchedulerTick(), 60_000)
-      setInterval(() => void dataServiceBackupSchedulerTick(), 60_000)
-      void backupSchedulerTick()
-      void dataServiceBackupSchedulerTick()
+      setInterval(() => tick('Scheduled backups', backupSchedulerTick), 60_000)
+      setInterval(() => tick('Data service backups', dataServiceBackupSchedulerTick), 60_000)
+      tick('Scheduled backups', backupSchedulerTick)
+      tick('Data service backups', dataServiceBackupSchedulerTick)
     } catch (err) {
       console.error('[System] Failed to start backup scheduler:', err)
     }
@@ -99,8 +114,8 @@ export async function register() {
     try {
       const { ensureServerMemorySchema, memorySamplerTick } = await import('@/lib/server-memory')
       await ensureServerMemorySchema()
-      setInterval(() => void memorySamplerTick(), 60_000)
-      setTimeout(() => void memorySamplerTick(), 15_000)
+      setInterval(() => tick('Memory sampling', memorySamplerTick), 60_000)
+      setTimeout(() => tick('Memory sampling', memorySamplerTick), 15_000)
     } catch (err) {
       console.error('[System] Failed to start memory sampling:', err)
     }
@@ -108,8 +123,8 @@ export async function register() {
     try {
       const { cronSchedulerTick, recoverInterruptedCronJobs } = await import('@/lib/cron-jobs')
       await recoverInterruptedCronJobs()
-      setInterval(() => void cronSchedulerTick(), 15_000)
-      void cronSchedulerTick()
+      setInterval(() => tick('Scheduled jobs', cronSchedulerTick), 15_000)
+      tick('Scheduled jobs', cronSchedulerTick)
     } catch (err) {
       console.error('[System] Failed to start cron scheduler:', err)
     }

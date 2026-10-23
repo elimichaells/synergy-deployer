@@ -28,20 +28,21 @@ async function fixture(t: any, laravel = false, trackedAssets = false, activatio
     await writeFile(path.join(root, 'bootstrap/cache/.gitignore'), '*\n!.gitignore\n')
   }
   const commands: string[] = []
-  const execute = async (command: string) => { commands.push(command); return { code: 0, output: command === 'git ls-files -z' ? 'index.js\0storage/framework/.gitignore\0' +
+  const execute = async (command: string) => { assert.match(command, /^git /); commands.push(command); return { code: 0, output: command === 'git ls-files -z' ? 'index.js\0storage/framework/.gitignore\0' +
     (laravel ? 'artisan\0bootstrap/cache/.gitignore\0' : '') + (trackedAssets ? 'public/build/manifest.json\0' : '')
     : command.includes('--ignored') ? '.env\0uploads/\0node_modules/\0dist/\0' + (laravel ? (trackedAssets ? '' : 'public/build/\0') + 'bootstrap/cache/config.php\0' : '') : '' } }
   const release = new DeploymentRelease(root, 'project-1', 'deployment-1', { activationMode })
-  await release.prepare(execute)
-  return { root, release, directory, execute, commands }
+  const systemCommands: { file: string; args: string[] }[] = []
+  const executeSystem = async (command: { file: string; args: string[] }) => { systemCommands.push(command); return { code: 0, output: '' } }
+  await release.prepare(execute, executeSystem)
+  return { root, release, directory, execute, executeSystem, commands, systemCommands }
 }
 
 test('candidate preparation keeps live files unchanged and excludes mutable data and dependencies', async t => {
-  const { root, release, commands } = await fixture(t)
+  const { root, release, systemCommands } = await fixture(t)
   if (process.platform === 'win32') {
-    const acl = commands.find(command => command.startsWith('icacls '))
-    assert.ok(acl?.includes(`"${release.base}"`))
-    assert.ok(!acl?.includes(`"${path.dirname(release.base)}"`))
+    assert.equal(path.basename(systemCommands[0].file), 'icacls.exe')
+    assert.deepEqual(systemCommands[0].args, [release.base, '/inheritance:r', '/grant:r', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F'])
   }
   assert.equal(await readFile(path.join(root, 'index.js'), 'utf8'), 'old release')
   assert.equal(await readFile(path.join(release.candidate, '.env'), 'utf8'), 'APP_SECRET=fixture-private')
@@ -98,10 +99,10 @@ test('partial activation can be recovered without deleting either release', asyn
 })
 
 test('a completed release keeps the old source and an interrupted activation blocks the next deploy', async t => {
-  const { root, release, execute } = await fixture(t)
+  const { root, release, execute, executeSystem } = await fixture(t)
   await release.activate()
   const next = new DeploymentRelease(root, 'project-1', 'deployment-2')
-  await assert.rejects(next.prepare(execute), /interrupted release/)
+  await assert.rejects(next.prepare(execute, executeSystem), /interrupted release/)
   await release.complete()
   assert.equal(await readFile(path.join(release.previous, 'index.js'), 'utf8'), 'old release')
 })

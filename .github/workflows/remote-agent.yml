@@ -1,0 +1,45 @@
+name: Remote agent compatibility
+on:
+  pull_request:
+    paths:
+      - 'scripts/manager-agent.cjs'
+      - 'tests/remote-agent.test.cjs'
+      - 'lib/server-ssh.ts'
+      - 'app/api/servers/**'
+      - 'scripts/bootstrap-remote-agent.*'
+      - 'tests/server-ssh.test.cjs'
+      - '.github/workflows/remote-agent.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  agent:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ['22', '24']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: node --test tests/remote-agent.test.cjs
+  ssh:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node --test tests/server-ssh.test.cjs

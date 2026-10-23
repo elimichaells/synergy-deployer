@@ -5,6 +5,7 @@ export const SETTINGS_SECTIONS = [
   { id: 'notifications', group: 'Workspace', label: 'Notifications', description: 'Where Synergy sends a message after each deployment.' },
   { id: 'general', group: 'Server', label: 'App folders', description: 'Where Synergy puts the code of apps you add from now on.' },
   { id: 'backups', group: 'Server', label: 'Backups', description: 'Where PostgreSQL backups are stored and how long they are kept.' },
+  { id: 'updates', group: 'Server', label: 'Manager updates', description: 'Install verified releases, import offline packages and recover a previous version.' },
 ] as const
 
 /** Sections that moved elsewhere keep working as links. */
@@ -20,7 +21,7 @@ export type SettingsForm = typeof EDITABLE_SETTINGS
 export type SettingsField = keyof SettingsForm
 export const SECTION_FIELDS: Record<SettingsSection, SettingsField[]> = {
   general: ['PRODUCTION_PATH', 'STAGING_PATH'],
-  account: [], integrations: [], notifications: ['NOTIFY_WEBHOOK_URL'],
+  account: [], integrations: [], updates: [], notifications: ['NOTIFY_WEBHOOK_URL'],
   backups: ['BACKUP_DIR', 'BACKUP_ENABLED', 'BACKUP_RETENTION_DAYS', 'PG_BIN_PATH'], access: [],
 }
 

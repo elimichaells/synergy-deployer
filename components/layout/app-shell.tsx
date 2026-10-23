@@ -79,7 +79,7 @@ export function AppShell({ children, title, subtitle, user, actions, back, heade
           <div className="flex min-w-0 items-center gap-2 text-sm">
             <span className="h-2 w-2 shrink-0 rounded-full bg-status-ready" title="Manager reachable" />
             <span className="truncate font-medium">{host || 'host'}</span>
-            <span className="hidden rounded-full border border-border px-1.5 py-px font-mono text-[10px] uppercase tracking-wider text-muted-foreground md:inline">Single host</span>
+            <Link href="/infrastructure/servers" className="hidden rounded-full border border-border px-1.5 py-px font-mono text-[10px] uppercase tracking-wider text-muted-foreground md:inline">Servers</Link>
           </div>
 
           <div className="ml-auto flex items-center gap-2">
@@ -175,7 +175,7 @@ export function AppShell({ children, title, subtitle, user, actions, back, heade
 
       <footer className="mx-auto flex max-w-[1240px] items-center justify-between gap-4 px-4 pb-8 pt-2 text-xs text-muted-foreground sm:px-6">
         <span className="flex items-center gap-2"><SynergyMark className="h-4 w-4" /> Synergy Deploy</span>
-        <span className="hidden sm:inline">Zero-downtime releases with verified health checks</span>
+        <span className="hidden sm:inline">Application deployments and server operations</span>
       </footer>
 
       <CommandMenu open={commandOpen} onOpenChange={setCommandOpen} />
