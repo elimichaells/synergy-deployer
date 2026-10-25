@@ -33,7 +33,8 @@ fetch_verified "$CADDY_URL" "$root/tools/caddy.tar.gz" "$CADDY_SHA"
 tar -xJf "$root/tools/node.tar.xz" -C "$root/tools/node" --strip-components=1
 tar -xzf "$root/tools/caddy.tar.gz" -C "$root/tools/caddy" caddy
 chmod 755 "$root/tools/caddy/caddy"
-export PATH="$root/tools/node/bin:$root/tools/caddy:/usr/local/bin:/usr/bin:/bin"
+# Account provisioning and enrollment also need useradd/runuser from sbin.
+export PATH="$root/tools/node/bin:$root/tools/caddy:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 echo '[setup] Installing private PM2 tools'
 npm install --prefix "$root/tools" --omit=dev --no-audit --no-fund "pm2@$PM2_VERSION"
 if ! id manager-agent >/dev/null 2>&1; then useradd --system --home-dir "$root" --shell /usr/sbin/nologin manager-agent; fi

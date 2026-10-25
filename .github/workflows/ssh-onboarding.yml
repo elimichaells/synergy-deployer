@@ -1,0 +1,66 @@
+name: SSH onboarding lab
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, codex/ssh-onboarding-tests]
+    paths:
+      - '.github/workflows/ssh-onboarding.yml'
+      - 'tests/ssh-lab/**'
+      - 'lib/server-ssh.ts'
+      - 'lib/managed-servers.ts'
+      - 'scripts/bootstrap-remote-agent.*'
+      - 'scripts/manager-agent.cjs'
+
+permissions:
+  contents: read
+
+jobs:
+  onboard:
+    name: Real SSH setup (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [windows-2025, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      MANAGER_SSH_LAB: '1'
+      DATABASE_URL: postgres://postgres:root@127.0.0.1:5432/manager_remote_test_ssh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Prepare Windows SSH and isolated database
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/ssh-lab/prepare-windows.ps1
+      - name: Prepare Linux SSH and isolated database
+        if: runner.os == 'Linux'
+        run: bash tests/ssh-lab/prepare-linux.sh
+      - name: Install through SSH, verify enrollment and restart
+        run: node tests/ssh-lab/onboard.cjs
+      - name: Stop lab agent
+        if: always()
+        shell: pwsh
+        run: |
+          if ($env:RUNNER_OS -eq 'Windows') {
+            if (Get-ScheduledTask -TaskName ManagerRemoteAgent -ErrorAction SilentlyContinue) { Stop-ScheduledTask -TaskName ManagerRemoteAgent }
+          } else {
+            sudo systemctl stop manager-agent.service || true
+          }
+      - name: Save sanitized lab results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-onboarding-${{ matrix.os }}
+          path: |
+            ssh-lab-result.json
+            ssh-lab-setup.log
+          if-no-files-found: ignore
+          retention-days: 7
