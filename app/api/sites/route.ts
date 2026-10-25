@@ -11,6 +11,7 @@ import { ensureProjectSetupSchema } from '@/lib/project-setup'
 import { validateSetupRepository } from '@/lib/project-setup-policy'
 import { PROJECT_TYPES } from '@/lib/project-types'
 import path from 'path'
+import { environmentMode } from '@/lib/application-environments'
 import { ensureApplicationGroupsSchema, ensureEveryAppHasProject, linkApplicationProjects, assignOwnProject, componentRole, projectIdentifier } from '@/lib/application-groups'
 import { ensureProjectPinsSchema } from '@/lib/project-pins'
 
@@ -96,9 +97,11 @@ export async function POST(request: Request) {
       body.url = null
       await ensureProjectSetupSchema()
     }
-    if (body.createStaging !== undefined && typeof body.createStaging !== 'boolean') return NextResponse.json({ error: 'Invalid staging selection' }, { status: 400 })
-    const createStaging = body.createStaging === true
-    if (body.setupDraft === true && typeof body.createStaging !== 'boolean') return NextResponse.json({ error: 'Choose production only or production with staging' }, { status: 400 })
+    let mode: ReturnType<typeof environmentMode>
+    try { mode = environmentMode(body) }
+    catch (error) { return NextResponse.json({ error: (error as Error).message }, { status: 400 }) }
+    const createStaging = mode === 'production-staging'
+    const environment = mode === 'staging' ? 'staging' : 'production'
     if (createStaging) {
       try { validateSetupRepository(body.repoUrl || '', body.stagingBranch || body.defaultBranch || 'main') }
       catch (error) { return NextResponse.json({ error: (error as Error).message }, { status: 400 }) }
@@ -126,7 +129,7 @@ export async function POST(request: Request) {
     const slug = await uniqueValue(baseSlug, 'slug')
     const pm2Name = await uniqueValue(slugify(body.pm2Name || inferredName), 'pm2_name')
     const folderName = body.folderName ? slugify(body.folderName) : slug
-    const rootPath = body.rootPath || path.join(productionBase, folderName)
+    const rootPath = body.rootPath || path.join(environment === 'staging' ? stagingBase : productionBase, folderName)
     if (body.setupDraft === true) {
       if (!path.isAbsolute(rootPath) || path.resolve(rootPath) === path.parse(rootPath).root) return NextResponse.json({ error: 'Choose an absolute application directory, not a drive root' }, { status: 400 })
       const target = path.resolve(rootPath).toLowerCase()
@@ -140,18 +143,18 @@ export async function POST(request: Request) {
     if (!Number.isInteger(port) || port < 1 || port > 65535 || (createStaging && stagingPort > 65535)) return NextResponse.json({ error: 'Invalid application port' }, { status: 400 })
 
     const client = await db.connect()
-    const { production, staging } = await (async () => {
+    const { application, staging } = await (async () => {
       try {
         await client.query('begin')
         await client.query("select pg_advisory_xact_lock(hashtext('manager-project-registration'))")
         const conflicts = await client.query('select id from projects where port=any($1::int[]) limit 1', [[port, ...(createStaging ? [stagingPort] : [])]])
         if (conflicts.rows.length) throw new ApiError('An assigned port was just reserved by another application. Retry creation', 409)
-        // Create the production project
+        // Create the primary application in the chosen environment.
         const { rows } = await client.query(
           `insert into projects
             (name, slug, repo_url, default_branch, project_type, root_path, install_cmd, build_cmd, deploy_script, start_cmd, pm2_name, port, url, auto_deploy, github_connection_id, environment)
-           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'production')
-          returning id, name, slug, repo_url, default_branch, project_type, root_path, pm2_name, port, url, auto_deploy, github_connection_id, is_active, environment, created_at, updated_at`,
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+          returning id, name, slug, repo_url, default_branch, project_type, root_path, pm2_name, port, url, auto_deploy, github_connection_id, is_active, environment, production_id, created_at, updated_at`,
           [
             inferredName,
             slug,
@@ -168,10 +171,11 @@ export async function POST(request: Request) {
             body.url || null,
             false,
             githubConnectionId,
+            environment,
           ]
         )
 
-        const production = rows[0]
+        const application = rows[0]
 
         // Auto-create staging counterpart
         const { rows: stagingRows } = !createStaging ? { rows: [] } : await client.query(
@@ -194,21 +198,21 @@ export async function POST(request: Request) {
             stagingPort,
             false,
             githubConnectionId,
-            production.id,
+            application.id,
           ]
         )
 
         const staging = stagingRows[0]
-        await client.query('update projects set component_role=$1 where id=$2 or production_id=$2', [role, production.id])
+        await client.query('update projects set component_role=$1 where id=$2 or production_id=$2', [role, application.id])
         // Every application belongs to a project: join the chosen one, or start its own.
-        if (body.relatedProjectId) await linkApplicationProjects(client, production.id, body.relatedProjectId, role)
-        else await assignOwnProject(client, production.id, { name: typeof body.projectName === 'string' && body.projectName.trim() ? body.projectName.trim().slice(0, 80) : undefined })
+        if (body.relatedProjectId) await linkApplicationProjects(client, application.id, body.relatedProjectId, role)
+        else await assignOwnProject(client, application.id, { name: typeof body.projectName === 'string' && body.projectName.trim() ? body.projectName.trim().slice(0, 80) : undefined })
         if (body.setupDraft === true) {
-          await client.query('insert into project_setup (project_id) values ($1)', [production.id])
+          await client.query('insert into project_setup (project_id) values ($1)', [application.id])
           if (staging) await client.query('insert into project_setup (project_id) values ($1)', [staging.id])
         }
         await client.query('commit')
-        return { production, staging }
+        return { application, staging }
       } catch (error) {
         await client.query('rollback')
         throw error
@@ -217,26 +221,26 @@ export async function POST(request: Request) {
     if (body.autoDeploy === true) {
       try {
         const { ensureGitWebhook } = await import('@/lib/git-webhooks')
-        await ensureGitWebhook(production.id)
+        await ensureGitWebhook(application.id)
         await query(
           'update projects set auto_deploy = true, updated_at = now() where id = any($1::uuid[])',
-          [[production.id, ...(staging ? [staging.id] : [])]]
+          [[application.id, ...(staging ? [staging.id] : [])]]
         )
-        production.auto_deploy = true
+        application.auto_deploy = true
         if (staging) staging.auto_deploy = true
       } catch (error) {
-        await query('delete from projects where id = $1 or production_id = $1', [production.id])
+        await query('delete from projects where id = $1 or production_id = $1', [application.id])
         throw error
       }
     }
 
-    // Update Caddy for production if URL/Port available
-    if (production.url && production.port) {
+    // Configure access for either environment when an address was supplied.
+    if (application.url && application.port) {
       const { updateCaddy } = await import('@/lib/caddy')
-      await updateCaddy(production.url, production.port)
+      await updateCaddy(application.url, application.port)
     }
 
-    return NextResponse.json({ ...production, staging }, { status: 201 })
+    return NextResponse.json({ ...application, staging }, { status: 201 })
   } catch (error) {
     return jsonError(error)
   }

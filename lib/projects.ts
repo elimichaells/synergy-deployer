@@ -54,7 +54,7 @@ export async function listProjects() {
             select d.hostname as host, case when d.is_primary then 0 else 1 end as rank from project_domains d join projects dp on dp.id=d.project_id where dp.application_group_id=g.id
             union all
             select lower(regexp_replace(regexp_replace(dp.url, '^https?://', ''), '[/:].*$', '')), 2 from projects dp
-             where dp.application_group_id=g.id and dp.environment='production' and coalesce(dp.url, '') <> ''
+             where dp.application_group_id=g.id and dp.production_id is null and coalesce(dp.url, '') <> ''
           ) hosts order by host, rank) unique_hosts) as domains
      from application_groups g
      left join projects p on p.application_group_id=g.id

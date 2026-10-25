@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
+import os from 'node:os'
 import { getSessionFromCookie } from '@/lib/auth'
 import { requireRole } from '@/lib/rbac'
 import { ApiError, jsonError } from '@/lib/api'
@@ -16,7 +17,7 @@ export async function GET(_request: Request, context: Context) {
     const user = await getSessionFromCookie()
     requireRole(user, ['admin','operator','viewer'])
     const parts = (await context.params).path || []
-    if (!parts.length) return NextResponse.json({ servers: await listServers(), role: user!.role })
+    if (!parts.length) return NextResponse.json({ servers: await listServers(), role: user!.role, userId: user!.id, local: { hostname: os.hostname(), platform: process.platform } }, { headers: { 'Cache-Control': 'no-store' } })
     if (parts.length === 1 && parts[0] === 'agent') {
       requireRole(user, ['admin'])
       const source = await readFile(path.join(process.cwd(), 'scripts/manager-agent.cjs'), 'utf8')

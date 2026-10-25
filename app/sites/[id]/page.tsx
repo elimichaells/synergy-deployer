@@ -786,7 +786,7 @@ export default function SitePage() {
             <Switch checked={project.auto_deploy} disabled={savingAutoDeploy} onCheckedChange={() => void handleToggleAutoDeploy()} aria-label="Auto-deploy" />
           </label>}
           {primaryUrl && <Button asChild variant="outline" size="sm"><a href={primaryUrl} target="_blank" rel="noreferrer">Visit<ArrowUpRight className="ml-1.5 h-3.5 w-3.5" /></a></Button>}
-          {project.environment === 'staging' && (
+          {project.environment === 'staging' && project.production_id && (
             <Button variant="outline" size="sm" onClick={() => setPromoteOpen(true)} disabled={!canWrite || sameAsProduction} title={sameAsProduction ? 'Production already runs this commit' : 'Review what would be released, then promote it'}>
               <ArrowUpRight className="mr-1.5 h-3.5 w-3.5" />Promote to production
             </Button>
@@ -1087,14 +1087,14 @@ export default function SitePage() {
             <SecurityGateSetting projectId={project.id} appName={project.name} gate={securityGate.gate} canTurnOff={securityGate.canTurnOff} canWrite={canWrite} onChanged={securityGate.setGate} />
           </Section>
 
-          <Section title="Git & automatic deploys" description={project.environment === 'staging' ? `Pushes to ${project.default_branch} deploy this staging copy. The Git webhook is managed on the production application.` : 'Connect a Git webhook so pushes trigger deployments.'}>
+          <Section title="Git & automatic deploys" description={project.production_id ? `Pushes to ${project.default_branch} deploy this staging copy. The Git webhook is managed on the production application.` : 'Connect a Git webhook so pushes trigger deployments.'}>
             <div className="space-y-4">
               <label className="flex items-center justify-between gap-4 rounded-lg border border-border px-4 py-3 text-sm">
                 <span><span className="block font-medium">Deploy on every push</span><span className="block text-xs text-muted-foreground">To <span className="font-mono">{project.default_branch}</span></span></span>
                 <Switch checked={project.auto_deploy} disabled={!canWrite || savingAutoDeploy || project.setup_required} onCheckedChange={() => void handleToggleAutoDeploy()} aria-label="Deploy on every push" />
               </label>
-              {project.environment === 'staging' ? (
-                project.production_id && <Button asChild variant="outline" size="sm"><Link href={`/sites/${project.production_id}?tab=settings`}>Open production webhook settings<ArrowUpRight className="ml-1.5 h-3.5 w-3.5" /></Link></Button>
+              {project.production_id ? (
+                <Button asChild variant="outline" size="sm"><Link href={`/sites/${project.production_id}?tab=settings`}>Open production webhook settings<ArrowUpRight className="ml-1.5 h-3.5 w-3.5" /></Link></Button>
               ) : !webhookHasSecret ? (
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed border-border px-4 py-4 text-sm">
                   <span className="text-muted-foreground">No webhook yet. Generate a secret to connect your Git server.</span>
@@ -1166,7 +1166,7 @@ export default function SitePage() {
           )}
         </TabsContent>
       </AppShell>
-      {project.environment === 'staging' && <PromoteSheet stagingId={project.id} open={promoteOpen} onOpenChange={setPromoteOpen} onStarted={deploymentId => { setPromoteOpen(false); router.push(`/deployments/${deploymentId}`) }} />}
+      {project.environment === 'staging' && project.production_id && <PromoteSheet stagingId={project.id} open={promoteOpen} onOpenChange={setPromoteOpen} onStarted={deploymentId => { setPromoteOpen(false); router.push(`/deployments/${deploymentId}`) }} />}
     </Tabs>
   )
 }

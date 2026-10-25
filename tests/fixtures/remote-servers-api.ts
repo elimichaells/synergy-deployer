@@ -19,7 +19,7 @@ export async function remoteServersFixture(request: Request) {
   if (!pathname.startsWith('/api/servers')) return null
   const parts = pathname.slice('/api/servers'.length).split('/').filter(Boolean)
   if (request.method === 'GET') {
-    if (!parts.length) return NextResponse.json({ servers: state.servers, role: 'admin' })
+    if (!parts.length) return NextResponse.json({ servers: state.servers, role: 'admin', userId: 'fixture-user', local: { hostname: 'synergy-manager', platform: 'win32' } })
     const apps = state.apps.filter(a => a.server_id === parts[0])
     return NextResponse.json({ server: state.servers.find(s => s.id === parts[0]), apps, jobs: state.jobs.filter(job => apps.some(app => app.id === job.app_id)), role: 'admin' })
   }

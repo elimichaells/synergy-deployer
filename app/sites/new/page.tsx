@@ -11,11 +11,12 @@ import { ChoiceCard, roleLabels } from '@/components/app/section'
 import { RolePicker } from '@/components/app/stack-panel'
 import { FrameworkLogo } from '@/components/synergy/framework-logo'
 import { repositoryUrl, repositoryPath, type GitProvider } from '@/lib/git-provider-policy'
+import { isApplicationRoot, type EnvironmentMode } from '@/lib/application-environments'
 import { cn } from '@/lib/utils'
 
 interface Repo { id: number; name: string; fullName: string; avatarUrl: string; private: boolean; defaultBranch: string; cloneUrl: string; registered: boolean }
 interface Connection { id: string; name: string; account_login: string; provider: GitProvider; base_url: string }
-interface ProjectOption { id: string; name: string; apps: { id: string; name: string; project_type: string; environment: string; component_role: string }[] }
+interface ProjectOption { id: string; name: string; apps: { id: string; name: string; project_type: string; environment: string; production_id: string | null; component_role: string }[] }
 
 const GitHubIcon = GitBranch
 
@@ -33,11 +34,11 @@ export default function NewSitePage() {
   const [configuring, setConfiguring] = useState<{ fullName: string; avatarUrl?: string; private?: boolean } | null>(null)
   const [projects, setProjects] = useState<ProjectOption[]>([])
   const [showAdvanced, setShowAdvanced] = useState(false)
-  const [form, setForm] = useState({ name: '', repoUrl: '', branch: 'main', rootPath: '', staging: 'no', stagingBranch: 'staging', stack: 'new', projectId: '', projectName: '', componentRole: 'application' })
+  const [form, setForm] = useState({ name: '', repoUrl: '', branch: 'main', rootPath: '', environmentMode: 'production' as EnvironmentMode, stagingBranch: 'staging', stack: 'new', projectId: '', projectName: '', componentRole: 'application' })
 
   // Picking a project suggests the role this app most likely plays in it.
   const chooseProject = (projectId: string, list = projects, role?: string) => {
-    const roles = (list.find(item => item.id === projectId)?.apps || []).filter(app => app.environment === 'production').map(app => app.component_role)
+    const roles = (list.find(item => item.id === projectId)?.apps || []).filter(isApplicationRoot).map(app => app.component_role)
     const suggested = role || (roles.includes('frontend') && !roles.includes('backend') ? 'backend' : roles.includes('backend') && !roles.includes('frontend') ? 'frontend' : 'service')
     setForm(current => ({ ...current, stack: 'join', projectId, componentRole: suggested }))
   }
@@ -46,7 +47,7 @@ export default function NewSitePage() {
     const abort = new AbortController()
     void Promise.all([fetch('/api/auth/me', { signal: abort.signal }), fetch('/api/git/connections', { signal: abort.signal }), fetch('/api/groups', { signal: abort.signal })]).then(async ([me, res, groups]) => {
       if (!me.ok || !res.ok || !groups.ok) throw new Error('Could not load account connections and projects')
-      const loaded: ProjectOption[] = ((await groups.json()).projects || []).filter((item: ProjectOption) => item.apps.some(app => app.environment === 'production'))
+      const loaded: ProjectOption[] = ((await groups.json()).projects || []).filter((item: ProjectOption) => item.apps.some(isApplicationRoot))
       setProjects(loaded)
       // Arriving from a project's "Import from Git" preselects that project.
       const params = new URLSearchParams(window.location.search)
@@ -94,11 +95,11 @@ export default function NewSitePage() {
   const create = async (event: React.FormEvent) => {
     event.preventDefault(); setCreating(true); setError('')
     try {
-      // Joining a project links the new app to any production app already in it.
-      const anchor = form.stack === 'join' ? chosenProject?.apps.find(app => app.environment === 'production') : undefined
+      // Joining a project links the new app to any root app already in it.
+      const anchor = form.stack === 'join' ? chosenProject?.apps.find(isApplicationRoot) : undefined
       const response = await fetch('/api/sites', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         name: form.name.trim(), repoUrl: form.repoUrl.trim(), defaultBranch: form.branch.trim(), rootPath: form.rootPath.trim() || null, projectType: 'next',
-        githubConnectionId: connectionId || null, createStaging: form.staging === 'yes', stagingBranch: form.stagingBranch.trim(),
+        githubConnectionId: connectionId || null, environmentMode: form.environmentMode, stagingBranch: form.stagingBranch.trim(),
         relatedProjectId: anchor?.id || null, componentRole: anchor ? form.componentRole : 'application', projectName: anchor ? undefined : form.projectName.trim() || undefined,
         setupDraft: true, autoDeploy: false,
       }) })
@@ -127,16 +128,17 @@ export default function NewSitePage() {
               {error && <div role="alert" className="notice-error">{error}</div>}
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="field-label">Application name<input required maxLength={100} className="control-input" value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} /></label>
-                <label className="field-label">Production branch<div className="relative"><GitBranch className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><input required className="control-input pl-9 font-mono" value={form.branch} onChange={event => setForm({ ...form, branch: event.target.value })} /></div></label>
+                <label className="field-label">{form.environmentMode === 'staging' ? 'Staging branch' : 'Production branch'}<div className="relative"><GitBranch className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><input required className="control-input pl-9 font-mono" value={form.branch} onChange={event => setForm({ ...form, branch: event.target.value })} /></div></label>
               </div>
 
               <fieldset className="space-y-3">
                 <legend className="mb-3 text-sm font-medium">Environments</legend>
-                <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Environments">
-                  <ChoiceCard selected={form.staging === 'no'} onSelect={() => setForm({ ...form, staging: 'no' })} title="Production" description={`Pushes to ${form.branch || 'main'} go live.`} />
-                  <ChoiceCard selected={form.staging === 'yes'} onSelect={() => setForm({ ...form, staging: 'yes' })} title="Production + Staging" description="Test on a separate copy, then promote to production." />
+                <div className="grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Environments">
+                  <ChoiceCard selected={form.environmentMode === 'production'} onSelect={() => setForm({ ...form, environmentMode: 'production' })} title="Production only" description="Deploy this app to production." />
+                  <ChoiceCard selected={form.environmentMode === 'staging'} onSelect={() => setForm({ ...form, environmentMode: 'staging' })} title="Staging only" description="Deploy a test environment without creating a production app." />
+                  <ChoiceCard selected={form.environmentMode === 'production-staging'} onSelect={() => setForm({ ...form, environmentMode: 'production-staging' })} title="Production + Staging" description="Test on a separate copy, then promote to production." />
                 </div>
-                {form.staging === 'yes' && <label className="field-label max-w-xs">Staging branch<input required className="control-input font-mono" value={form.stagingBranch} onChange={event => setForm({ ...form, stagingBranch: event.target.value })} /></label>}
+                {form.environmentMode === 'production-staging' && <label className="field-label max-w-xs">Staging branch<input required className="control-input font-mono" value={form.stagingBranch} onChange={event => setForm({ ...form, stagingBranch: event.target.value })} /></label>}
               </fieldset>
 
               <fieldset className="space-y-3">
@@ -150,12 +152,12 @@ export default function NewSitePage() {
                 {form.stack === 'join' && (
                   <div className="space-y-4 rounded-lg border border-border p-4">
                     <label className="field-label">Project<select className="control-input" value={form.projectId} onChange={event => chooseProject(event.target.value)}>
-                      {projects.map(item => <option key={item.id} value={item.id}>{item.name} · {item.apps.filter(app => app.environment === 'production').map(app => app.name).join(', ')}</option>)}
+                      {projects.map(item => <option key={item.id} value={item.id}>{item.name} · {item.apps.filter(isApplicationRoot).map(app => app.name).join(', ')}</option>)}
                     </select></label>
                     <div className="space-y-2"><p className="text-sm font-medium">This app is the…</p><RolePicker value={form.componentRole} onChange={componentRole => setForm({ ...form, componentRole })} /></div>
                     {chosenProject && (
                       <div className="flex flex-wrap items-center gap-2 rounded-md bg-white/[0.03] px-3 py-2.5 text-xs text-muted-foreground">
-                        {chosenProject.apps.filter(app => app.environment === 'production').map(app => <span key={app.id} className="flex items-center gap-1.5 text-foreground"><FrameworkLogo type={app.project_type} className="h-3.5 w-3.5" />{app.name}<span className="text-muted-foreground">({roleLabels[app.component_role]})</span></span>)}
+                        {chosenProject.apps.filter(isApplicationRoot).map(app => <span key={app.id} className="flex items-center gap-1.5 text-foreground"><FrameworkLogo type={app.project_type} className="h-3.5 w-3.5" />{app.name}<span className="text-muted-foreground">({roleLabels[app.component_role]})</span></span>)}
                         <Plus className="h-3.5 w-3.5" />
                         <span className="flex items-center gap-1.5 text-foreground">{form.name || 'This app'}<span className="text-muted-foreground">({roleLabels[form.componentRole]})</span></span>
                         <span className="ml-auto flex items-center gap-3"><span className="flex items-center gap-1"><Database className="h-3 w-3" />can share databases</span><span className="flex items-center gap-1"><Globe2 className="h-3 w-3" />can share a domain</span></span>

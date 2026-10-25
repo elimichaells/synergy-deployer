@@ -2,7 +2,7 @@
 
 ## Main Flow
 
-1. Open **Applications > New application**. Choose the GitHub account and repository, name the application, and select a branch. Staging is optional. Ports remain automatically allocated. Auto deployment starts disabled.
+1. Choose **Manager host**, then **Projects > New**. Choose the Git connection and repository, name the application, and select **Production only**, **Staging only**, or **Production + Staging**. Choose the branch for each environment. Ports remain automatically allocated. Auto deployment starts disabled.
 2. **Repository:** prepare the checkout. An existing checkout is inspected without pulling or resetting it. Non-empty, non-Git directories are refused rather than cleared.
 3. **Runtime & build:** confirm the detected framework, choose installed Node/PHP/Go versions, and review build/start commands. Optional deployment commands remain one multiline script. Open the dependency manager to install missing tools or side-by-side versions explicitly.
 4. **Database:** provision an isolated project database or attach an existing database using its application username/password. Select the application-primary database deliberately. The existing migration wizard, password management and environment-sync review are available here. Angular must not receive database credentials.
@@ -11,6 +11,10 @@
 7. **Review & deploy:** validate configuration, resolve blockers, then deploy. Warnings identify checks that require a running application, such as public HTTP/TLS reachability. Auto deploy can be enabled beside the Deploy button after setup is complete.
 
 The **Setup** tab resumes the application's saved step. Existing applications are not made into incomplete drafts merely by opening the workspace. New registration and optional staging/setup records are created in one database transaction.
+
+**Staging only** creates one independent staging application, using `STAGING_PATH` unless an install directory is supplied. It has its own port, setup, deployment history, database configuration, domain and webhook settings. It can start a project or join an existing one. A project containing only staging apps opens directly in Staging; app counts and project controls include these apps. Promotion is available only for a staging app linked to a production application. Adding or linking a production counterpart later is not part of this creation flow.
+
+API clients can set `environmentMode` to `production`, `staging`, or `production-staging`. For standalone staging, `defaultBranch` is the staging branch; `stagingBranch` is used only for the second app in a pair. Existing clients using `createStaging: false` or `true` retain production-only or paired creation respectively. Contradictory selections are rejected.
 
 ## Workspace Structure
 

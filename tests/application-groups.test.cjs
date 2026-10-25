@@ -26,13 +26,13 @@ test('linking different technologies groups both environment families without al
   assert.ok(writes.every(row => !/database|port|runtime|auto_deploy|repo_url/.test(row.sql)));
 });
 
-test('group linking rejects self-links, invalid roles, staging roots and implicit group merges', async () => {
+test('group linking rejects self-links, invalid roles, paired staging roots and implicit group merges', async () => {
   const api = groupApi();
   await assert.rejects(api.linkApplicationProjects({}, id1, id1, 'frontend'), error => error.status === 400);
   assert.throws(() => api.componentRole('arbitrary'), error => error.status === 400);
   for (const staging of [true, false]) {
     const client = { query: async sql => sql.includes('count(*)') ? { rows: [{ count: 1 }] } : { rows: [
-      { id: id1, environment: staging ? 'staging' : 'production', application_group_id: 'one' },
+      { id: id1, environment: staging ? 'staging' : 'production', production_id: staging ? id2 : null, application_group_id: 'one' },
       { id: id2, environment: 'production', application_group_id: 'two' },
     ] } };
     await assert.rejects(api.linkApplicationProjects(client, id1, id2, 'frontend'), error => error.status === (staging ? 400 : 409));
@@ -59,7 +59,11 @@ async function createProject(body, role = 'admin') {
   const query = async (sql, values) => { calls.push({ sql, values }); return { rows: [] }; };
   const client = { query: async (sql, values) => {
     calls.push({ sql, values });
-    if (sql.includes('insert into projects')) return { rows: [{ id: sql.includes("'production'") ? id1 : id2, name: values[0], port: 3217, url: null }] };
+    if (sql.includes('insert into projects')) {
+      const paired = sql.includes("'staging'");
+      return { rows: [{ id: paired ? id2 : id1, name: values[0], port: values[11], url: null,
+        environment: paired ? 'staging' : values[15], production_id: paired ? values[14] : null, default_branch: values[3], root_path: values[5], auto_deploy: false }] };
+    }
     return { rows: [] };
   }, release() {} };
   const api = load('app/api/sites/route.ts', {
@@ -67,9 +71,10 @@ async function createProject(body, role = 'admin') {
     '@/lib/git-provider-policy': require('../lib/git-provider-policy.ts'),
     '@/lib/db': { query, db: { connect: async () => client } }, '@/lib/auth': { getSessionFromCookie: async () => ({ id: id1, role }) },
     '@/lib/rbac': { requireRole: (_user, allowed) => { if (!allowed.includes(role)) throw new ApiError('Forbidden', 403); } },
-    '@/lib/api': { jsonError: error => Response.json({ error: error.message }, { status: error.status || 500 }) },
+    '@/lib/api': { ApiError, jsonError: error => Response.json({ error: error.message }, { status: error.status || 500 }) },
     '@/lib/settings': { getSetting: async key => path.join(os.tmpdir(), key) },
     '@/lib/ports': { allocateProjectPorts: async (...args) => { portOptions = args; return { port: 3217, stagingPort: 4217 }; } },
+    '@/lib/application-environments': require('../lib/application-environments.ts'),
     '@/lib/project-setup': { ensureProjectSetupSchema: async () => {} },
     '@/lib/project-pins': { ensureProjectPinsSchema: async () => {} },
     '@/lib/project-setup-policy': { validateSetupRepository() {} }, '@/lib/project-types': { PROJECT_TYPES: { next: {} } },
@@ -117,11 +122,72 @@ test('related application endpoints prohibit viewer mutations before querying th
   const api = load('app/api/sites/[id]/related/route.ts', {
     '@/lib/auth': { getSessionFromCookie: async () => ({ role: 'viewer' }) },
     '@/lib/rbac': { requireRole: (_user, allowed) => { if (!allowed.includes('viewer')) throw new ApiError('Forbidden', 403); } },
-    '@/lib/api': { jsonError: error => Response.json({ error: error.message }, { status: error.status || 500 }) },
+    '@/lib/api': { ApiError, jsonError: error => Response.json({ error: error.message }, { status: error.status || 500 }) },
     '@/lib/application-groups': { updateApplicationGroup: async () => assert.fail('Mutation should not run') },
   });
   for (const method of ['POST', 'DELETE']) {
     const result = await api[method](new Request('http://localhost', { method, ...(method === 'POST' ? { body: '{}' } : {}) }), { params: Promise.resolve({ id: id1 }) });
     assert.equal(result.status, 403);
   }
+});
+
+
+test('staging-only creation makes one independent, deployable staging app in the staging directory', async () => {
+  const result = await createProject({ environmentMode: 'staging', defaultBranch: 'develop' });
+  assert.equal(result.response.status, 201);
+  const app = await result.response.json();
+  assert.equal(app.environment, 'staging');
+  assert.equal(app.production_id, null);
+  assert.equal(app.default_branch, 'develop');
+  assert.equal(app.root_path, path.join(os.tmpdir(), 'STAGING_PATH', 'fixture'));
+  assert.equal(app.auto_deploy, false);
+  assert.equal(app.staging, undefined);
+  assert.equal(result.portOptions[2], false, 'reserve only one port');
+  assert.equal(result.calls.filter(call => call.sql?.includes('insert into projects')).length, 1);
+  assert.equal(result.calls.filter(call => call.sql?.includes('insert into project_setup')).length, 1);
+  assert.equal(result.calls.find(call => call.own).own[0], app.id);
+  assert.deepEqual(result.calls.find(call => call.sql?.startsWith('select id from projects where port=any')).values, [[3217]]);
+});
+
+test('explicit modes retain production-only and paired creation', async () => {
+  for (const [environmentMode, count] of [['production', 1], ['production-staging', 2]]) {
+    const result = await createProject({ environmentMode });
+    assert.equal(result.response.status, 201);
+    const app = await result.response.json();
+    assert.equal(app.environment, 'production');
+    assert.equal(app.root_path, path.join(os.tmpdir(), 'PRODUCTION_PATH', 'fixture'));
+    assert.equal(result.calls.filter(call => call.sql?.includes('insert into projects')).length, count);
+    if (count === 2) assert.equal(app.staging.production_id, app.id);
+  }
+});
+
+test('invalid or contradictory environment choices do not create any applications', async () => {
+  for (const body of [{ environmentMode: 'preview' }, { environmentMode: 'staging', createStaging: true }, { environmentMode: 'production-staging', createStaging: false }]) {
+    const result = await createProject(body);
+    assert.equal(result.response.status, 400);
+    assert.ok(!result.calls.some(call => call.sql?.includes('insert into projects')));
+  }
+});
+
+test('standalone staging can join a project, but cannot implicitly move siblings with it', async () => {
+  const writes = [];
+  let others = 0;
+  const client = { query: async (sql, values) => {
+    if (sql.startsWith('select id,name')) return { rows: [
+      { id: id1, environment: 'staging', production_id: null, application_group_id: 'solo' },
+      { id: id2, environment: 'staging', production_id: null, application_group_id: groupId },
+    ] };
+    if (sql.includes('count(*)')) {
+      assert.ok(sql.includes('production_id is null'), 'count standalone staging siblings too');
+      return { rows: [{ count: others }] };
+    }
+    writes.push({ sql, values }); return { rows: [] };
+  } };
+  assert.equal(await groupApi().linkApplicationProjects(client, id1, id2, 'backend'), groupId);
+  assert.equal(writes.filter(row => row.sql.startsWith('update projects')).length, 2);
+  others = 1;
+  await assert.rejects(groupApi().linkApplicationProjects(client, id1, id2, 'backend'), error => error.status === 409);
+  const result = await createProject({ environmentMode: 'staging', relatedProjectId: id2, componentRole: 'backend' });
+  assert.equal(result.response.status, 201);
+  assert.deepEqual(result.calls.find(call => call.link).link, [id1, id2, 'backend']);
 });
