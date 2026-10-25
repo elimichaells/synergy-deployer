@@ -5,6 +5,17 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hoste
 }
 if (Test-Path -LiteralPath (Join-Path $env:ProgramData 'ManagerAgent')) { throw 'The disposable agent directory must not already exist.' }
 
+# Hosted images include web servers. Only this disposable lab may stop them;
+# the production installer must continue refusing an occupied web port.
+foreach ($name in @('W3SVC', 'WAS', 'WMSVC', 'Apache', 'nginx')) {
+  if (Get-Service $name -ErrorAction SilentlyContinue) { Stop-Service $name -Force -ErrorAction Stop }
+}
+$listeners = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -in @(80,443,2029) })
+if ($listeners.Count) {
+  $listeners | Select-Object LocalAddress,LocalPort,OwningProcess | Format-Table
+  throw 'The hosted runner still has a web-port listener; identify it before testing.'
+}
+
 $password = 'Aa1!' + [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(24))
 Write-Output "::add-mask::$password"
 New-LocalUser -Name managersmoke -Password (ConvertTo-SecureString $password -AsPlainText -Force) -PasswordNeverExpires | Out-Null

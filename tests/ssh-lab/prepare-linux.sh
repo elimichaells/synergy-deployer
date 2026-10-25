@@ -5,6 +5,9 @@ if [[ "${GITHUB_ACTIONS:-}" != true || "${RUNNER_ENVIRONMENT:-}" != github-hoste
   exit 1
 fi
 test ! -e /var/lib/manager-agent
+for service in apache2 nginx; do
+  if systemctl is-active --quiet "$service"; then sudo systemctl stop "$service"; fi
+done
 sudo apt-get update -qq
 sudo apt-get install -y openssh-server postgresql
 password="Aa1!$(openssl rand -hex 24)"
