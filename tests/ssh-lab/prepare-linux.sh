@@ -9,7 +9,10 @@ for service in apache2 nginx; do
   if systemctl is-active --quiet "$service"; then sudo systemctl stop "$service"; fi
 done
 sudo apt-get update -qq
-sudo apt-get install -y openssh-server postgresql
+# Upgrade bootstrap OS prerequisites before starting the lab's control database.
+# In production Manager lives on another host; in this loopback lab an apt
+# library update's needrestart hook could otherwise restart that database.
+sudo apt-get install -y openssh-server postgresql ca-certificates curl git tar xz-utils
 password="Aa1!$(openssl rand -hex 24)"
 echo "::add-mask::$password"
 sudo useradd --create-home --shell /bin/bash managersmoke

@@ -98,9 +98,11 @@ async function main() {
 
     connection = await ssh.connectSsh(target, process.env.SSH_LAB_PASSWORD, observed.fingerprint);
     const left = await ssh.sshExec(connection, process.platform === 'win32'
-      ? ssh.powershell("@(Get-ChildItem -LiteralPath $env:USERPROFILE -Directory -Filter 'manager-setup-*').Count")
-      : "find /tmp -maxdepth 1 -type d -name 'manager-setup-*' -user managersmoke | wc -l");
-    assert.equal(Number(left.trim()), 0, 'SSH staging directory leaked');
+      ? ssh.powershell("$ProgressPreference='SilentlyContinue'; Write-Output ('MANAGER_STAGE_COUNT=' + @(Get-ChildItem -LiteralPath $env:USERPROFILE -Directory -Filter 'manager-setup-*').Count)")
+      : "printf 'MANAGER_STAGE_COUNT=%s\\n' \"$(find /tmp -maxdepth 1 -type d -name 'manager-setup-*' -user managersmoke | wc -l)\"");
+    const count = left.match(/^MANAGER_STAGE_COUNT=(\d+)\r?$/m);
+    assert.ok(count, 'SSH staging inspection did not return a count');
+    assert.equal(Number(count[1]), 0, 'SSH staging directory leaked');
     connection.end(); connection = undefined;
     const agentRoot = process.platform === 'win32' ? path.join(process.env.ProgramData, 'ManagerAgent') : '/var/lib/manager-agent';
     const configuration = process.platform === 'win32' ? fs.readFileSync(path.join(agentRoot, 'agent.json'), 'utf8')
