@@ -40,21 +40,26 @@ function ServerChooser() {
       <label className="flex w-full items-center gap-2 rounded-md border border-border bg-card px-3 sm:w-80"><Search className="h-4 w-4 text-muted-foreground" /><span className="sr-only">Find a server</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Name, location or address…" className="h-9 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground" /></label>
     </div>
     {error && <div role="alert" className="notice-error flex flex-wrap items-center justify-between gap-3"><span>{error}. Server statuses may be out of date.</span><Button variant="outline" size="sm" onClick={refresh}>Retry</Button></div>}
-    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-      {showLocal && <Link href="/overview" className="syn-tile flex min-h-60 flex-col p-5">
-        <div className="flex items-start justify-between gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-white/[0.03]"><Server className="h-5 w-5" /></span><span className="rounded-full border border-border px-2 py-1 text-[11px] text-muted-foreground">This server</span></div>
-        <h3 className="mt-4 text-base font-semibold">Manager host</h3><p className="mt-1 truncate text-xs text-muted-foreground">{data?.local?.hostname || 'The server running Synergy'}{data?.local?.platform && ` · ${data.local.platform === 'win32' ? 'Windows' : 'Linux'}`}</p>
-        <p className="mt-4 text-sm leading-6 text-muted-foreground">Your existing applications, deployments and local infrastructure.</p>
-        <span className="mt-auto flex items-center justify-between pt-5 text-sm font-medium">Open overview<ArrowRight className="h-4 w-4" /></span>
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      {showLocal && <Link href="/overview" className="syn-tile flex min-w-0 flex-col gap-3 p-4">
+        <div className="flex items-center gap-2.5">
+          <Server className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <h3 className="min-w-0 flex-1 truncate text-sm font-semibold">Manager host</h3>
+          <span className="shrink-0 text-[11px] text-muted-foreground">This server</span>
+        </div>
+        <p className="truncate text-xs text-muted-foreground">{data?.local?.hostname || 'The server running Synergy'}{data?.local?.platform && ` · ${data.local.platform === 'win32' ? 'Windows' : 'Linux'}`}</p>
+        <span className="mt-auto flex items-center justify-between border-t border-border pt-2.5 text-xs font-medium">Open overview<ArrowRight className="h-3.5 w-3.5" /></span>
       </Link>}
-      {servers.map(server => <Link key={server.id} href={serverOverview(server.id)} className="syn-tile flex min-h-60 min-w-0 flex-col p-5">
-        <div className="flex items-start justify-between gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-white/[0.03]"><Server className="h-5 w-5" /></span><span className="inline-flex items-center gap-1.5 rounded-full border border-border px-2 py-1 text-[11px]"><span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${error ? 'bg-zinc-500' : serverStatusColor[server.status]}`} />{error ? 'Status unavailable' : serverStatusLabel[server.status]}</span></div>
-        <h3 className="mt-4 truncate text-base font-semibold">{server.name}</h3><p className="mt-1 truncate text-xs text-muted-foreground">{server.platform === 'win32' ? 'Windows' : 'Linux'}{server.metrics?.hostname && ` · ${server.metrics.hostname}`}</p>
-        <p className="mt-4 flex items-center gap-1.5 truncate text-xs text-muted-foreground"><MapPin className="h-3.5 w-3.5 shrink-0" />{server.location || 'Location not set'}</p>
-        <p className="mt-2 text-sm text-muted-foreground">{server.status === 'pending' ? 'Connect with SSH to finish setup.' : `${server.app_count} application${server.app_count === 1 ? '' : 's'}${server.status === 'offline' ? ' · last reported state' : ''}`}</p>
-        <span className="mt-auto flex items-center justify-between pt-5 text-sm font-medium">{server.status === 'pending' ? 'Finish setup' : server.status === 'revoked' ? 'View details' : 'Open overview'}<ArrowRight className="h-4 w-4" /></span>
+      {servers.map(server => <Link key={server.id} href={serverOverview(server.id)} className="syn-tile flex min-w-0 flex-col gap-3 p-4">
+        <div className="flex items-center gap-2.5">
+          <Server className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <h3 className="min-w-0 flex-1 truncate text-sm font-semibold" title={server.name}>{server.name}</h3>
+          <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px]"><span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${error ? 'bg-zinc-500' : serverStatusColor[server.status]}`} />{error ? 'Unknown' : serverStatusLabel[server.status]}</span>
+        </div>
+        <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"><span className="shrink-0">{server.platform === 'win32' ? 'Windows' : 'Linux'}</span><span aria-hidden="true">·</span><MapPin className="h-3 w-3 shrink-0" /><span className="truncate" title={server.location || server.metrics?.hostname}>{server.location || server.metrics?.hostname || 'Location not set'}</span></p>
+        <span className="mt-auto flex items-center justify-between gap-2 border-t border-border pt-2.5 text-xs"><span className="text-muted-foreground">{server.app_count} app{server.app_count === 1 ? '' : 's'}</span><span className="inline-flex items-center gap-2 font-medium">{server.status === 'pending' ? 'Finish setup' : server.status === 'revoked' ? 'View details' : 'Open overview'}<ArrowRight className="h-3.5 w-3.5" /></span></span>
       </Link>)}
-      {!data && !error && <div role="status" className="flex min-h-60 items-center justify-center rounded-xl border border-border text-sm text-muted-foreground">Loading your servers…</div>}
+      {!data && !error && <div role="status" className="flex min-h-32 items-center justify-center rounded-xl border border-border text-sm text-muted-foreground">Loading your servers…</div>}
     </div>
     {query && !showLocal && !servers.length && data && <p role="status" className="rounded-xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">No servers match “{search}”. Try a name, location or address.</p>}
     {data?.servers.length === 0 && !query && <div className="rounded-xl border border-dashed border-border p-5"><h3 className="text-sm font-medium">Ready when you add more servers</h3><p className="mt-1 text-sm leading-6 text-muted-foreground">Start with the manager host, or {data.role === 'admin' ? 'add a Windows or Linux server using its SSH address and credentials' : 'ask an administrator to connect another server'}. Each server has its own applications and deployment history.</p></div>}

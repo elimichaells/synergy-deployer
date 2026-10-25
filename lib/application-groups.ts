@@ -21,7 +21,7 @@ export function projectIdentifier(value: unknown): asserts value is string {
   if (typeof value !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value)) throw new ApiError('Invalid related application', 400)
 }
 
-/** Puts a production application (and its staging copy) into a new project of its own. */
+/** Puts an application (and any paired staging copy) into a new project of its own. */
 export async function assignOwnProject(client: Pick<PoolClient, 'query'>, productionId: string, options: { name?: string; role?: string } = {}) {
   const created = await client.query(
     `insert into application_groups (name) select coalesce($2, name) from projects where id=$1 returning id`, [productionId, options.name || null])
@@ -63,16 +63,16 @@ export async function linkApplicationProjects(client: PoolClient, projectId: str
   projectIdentifier(projectId); projectIdentifier(relatedId); componentRole(role)
   if (relatedRole !== undefined) componentRole(relatedRole)
   if (projectId === relatedId) throw new ApiError('An application cannot be linked to itself', 400)
-  const { rows } = await client.query(`select id,name,environment,application_group_id,component_role from projects where id=any($1::uuid[]) order by id for update`, [[projectId, relatedId]])
+  const { rows } = await client.query(`select id,name,environment,production_id,application_group_id,component_role from projects where id=any($1::uuid[]) order by id for update`, [[projectId, relatedId]])
   if (rows.length !== 2) throw new ApiError('Related application not found', 404)
-  if (rows.some(row => row.environment !== 'production')) throw new ApiError('Link production applications; their staging versions follow automatically', 400)
+  if (rows.some(row => row.production_id)) throw new ApiError('Link the parent application; its paired staging version follows automatically', 400)
   const project = rows.find(row => row.id === projectId)!
   const related = rows.find(row => row.id === relatedId)!
   // Every application lives in a project. An application that is alone in its own
   // project may move into another one; a project with other apps is never merged implicitly.
   let previousGroup: string | null = null
   if (project.application_group_id && related.application_group_id && project.application_group_id !== related.application_group_id) {
-    const others = await client.query(`select count(*)::int as count from projects where application_group_id=$1 and environment='production' and id<>$2`, [project.application_group_id, projectId])
+    const others = await client.query(`select count(*)::int as count from projects where application_group_id=$1 and production_id is null and id<>$2`, [project.application_group_id, projectId])
     if (Number(others.rows[0]?.count) > 0) throw new ApiError('This application already shares a project with other apps. Remove it from that project before moving it', 409)
     previousGroup = project.application_group_id
   }
@@ -95,7 +95,7 @@ export async function relatedApplications(id: string) {
     (select status from deployments d where d.project_id=p.id order by started_at desc limit 1) as deployment_status
     from projects p where application_group_id=$1 order by p.component_role,p.name,p.environment`, [project.application_group_id])).rows : []
   const candidates = (await query(`select id,name,project_type,component_role from projects
-    where environment='production' and id<>$1 and ($2::uuid is null or application_group_id is null or application_group_id=$2)
+    where production_id is null and id<>$1 and ($2::uuid is null or application_group_id is null or application_group_id=$2)
     order by name`, [project.production_id, project.application_group_id])).rows
   return { ...project, members, candidates, ...await stackResources(project.application_group_id) }
 }

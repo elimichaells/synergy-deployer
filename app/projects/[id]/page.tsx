@@ -19,6 +19,7 @@ import { ProjectServiceSheet } from '@/components/app/project-service-sheet'
 import { AppToolLinks } from '@/components/app/app-tools'
 import { ProjectDeployments, ProjectEnvironment, ProjectLogsConsole } from '@/components/app/project-tools'
 import { relativeTime } from '@/lib/deployment-stages'
+import { isApplicationRoot, projectEnvironment } from '@/lib/application-environments'
 import { cn } from '@/lib/utils'
 
 interface App { id: string; name: string; component_role: string; environment: 'production' | 'staging'; project_type: string; port: number | null; url: string | null; is_active: boolean; production_id: string | null; setup_required: boolean; repo_url: string | null; default_branch: string; auto_deploy: boolean; deployment_status: DeployStatus | null; deployed_at: string | null }
@@ -40,7 +41,7 @@ export default function ProjectPage() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [tab, setTab] = useState<Tab>('overview')
-  const [environment, setEnvironment] = useState<'production' | 'staging'>('production')
+  const [preferredEnvironment, setEnvironment] = useState<'production' | 'staging'>('production')
   const [serviceOpen, setServiceOpen] = useState(false)
   const [linkOpen, setLinkOpen] = useState(false)
   const [candidates, setCandidates] = useState<Candidate[]>([])
@@ -70,13 +71,14 @@ export default function ProjectPage() {
     window.history.replaceState(null, '', `?tab=${value}`)
   }
 
+  const environment = projectEnvironment(project?.apps || [], preferredEnvironment)
   const apps = useMemo(() => (project?.apps || []).filter(app => app.environment === environment), [project, environment])
   const hasStaging = !!project?.apps.some(app => app.environment === 'staging')
   const appName = (appId: string) => project?.apps.find(app => app.id === appId)?.name || 'app'
   const owned = useMemo(() => (project?.databases || []).filter(row => row.options?.ownership !== 'shared' && apps.some(app => app.id === row.project_id)), [project, apps])
   const usersOf = (row: DatabaseRow) => (project?.databases || []).filter(other => other.options?.sharedFrom === row.id).map(other => other.project_id)
   const appsWithMainDatabase = useMemo(() => (project?.databases || []).filter(row => row.application_primary).map(row => row.project_id), [project])
-  const anchor = project?.apps.find(app => app.environment === 'production')
+  const anchor = project?.apps.find(isApplicationRoot)
   // Managed domains plus any address set by hand as an app's URL.
   const addresses = useMemo(() => {
     const managed = (project?.domains || []).filter(domain => apps.some(app => app.id === domain.project_id))
@@ -125,9 +127,9 @@ export default function ProjectPage() {
     const body = response?.ok ? await response.json() : { projects: [] }
     // Only apps that are alone in their project can move in; larger projects stay intact.
     setCandidates((body.projects as { id: string; name: string; apps: App[] }[]).filter(other => other.id !== id)
-      .map(other => ({ other, production: other.apps.filter(app => app.environment === 'production') }))
-      .filter(({ production }) => production.length === 1)
-      .map(({ other, production }) => ({ appId: production[0].id, name: production[0].name, project_type: production[0].project_type, projectName: other.name })))
+      .map(other => ({ other, roots: other.apps.filter(isApplicationRoot) }))
+      .filter(({ roots }) => roots.length === 1)
+      .map(({ other, roots }) => ({ appId: roots[0].id, name: roots[0].name, project_type: roots[0].project_type, projectName: other.name })))
     setLink({ appId: '', role: apps.some(app => app.component_role === 'backend') ? 'frontend' : 'backend' })
   }
 
@@ -163,7 +165,7 @@ export default function ProjectPage() {
   }
 
   const role = access.isAdmin ? 'admin' : access.canWrite ? 'operator' : 'viewer'
-  const productionApps = project.apps.filter(app => app.environment === 'production')
+  const rootApps = project.apps.filter(isApplicationRoot)
   const tabs = (
     <TabsList className="scrollbar-none h-auto min-h-0 w-full justify-start gap-0 overflow-x-auto border-0 bg-transparent p-0">
       {TABS.map(value => (
@@ -209,7 +211,7 @@ export default function ProjectPage() {
       <AppShell
         title={project.name}
         back={{ href: '/projects', label: 'Projects' }}
-        subtitle={`${productionApps.length} ${productionApps.length === 1 ? 'app' : 'apps'} · ${owned.length || 'no'} ${owned.length === 1 ? 'database' : 'databases'} · ${addresses.length || 'no'} ${addresses.length === 1 ? 'domain' : 'domains'}`}
+        subtitle={`${rootApps.length} ${rootApps.length === 1 ? 'app' : 'apps'} · ${owned.length || 'no'} ${owned.length === 1 ? 'database' : 'databases'} · ${addresses.length || 'no'} ${addresses.length === 1 ? 'domain' : 'domains'}`}
         tabs={tabs}
         actions={<>
           {addAppMenu}
@@ -220,7 +222,7 @@ export default function ProjectPage() {
         {notice && <p role="status" className="mb-5 rounded-md border border-status-ready/25 bg-status-ready/5 px-4 py-3 text-sm text-emerald-200">{notice}</p>}
         {hasStaging && (
           <div className="mb-6 flex h-8 w-fit items-center rounded-md border border-border p-0.5" role="group" aria-label="Environment">
-            {(['production', 'staging'] as const).map(value => <button key={value} type="button" onClick={() => setEnvironment(value)} aria-pressed={environment === value}
+            {(['production', 'staging'] as const).filter(value => project.apps.some(app => app.environment === value)).map(value => <button key={value} type="button" onClick={() => setEnvironment(value)} aria-pressed={environment === value}
               className={cn('h-full rounded-[5px] px-3 text-xs capitalize', environment === value ? 'bg-white/[0.09] text-foreground' : 'text-muted-foreground hover:text-foreground')}>{value}</button>)}
           </div>
         )}
@@ -387,11 +389,11 @@ export default function ProjectPage() {
           </Section>
           <Section title="Apps in this project" description="Moving an app out gives it a project of its own. Remove any database or domain path it shares here first.">
             <div className="divide-y divide-border overflow-hidden rounded-lg border border-border">
-              {productionApps.map(app => (
+              {rootApps.map(app => (
                 <div key={app.id} className="flex items-center gap-3 px-4 py-3 text-sm">
                   <FrameworkLogo type={app.project_type} className="h-4 w-4" />
                   <span className="flex-1">{app.name} <span className="text-xs text-muted-foreground">· {roleLabels[app.component_role]}</span></span>
-                  {productionApps.length > 1 && access.canWrite && <Button size="sm" variant="ghost" onClick={() => void removeApp(app)} disabled={busy !== null}><Unlink className="mr-1.5 h-3.5 w-3.5" />Move out</Button>}
+                  {rootApps.length > 1 && access.canWrite && <Button size="sm" variant="ghost" onClick={() => void removeApp(app)} disabled={busy !== null}><Unlink className="mr-1.5 h-3.5 w-3.5" />Move out</Button>}
                 </div>
               ))}
             </div>

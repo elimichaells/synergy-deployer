@@ -4,8 +4,8 @@ on:
     paths:
       - 'app/**'
       - 'components/**'
-      - 'lib/server-navigation.ts'
-      - 'tests/server-navigation.test.cjs'
+      - 'lib/**'
+      - 'tests/**'
       - 'package*.json'
       - '.github/workflows/workspace-ui.yml'
   workflow_dispatch:

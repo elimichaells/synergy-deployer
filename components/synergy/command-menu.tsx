@@ -6,6 +6,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { CornerDownLeft, Layers, Plus, Search, Server } from 'lucide-react'
 import { FrameworkLogo } from './framework-logo'
 import { infrastructureItems, workspaceNavItems } from './nav'
+import { isApplicationRoot } from '@/lib/application-environments'
 import { serverOverview, serverScope } from '@/lib/server-navigation'
 import { useServerDirectory } from '@/components/infrastructure/server-directory'
 
@@ -21,7 +22,7 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null)
-  const [stacks, setStacks] = useState<{ id: string; name: string; apps: { environment: string }[] }[] | null>(null)
+  const [stacks, setStacks] = useState<{ id: string; name: string; apps: { environment: string; production_id: string | null }[] }[] | null>(null)
   const [remoteApps, setRemoteApps] = useState<{ id: string; name: string; hostname: string }[]>([])
   const [loadedScope, setLoadedScope] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
@@ -52,7 +53,7 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
   const entries = useMemo<Entry[]>(() => {
     const pages = [...workspaceNavItems(pathname), ...(scope.kind === 'local' ? infrastructureItems : [])].map(item => ({ id: `page-${item.href}`, label: item.label, hint: item.description, href: item.href, icon: <item.icon className="h-4 w-4" />, group: 'Navigate' }))
     const actions = directory?.role === 'admin' ? [{ id: 'add-server', label: 'Add server', hint: 'Connect Windows or Linux', href: '/infrastructure/servers?add=1', icon: <Plus className="h-4 w-4" />, group: 'Actions' }, ...(scope.kind === 'local' ? [{ id: 'new-app', label: 'New app', hint: 'Import a repository on Manager host', href: '/sites/new', icon: <Plus className="h-4 w-4" />, group: 'Actions' }] : [])] : []
-    const groups = (scope.kind === 'local' && loadedScope === 'local' ? stacks || [] : []).map(project => ({ id: `project-${project.id}`, label: project.name, hint: `${project.apps.filter(app => app.environment === 'production').length} apps`, href: `/projects/${project.id}`, icon: <Layers className="h-4 w-4" />, group: 'Projects' }))
+    const groups = (scope.kind === 'local' && loadedScope === 'local' ? stacks || [] : []).map(project => ({ id: `project-${project.id}`, label: project.name, hint: `${project.apps.filter(isApplicationRoot).length} apps`, href: `/projects/${project.id}`, icon: <Layers className="h-4 w-4" />, group: 'Projects' }))
     const apps = remoteId && loadedScope === remoteId ? remoteApps.map(app => ({ id: `app-${app.id}`, label: app.name, hint: app.hostname, href: `${serverOverview(remoteId)}#app-${app.id}`, icon: <Layers className="h-4 w-4" />, group: 'Applications' })) : (scope.kind === 'local' && loadedScope === 'local' ? projects || [] : []).map(project => ({ id: `app-${project.id}`, label: project.name, hint: project.environment || 'application', href: `/sites/${project.id}`, icon: <FrameworkLogo type={project.project_type} className="h-4 w-4" />, group: 'Applications' }))
     const servers = [{ id: 'server-local', label: 'Manager host', hint: 'Local server', href: '/overview', icon: <Server className="h-4 w-4" />, group: 'Switch server' }, ...(directory?.servers || []).filter(server => server.enabled).map(server => ({ id: `server-${server.id}`, label: server.name, hint: server.location || (server.platform === 'win32' ? 'Windows' : 'Linux'), href: serverOverview(server.id), icon: <Server className="h-4 w-4" />, group: 'Switch server' }))]
     const q = query.trim().toLowerCase()

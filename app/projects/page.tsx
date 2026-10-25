@@ -11,9 +11,10 @@ import { roleLabels } from '@/components/app/section'
 import { roleIcons } from '@/components/app/stack-panel'
 import { AppsView } from '@/components/projects/apps-view'
 import { relativeTime } from '@/lib/deployment-stages'
+import { isApplicationRoot } from '@/lib/application-environments'
 import { cn } from '@/lib/utils'
 
-interface ProjectApp { id: string; name: string; component_role: string; environment: 'production' | 'staging'; project_type: string; setup_required: boolean; deployment_status: DeployStatus | null; deployed_at: string | null; is_active: boolean }
+interface ProjectApp { id: string; name: string; component_role: string; environment: 'production' | 'staging'; production_id: string | null; project_type: string; setup_required: boolean; deployment_status: DeployStatus | null; deployed_at: string | null; is_active: boolean }
 interface Project { id: string; name: string; apps: ProjectApp[]; database_count: number; domains: string[] }
 
 export default function ProjectsPage() {
@@ -48,7 +49,7 @@ export default function ProjectsPage() {
     return !q || project.name.toLowerCase().includes(q) || project.apps.some(app => app.name.toLowerCase().includes(q)) || project.domains.some(domain => domain.includes(q))
   }), [projects, search])
 
-  const appCount = (projects || []).reduce((sum, project) => sum + project.apps.filter(app => app.environment === 'production').length, 0)
+  const appCount = (projects || []).reduce((sum, project) => sum + project.apps.filter(isApplicationRoot).length, 0)
 
   return (
     <AppShell
@@ -87,10 +88,10 @@ export default function ProjectsPage() {
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {visible.map(project => {
-            const production = project.apps.filter(app => app.environment === 'production')
-            const staging = project.apps.length - production.length
+            const applications = project.apps.filter(isApplicationRoot)
+            const staging = project.apps.filter(app => app.environment === 'staging').length
             const latest = [...project.apps].filter(app => app.deployed_at).sort((a, b) => Date.parse(b.deployed_at!) - Date.parse(a.deployed_at!))[0]
-            const failing = production.filter(app => app.deployment_status === 'failed').length
+            const failing = applications.filter(app => app.deployment_status === 'failed').length
             const building = project.apps.some(app => app.deployment_status === 'running' || app.deployment_status === 'queued')
             return (
               <article key={project.id} className={cn('syn-tile group flex flex-col p-5', building && 'border-white/15')}>
@@ -99,12 +100,12 @@ export default function ProjectsPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <h3 className="truncate text-[15px] font-semibold tracking-tight">{project.name}</h3>
-                    <p className="mt-0.5 text-xs text-muted-foreground">{production.length} {production.length === 1 ? 'app' : 'apps'}{staging ? ` · ${staging} staging` : ''}{latest ? ` · updated ${relativeTime(latest.deployed_at, now)}` : ''}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{applications.length} {applications.length === 1 ? 'app' : 'apps'}{staging ? ` · ${staging} staging` : ''}{latest ? ` · updated ${relativeTime(latest.deployed_at, now)}` : ''}</p>
                   </div>
-                  <div className="flex -space-x-2">{production.slice(0, 4).map(app => <span key={app.id} className="rounded-full ring-2 ring-card"><FrameworkAvatar type={app.project_type} size="sm" /></span>)}</div>
+                  <div className="flex -space-x-2">{applications.slice(0, 4).map(app => <span key={app.id} className="rounded-full ring-2 ring-card"><FrameworkAvatar type={app.project_type} size="sm" /></span>)}</div>
                 </div>
                 <div className="mt-4 space-y-1.5">
-                  {production.slice(0, 4).map(app => {
+                  {applications.slice(0, 4).map(app => {
                     const Icon = roleIcons[app.component_role] || Boxes
                     return (
                       <div key={app.id} className="flex items-center gap-2 text-[13px]">
@@ -115,7 +116,7 @@ export default function ProjectsPage() {
                       </div>
                     )
                   })}
-                  {production.length > 4 && <p className="text-xs text-muted-foreground">+{production.length - 4} more</p>}
+                  {applications.length > 4 && <p className="text-xs text-muted-foreground">+{applications.length - 4} more</p>}
                 </div>
                 <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border pt-3 text-xs text-muted-foreground" style={{ marginTop: 16 }}>
                   <span className="flex min-w-0 items-center gap-1.5"><Globe2 className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{project.domains[0] || 'No domain'}</span>{project.domains.length > 1 && <span>+{project.domains.length - 1}</span>}</span>
