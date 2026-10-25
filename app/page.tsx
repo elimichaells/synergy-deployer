@@ -1,232 +1,67 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ArrowRight, Globe2, Plus, RefreshCw, Rocket, Workflow } from 'lucide-react'
+import { ArrowRight, Check, MapPin, Plus, Search, Server } from 'lucide-react'
 import { AppShell } from '@/components/layout/app-shell'
 import { Button } from '@/components/ui/button'
-import { DeploymentRow, type DeploymentSummary } from '@/components/synergy/deployment-row'
-import { FrameworkAvatar } from '@/components/synergy/framework-logo'
-import { PipelineMini } from '@/components/synergy/pipeline'
-import { deploymentDuration, formatSeconds, relativeTime, stagesFromPhase } from '@/lib/deployment-stages'
-import { cn } from '@/lib/utils'
-import { useServerHealth } from '@/components/server-health'
-import { applicationState, applicationHealthLabels } from '@/lib/application-health'
+import { serverStatusColor, serverStatusLabel, useServerDirectory } from '@/components/infrastructure/server-directory'
+import { recentServerKey, serverOverview } from '@/lib/server-navigation'
 
-interface Project {
-  id: string
-  name: string
-  pm2_name: string
-  is_active: boolean
-  project_type: string
-  environment: 'production' | 'staging'
-  url: string | null
-  port: number | null
-  setup_required?: boolean
-}
-
-interface SessionUser {
-  id: string
-  email: string
-  name: string
-  role: 'admin' | 'operator' | 'viewer'
-}
-
-const DAY = 86_400_000
-
-export default function Dashboard() {
-  const { health, error: healthError } = useServerHealth()
-  const [projects, setProjects] = useState<Project[]>([])
-  const [deployments, setDeployments] = useState<DeploymentSummary[]>([])
-  const [user, setUser] = useState<SessionUser | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [now, setNow] = useState(() => Date.now())
-
-  const refresh = useCallback(async (silent = false) => {
-    if (!silent) setError(null)
-    try {
-      const [projectsRes, deploymentsRes, meRes] = await Promise.all([
-        fetch('/api/sites'),
-        fetch('/api/deployments?limit=100', { cache: 'no-store' }),
-        silent ? Promise.resolve(null) : fetch('/api/auth/me'),
-      ])
-
-      if (!projectsRes.ok) throw new Error('Failed to load projects')
-      if (!deploymentsRes.ok) throw new Error('Failed to load deployments')
-
-      setProjects(await projectsRes.json())
-      setDeployments(await deploymentsRes.json())
-      if (meRes?.ok) setUser((await meRes.json()).user)
-    } catch (err) {
-      if (!silent) setError(err instanceof Error ? err.message : 'Failed to load data')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
+function ServerChooser() {
+  const { data, error, refresh } = useServerDirectory()
+  const [search, setSearch] = useState('')
+  const [recentId, setRecentId] = useState<string | null>(null)
   useEffect(() => {
-    void refresh()
-    const poll = window.setInterval(() => { if (!document.hidden) void refresh(true) }, 8_000)
-    const clock = window.setInterval(() => setNow(Date.now()), 1_000)
-    return () => { window.clearInterval(poll); window.clearInterval(clock) }
-  }, [refresh])
+    if (!data?.userId) return
+    try { setRecentId(localStorage.getItem(recentServerKey(data.userId))) } catch { /* Storage can be disabled. */ }
+  }, [data?.userId])
+  const recent = data?.servers.find(server => server.id === recentId && server.enabled)
+  const recentName = recentId === 'local' ? 'Manager host' : recent?.name
+  const query = search.trim().toLowerCase()
+  const showLocal = ['Manager host', data?.local?.hostname, data?.local?.platform === 'win32' ? 'Windows' : 'Linux'].some(value => value?.toLowerCase().includes(query))
+  const servers = (data?.servers || []).filter(server => [server.name, server.location, server.platform === 'win32' ? 'Windows' : 'Linux', server.metrics?.hostname, ...(server.metrics?.addresses || [])].some(value => value?.toLowerCase().includes(query)))
 
-  const active = useMemo(() => deployments.filter(d => d.status === 'running' || d.status === 'queued'), [deployments])
-  const latestByProject = useMemo(() => {
-    const map = new Map<string, DeploymentSummary>()
-    for (const deployment of deployments) if (!map.has(deployment.project_id)) map.set(deployment.project_id, deployment)
-    return map
-  }, [deployments])
+  return <div className="space-y-6">
+    <div className="flex flex-wrap items-center justify-between gap-4">
+      <ol aria-label="Get started" className="flex items-center gap-3 text-xs sm:gap-5 sm:text-sm">
+        <li className="flex items-center gap-2 font-medium"><span className="flex h-6 w-6 items-center justify-center rounded-full border border-foreground/25 bg-white/[0.08] text-xs">1</span>Choose a server</li>
+        <li aria-hidden="true"><ArrowRight className="h-3.5 w-3.5 text-muted-foreground" /></li>
+        <li className="flex items-center gap-2 text-muted-foreground"><span className="flex h-6 w-6 items-center justify-center rounded-full border border-border text-xs">2</span>Open its workspace</li>
+      </ol>
+      {data?.role === 'admin' && <Button asChild size="sm"><Link href="/infrastructure/servers?add=1"><Plus className="mr-1.5 h-4 w-4" />Add server</Link></Button>}
+    </div>
+    {recentName && recentId && <Link href={serverOverview(recentId)} className="flex items-center gap-3 rounded-xl border border-border bg-card px-5 py-4 transition-colors hover:border-white/25">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/[0.05]"><Server className="h-4 w-4" /></span>
+      <span className="min-w-0 flex-1"><span className="block text-xs text-muted-foreground">Last visited</span><span className="block truncate text-sm font-medium">Continue with {recentName}</span></span><ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+    </Link>}
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <h2 className="text-sm font-semibold">Your servers{data && <span className="ml-2 font-normal text-muted-foreground">{data.servers.length + 1}</span>}</h2>
+      <label className="flex w-full items-center gap-2 rounded-md border border-border bg-card px-3 sm:w-80"><Search className="h-4 w-4 text-muted-foreground" /><span className="sr-only">Find a server</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Name, location or address…" className="h-9 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground" /></label>
+    </div>
+    {error && <div role="alert" className="notice-error flex flex-wrap items-center justify-between gap-3"><span>{error}. Server statuses may be out of date.</span><Button variant="outline" size="sm" onClick={refresh}>Retry</Button></div>}
+    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      {showLocal && <Link href="/overview" className="syn-tile flex min-h-60 flex-col p-5">
+        <div className="flex items-start justify-between gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-white/[0.03]"><Server className="h-5 w-5" /></span><span className="rounded-full border border-border px-2 py-1 text-[11px] text-muted-foreground">This server</span></div>
+        <h3 className="mt-4 text-base font-semibold">Manager host</h3><p className="mt-1 truncate text-xs text-muted-foreground">{data?.local?.hostname || 'The server running Synergy'}{data?.local?.platform && ` · ${data.local.platform === 'win32' ? 'Windows' : 'Linux'}`}</p>
+        <p className="mt-4 text-sm leading-6 text-muted-foreground">Your existing applications, deployments and local infrastructure.</p>
+        <span className="mt-auto flex items-center justify-between pt-5 text-sm font-medium">Open overview<ArrowRight className="h-4 w-4" /></span>
+      </Link>}
+      {servers.map(server => <Link key={server.id} href={serverOverview(server.id)} className="syn-tile flex min-h-60 min-w-0 flex-col p-5">
+        <div className="flex items-start justify-between gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-white/[0.03]"><Server className="h-5 w-5" /></span><span className="inline-flex items-center gap-1.5 rounded-full border border-border px-2 py-1 text-[11px]"><span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${error ? 'bg-zinc-500' : serverStatusColor[server.status]}`} />{error ? 'Status unavailable' : serverStatusLabel[server.status]}</span></div>
+        <h3 className="mt-4 truncate text-base font-semibold">{server.name}</h3><p className="mt-1 truncate text-xs text-muted-foreground">{server.platform === 'win32' ? 'Windows' : 'Linux'}{server.metrics?.hostname && ` · ${server.metrics.hostname}`}</p>
+        <p className="mt-4 flex items-center gap-1.5 truncate text-xs text-muted-foreground"><MapPin className="h-3.5 w-3.5 shrink-0" />{server.location || 'Location not set'}</p>
+        <p className="mt-2 text-sm text-muted-foreground">{server.status === 'pending' ? 'Connect with SSH to finish setup.' : `${server.app_count} application${server.app_count === 1 ? '' : 's'}${server.status === 'offline' ? ' · last reported state' : ''}`}</p>
+        <span className="mt-auto flex items-center justify-between pt-5 text-sm font-medium">{server.status === 'pending' ? 'Finish setup' : server.status === 'revoked' ? 'View details' : 'Open overview'}<ArrowRight className="h-4 w-4" /></span>
+      </Link>)}
+      {!data && !error && <div role="status" className="flex min-h-60 items-center justify-center rounded-xl border border-border text-sm text-muted-foreground">Loading your servers…</div>}
+    </div>
+    {query && !showLocal && !servers.length && data && <p role="status" className="rounded-xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">No servers match “{search}”. Try a name, location or address.</p>}
+    {data?.servers.length === 0 && !query && <div className="rounded-xl border border-dashed border-border p-5"><h3 className="text-sm font-medium">Ready when you add more servers</h3><p className="mt-1 text-sm leading-6 text-muted-foreground">Start with the manager host, or {data.role === 'admin' ? 'add a Windows or Linux server using its SSH address and credentials' : 'ask an administrator to connect another server'}. Each server has its own applications and deployment history.</p></div>}
+    <p className="flex items-center gap-2 text-xs leading-5 text-muted-foreground"><Check className="h-3.5 w-3.5 shrink-0" />You can switch servers at any time from the selector beside Synergy.</p>
+  </div>
+}
 
-  const stats = useMemo(() => {
-    const week = deployments.filter(d => d.started_at && now - Date.parse(d.started_at) < 7 * DAY)
-    const finished = week.filter(d => d.status === 'success' || d.status === 'failed')
-    const ok = finished.filter(d => d.status === 'success')
-    return {
-      online: projects.filter(p => applicationState(healthError ? null : health, p.pm2_name) === 'ready').length,
-      today: deployments.filter(d => d.started_at && now - Date.parse(d.started_at) < DAY).length,
-      week: week.length,
-      successRate: finished.length ? Math.round((ok.length / finished.length) * 100) : null,
-      failing: [...latestByProject.values()].filter(d => d.status === 'failed').length,
-    }
-  }, [deployments, projects, latestByProject, now, health, healthError])
-
-  const lastRelease = deployments.find(d => d.status === 'success')
-  const greeting = new Date(now).getHours() < 12 ? 'Good morning' : new Date(now).getHours() < 18 ? 'Good afternoon' : 'Good evening'
-
-  return (
-    <AppShell
-      title={user?.name ? `${greeting}, ${user.name.split(' ')[0]}` : 'Overview'}
-      subtitle="Everything shipping on this host, in one place."
-      user={{ name: user?.name, role: user?.role }}
-      actions={<>
-        <Button variant="outline" size="sm" onClick={() => void refresh()}><RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', loading && 'animate-spin')} />Refresh</Button>
-        <Button asChild size="sm"><Link href="/sites/new"><Plus className="mr-1.5 h-4 w-4" />New app</Link></Button>
-      </>}
-    >
-      {error && <div role="alert" className="notice-error">{error}</div>}
-
-      {/* Pipeline pulse */}
-      <section className="mb-6 overflow-hidden rounded-xl border border-border bg-card">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-5 py-3">
-          <div className="flex items-center gap-2.5">
-            <span className={cn('h-2 w-2 rounded-full', active.length ? 'spectrum-flow' : 'bg-status-ready')} />
-            <h2 className="text-sm font-semibold">{active.length ? `${active.length} pipeline${active.length > 1 ? 's' : ''} in flight` : 'All pipelines idle'}</h2>
-          </div>
-          <span className="text-xs text-muted-foreground">{lastRelease ? `Last release ${relativeTime(lastRelease.finished_at, now)} · ${lastRelease.project_name}` : 'No releases yet'}</span>
-        </div>
-        {active.length === 0 ? (
-          <div className="grid grid-cols-2 md:grid-cols-4">
-            {[
-              ['Applications', String(projects.length), healthError || !health || health.stale ? 'Health unknown' : `${stats.online} readiness checks passed`],
-              ['Deploys today', String(stats.today), `${stats.week} this week`],
-              ['Success rate', stats.successRate === null ? '—' : `${stats.successRate}%`, 'last 7 days'],
-              ['Needs attention', String(stats.failing), stats.failing ? 'latest release failed' : 'no recent release failures'],
-            ].map(([label, value, hint], index) => (
-              <div key={label} className={cn('px-5 py-4', index % 2 === 1 && 'border-l border-border', index > 1 && 'border-t border-border md:border-t-0', index === 2 && 'md:border-l')}>
-                <p className="text-xs text-muted-foreground">{label}</p>
-                <p className={cn('mt-1 text-2xl font-semibold tracking-tight', label === 'Needs attention' && stats.failing > 0 && 'text-status-failed')}>{loading ? '–' : value}</p>
-                <p className="mt-0.5 text-[11px] text-muted-foreground/80">{hint}</p>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="divide-y divide-border">
-            {active.map(deployment => {
-              const stages = stagesFromPhase(deployment.status, deployment.phase, deployment.log)
-              const current = stages.find(stage => stage.state === 'active')
-              return (
-                <Link key={deployment.id} href={`/deployments/${deployment.id}`} className="grid gap-3 px-5 py-4 transition-colors hover:bg-white/[0.025] md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto] md:items-center">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{deployment.project_name}</p>
-                    <p className="mt-0.5 truncate text-xs text-muted-foreground">{deployment.branch || '—'}{deployment.commit_sha ? ` · ${deployment.commit_sha.slice(0, 7)}` : ''}</p>
-                  </div>
-                  <div>
-                    <PipelineMini stages={stages} />
-                    <p className="mt-1.5 text-xs"><span className="spectrum-text font-medium">{deployment.status === 'queued' ? 'Queued' : current ? current.label : 'Building'}</span><span className="text-muted-foreground"> · {formatSeconds(deploymentDuration(deployment.started_at, null, now))}</span></p>
-                  </div>
-                  <span className="flex items-center gap-1 text-xs text-muted-foreground">Watch<ArrowRight className="h-3.5 w-3.5" /></span>
-                </Link>
-              )
-            })}
-          </div>
-        )}
-      </section>
-
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.7fr)_minmax(300px,1fr)]">
-        <section className="min-w-0">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold">Recent deployments</h2>
-            <Link href="/deployments" className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">View all<ArrowRight className="h-3.5 w-3.5" /></Link>
-          </div>
-          <div className="overflow-hidden rounded-xl border border-border bg-card">
-            {loading ? (
-              <div className="divide-y divide-border">{[0, 1, 2, 3].map(i => <div key={i} className="h-[68px] animate-pulse" />)}</div>
-            ) : deployments.length === 0 ? (
-              <div className="px-6 py-16 text-center">
-                <Rocket className="mx-auto mb-3 h-6 w-6 text-muted-foreground" />
-                <p className="text-sm font-medium">No deployments yet</p>
-                <p className="mt-1 text-xs text-muted-foreground">Releases appear here with their full pipeline.</p>
-              </div>
-            ) : (
-              <div className="divide-y divide-border">
-                {deployments.slice(0, 8).map(deployment => <DeploymentRow key={deployment.id} deployment={deployment} now={now} compact />)}
-              </div>
-            )}
-          </div>
-        </section>
-
-        <aside className="min-w-0 space-y-6">
-          <section>
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold">Applications</h2>
-              <Link href="/projects" className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">All projects<ArrowRight className="h-3.5 w-3.5" /></Link>
-            </div>
-            <div className="overflow-hidden rounded-xl border border-border bg-card">
-              {loading ? <div className="h-48 animate-pulse" /> : projects.length === 0 ? (
-                <p className="px-5 py-10 text-center text-sm text-muted-foreground">No applications yet.</p>
-              ) : (
-                <div className="divide-y divide-border">
-                  {projects.slice(0, 7).map(project => {
-                    const readiness = applicationState(healthError ? null : health, project.pm2_name)
-                    return (
-                      <Link key={project.id} href={`/sites/${project.id}`} className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-white/[0.025]">
-                        <FrameworkAvatar type={project.project_type} size="sm" />
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-[13px] font-medium">{project.name}</p>
-                          <p className="truncate text-[11px] text-muted-foreground">{project.url?.replace(/^https?:\/\//, '') || (project.port ? `localhost:${project.port}` : project.environment)}</p>
-                        </div>
-                        <span className={cn('text-[11px]', readiness === 'ready' ? 'text-emerald-300' : readiness === 'degraded' || readiness === 'offline' ? 'text-amber-200' : 'text-muted-foreground')}>{project.setup_required ? 'Setup' : applicationHealthLabels[readiness]}</span>
-                      </Link>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          </section>
-
-          <section>
-            <h2 className="mb-3 text-sm font-semibold">Shortcuts</h2>
-            <div className="grid gap-2">
-              {[
-                { href: '/sites/new', icon: Plus, title: 'Import a repository', hint: 'Build, verify and serve a new app' },
-                { href: '/domains', icon: Globe2, title: 'Connect a domain', hint: 'Cloudflare DNS and automatic TLS' },
-                { href: '/automation', icon: Workflow, title: 'Schedule a job', hint: 'Cron jobs and background workers' },
-              ].map(item => (
-                <Link key={item.href} href={item.href} className="syn-tile flex items-center gap-3 px-4 py-3">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-md border border-border bg-black"><item.icon className="h-4 w-4" /></span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-[13px] font-medium">{item.title}</span>
-                    <span className="block truncate text-[11px] text-muted-foreground">{item.hint}</span>
-                  </span>
-                  <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
-                </Link>
-              ))}
-            </div>
-          </section>
-        </aside>
-      </div>
-    </AppShell>
-  )
+export default function Home() {
+  return <AppShell title="Choose a server" subtitle="Open a server to see its applications, deployments and health."><ServerChooser /></AppShell>
 }

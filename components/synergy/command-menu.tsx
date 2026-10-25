@@ -1,42 +1,66 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import * as Dialog from '@radix-ui/react-dialog'
-import { CornerDownLeft, Layers, Plus, Search } from 'lucide-react'
+import { CornerDownLeft, Layers, Plus, Search, Server } from 'lucide-react'
 import { FrameworkLogo } from './framework-logo'
-import { infrastructureItems, navItems } from './nav'
+import { infrastructureItems, workspaceNavItems } from './nav'
+import { serverOverview, serverScope } from '@/lib/server-navigation'
+import { useServerDirectory } from '@/components/infrastructure/server-directory'
 
 interface Entry { id: string; label: string; hint: string; href: string; icon: React.ReactNode; group: string }
 interface ProjectSummary { id: string; name: string; project_type?: string; environment?: string }
 
 export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const router = useRouter()
+  const pathname = usePathname()
+  const scope = serverScope(pathname)
+  const remoteId = scope.kind === 'remote' ? scope.id : null
+  const { data: directory } = useServerDirectory()
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null)
   const [stacks, setStacks] = useState<{ id: string; name: string; apps: { environment: string }[] }[] | null>(null)
+  const [remoteApps, setRemoteApps] = useState<{ id: string; name: string; hostname: string }[]>([])
+  const [loadedScope, setLoadedScope] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
     setQuery('')
     setActive(0)
-    if (projects) return
-    void fetch('/api/sites').then(response => response.ok ? response.json() : []).then(data => setProjects(Array.isArray(data) ? data : [])).catch(() => setProjects([]))
-    void fetch('/api/groups').then(response => response.ok ? response.json() : { projects: [] }).then(data => setStacks(data.projects || [])).catch(() => setStacks([]))
-  }, [open, projects])
+    setProjects(null); setStacks(null); setRemoteApps([]); setLoadedScope('')
+    const controller = new AbortController()
+    async function load() {
+      try {
+        if (remoteId) {
+          const response = await fetch(`/api/servers/${remoteId}`, { cache: 'no-store', signal: controller.signal })
+          if (!response.ok) return
+          const result = await response.json()
+          if (!controller.signal.aborted) { setRemoteApps(result.apps || []); setLoadedScope(remoteId) }
+        } else if (scope.kind === 'local') {
+          const [apps, groups] = await Promise.all(['/api/sites', '/api/groups'].map(url => fetch(url, { cache: 'no-store', signal: controller.signal }).then(response => response.ok ? response.json() : null)))
+          if (!controller.signal.aborted) { setProjects(Array.isArray(apps) ? apps : []); setStacks(groups?.projects || []); setLoadedScope('local') }
+        }
+      } catch { /* Navigation and server switching remain available. */ }
+    }
+    void load()
+    return () => controller.abort()
+  }, [open, remoteId, scope.kind])
 
   const entries = useMemo<Entry[]>(() => {
-    const pages = [...navItems, ...infrastructureItems].map(item => ({ id: `page-${item.href}`, label: item.label, hint: item.description, href: item.href, icon: <item.icon className="h-4 w-4" />, group: 'Navigate' }))
-    const actions = [{ id: 'new-app', label: 'New app', hint: 'Import a repository', href: '/sites/new', icon: <Plus className="h-4 w-4" />, group: 'Actions' }]
-    const groups = (stacks || []).map(project => ({ id: `project-${project.id}`, label: project.name, hint: `${project.apps.filter(app => app.environment === 'production').length} apps`, href: `/projects/${project.id}`, icon: <Layers className="h-4 w-4" />, group: 'Projects' }))
-    const apps = (projects || []).map(project => ({ id: `app-${project.id}`, label: project.name, hint: project.environment || 'application', href: `/sites/${project.id}`, icon: <FrameworkLogo type={project.project_type} className="h-4 w-4" />, group: 'Applications' }))
+    const pages = [...workspaceNavItems(pathname), ...(scope.kind === 'local' ? infrastructureItems : [])].map(item => ({ id: `page-${item.href}`, label: item.label, hint: item.description, href: item.href, icon: <item.icon className="h-4 w-4" />, group: 'Navigate' }))
+    const actions = directory?.role === 'admin' ? [{ id: 'add-server', label: 'Add server', hint: 'Connect Windows or Linux', href: '/infrastructure/servers?add=1', icon: <Plus className="h-4 w-4" />, group: 'Actions' }, ...(scope.kind === 'local' ? [{ id: 'new-app', label: 'New app', hint: 'Import a repository on Manager host', href: '/sites/new', icon: <Plus className="h-4 w-4" />, group: 'Actions' }] : [])] : []
+    const groups = (scope.kind === 'local' && loadedScope === 'local' ? stacks || [] : []).map(project => ({ id: `project-${project.id}`, label: project.name, hint: `${project.apps.filter(app => app.environment === 'production').length} apps`, href: `/projects/${project.id}`, icon: <Layers className="h-4 w-4" />, group: 'Projects' }))
+    const apps = remoteId && loadedScope === remoteId ? remoteApps.map(app => ({ id: `app-${app.id}`, label: app.name, hint: app.hostname, href: `${serverOverview(remoteId)}#app-${app.id}`, icon: <Layers className="h-4 w-4" />, group: 'Applications' })) : (scope.kind === 'local' && loadedScope === 'local' ? projects || [] : []).map(project => ({ id: `app-${project.id}`, label: project.name, hint: project.environment || 'application', href: `/sites/${project.id}`, icon: <FrameworkLogo type={project.project_type} className="h-4 w-4" />, group: 'Applications' }))
+    const servers = [{ id: 'server-local', label: 'Manager host', hint: 'Local server', href: '/overview', icon: <Server className="h-4 w-4" />, group: 'Switch server' }, ...(directory?.servers || []).filter(server => server.enabled).map(server => ({ id: `server-${server.id}`, label: server.name, hint: server.location || (server.platform === 'win32' ? 'Windows' : 'Linux'), href: serverOverview(server.id), icon: <Server className="h-4 w-4" />, group: 'Switch server' }))]
     const q = query.trim().toLowerCase()
-    return [...actions, ...pages, ...groups, ...apps].filter(entry => !q || entry.label.toLowerCase().includes(q) || entry.hint.toLowerCase().includes(q))
-  }, [projects, stacks, query])
+    return [...actions, ...pages, ...servers, ...groups, ...apps].filter(entry => !q || entry.label.toLowerCase().includes(q) || entry.hint.toLowerCase().includes(q))
+  }, [projects, stacks, query, directory, pathname, scope.kind, remoteId, remoteApps, loadedScope])
 
   useEffect(() => { setActive(0) }, [query])
+  useEffect(() => { setActive(index => Math.min(index, Math.max(0, entries.length - 1))) }, [entries.length])
   useEffect(() => {
     listRef.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: 'nearest' })
   }, [active])
@@ -60,10 +84,10 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px] data-[state=open]:animate-in data-[state=open]:fade-in-0" />
         <Dialog.Content onKeyDown={onKeyDown} className="fixed left-1/2 top-[12vh] z-50 w-[calc(100vw-32px)] max-w-xl -translate-x-1/2 overflow-hidden rounded-xl border border-white/10 bg-popover shadow-2xl shadow-black/60 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95">
           <Dialog.Title className="sr-only">Command menu</Dialog.Title>
-          <Dialog.Description className="sr-only">Search pages, applications and actions</Dialog.Description>
+          <Dialog.Description className="sr-only">Search this workspace or switch servers</Dialog.Description>
           <div className="flex items-center gap-3 border-b border-border px-4">
             <Search className="h-4 w-4 text-muted-foreground" />
-            <input autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder="Search applications, pages and actions…" aria-label="Search" className="h-12 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground" />
+            <input autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder="Search this workspace or switch servers…" aria-label="Search" className="h-12 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground" />
             <span className="kbd">Esc</span>
           </div>
           <div ref={listRef} className="max-h-[50vh] overflow-y-auto p-2" role="listbox" aria-label="Results">

@@ -1,0 +1,31 @@
+name: Workspace UI
+on:
+  pull_request:
+    paths:
+      - 'app/**'
+      - 'components/**'
+      - 'lib/server-navigation.ts'
+      - 'tests/server-navigation.test.cjs'
+      - 'package*.json'
+      - '.github/workflows/workspace-ui.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - run: npm run build
+        env:
+          MANAGER_PREVIEW: '1'
+          NEXT_TELEMETRY_DISABLED: '1'

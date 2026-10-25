@@ -231,3 +231,15 @@ References: [Caddy automatic HTTPS](https://caddyserver.com/docs/automatic-https
 [PM2 ecosystem configuration](https://pm2.keymetrics.io/docs/usage/application-declaration/),
 [Node child process behavior](https://nodejs.org/api/child_process.html),
 [Windows task service accounts](https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/new-scheduledtaskprincipal).
+## Choosing a server workspace
+
+After signing in, choose a server on the home page. **Manager host** opens the
+existing local overview; a connected server opens its monitoring, applications
+and deployments. Pending servers open their SSH setup. Offline servers retain
+their last reported state, clearly marked as offline.
+
+The server selector beside Synergy switches between workspaces. **Servers**
+returns to the chooser, where a shortcut remembers the last server visited for
+the signed-in account. Search accepts server names, locations and addresses.
+Local deep links always open the manager host; remembered preferences never
+change the destination of an action. Account settings remain shared.

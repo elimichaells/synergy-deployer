@@ -7,14 +7,17 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { ChevronLeft, LogOut, Plus, Search, Server } from 'lucide-react'
 import { SynergyMark } from '@/components/synergy/brand'
 import { CommandMenu } from '@/components/synergy/command-menu'
-import { infrastructureItems, isNavActive, navItems } from '@/components/synergy/nav'
+import { infrastructureItems, isNavActive, workspaceNavItems } from '@/components/synergy/nav'
 import { ServerHealthBanner } from '@/components/server-health'
+import { ServerDirectoryProvider } from '@/components/infrastructure/server-directory'
+import { ServerSwitcher } from '@/components/infrastructure/server-switcher'
+import { serverScope } from '@/lib/server-navigation'
 
 function initials(name?: string) {
   return (name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]?.toUpperCase()).join('') || '?'
 }
 
-export function AppShell({ children, title, subtitle, user, actions, back, headerExtra, tabs, area }: {
+type AppShellProps = {
   children: ReactNode
   title: string
   subtitle?: ReactNode
@@ -28,15 +31,26 @@ export function AppShell({ children, title, subtitle, user, actions, back, heade
   tabs?: ReactNode
   /** Adds the side menu for a multi-page area. */
   area?: 'infrastructure'
-}) {
+}
+
+export function AppShell(props: AppShellProps) {
+  return <ServerDirectoryProvider><WorkspaceShell {...props} /></ServerDirectoryProvider>
+}
+
+function WorkspaceShell({ children, title, subtitle, user, actions, back, headerExtra, tabs, area }: AppShellProps) {
   const pathname = usePathname()
+  const scope = serverScope(pathname)
   const router = useRouter()
   const [commandOpen, setCommandOpen] = useState(false)
-  const [host, setHost] = useState('')
+  const [hash, setHash] = useState('')
   const [sessionUser, setSessionUser] = useState<{ name?: string; role?: string; email?: string } | null>(null)
   const account = user?.name ? user : sessionUser
 
-  useEffect(() => { setHost(window.location.hostname) }, [])
+  useEffect(() => {
+    const sync = () => setHash(window.location.hash)
+    sync(); window.addEventListener('hashchange', sync)
+    return () => window.removeEventListener('hashchange', sync)
+  }, [pathname])
 
   // Pages that do not load the session themselves still get a populated account menu.
   useEffect(() => {
@@ -76,11 +90,7 @@ export function AppShell({ children, title, subtitle, user, actions, back, heade
             <span className="hidden text-[15px] font-semibold tracking-[-0.02em] sm:inline">Synergy</span>
           </Link>
           <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0 text-white/15" aria-hidden="true"><path d="M16.88 3.549L7.12 20.451" stroke="currentColor" strokeWidth="1.5" /></svg>
-          <div className="flex min-w-0 items-center gap-2 text-sm">
-            <span className="h-2 w-2 shrink-0 rounded-full bg-status-ready" title="Manager reachable" />
-            <span className="truncate font-medium">{host || 'host'}</span>
-            <Link href="/infrastructure/servers" className="hidden rounded-full border border-border px-1.5 py-px font-mono text-[10px] uppercase tracking-wider text-muted-foreground md:inline">Servers</Link>
-          </div>
+          <ServerSwitcher scope={scope} />
 
           <div className="ml-auto flex items-center gap-2">
             <button type="button" onClick={() => setCommandOpen(true)} className="flex h-8 items-center gap-2 rounded-md border border-border bg-white/[0.02] px-2.5 text-[13px] text-muted-foreground transition-colors hover:border-white/20 hover:text-foreground sm:w-56" aria-label="Open command menu">
@@ -88,9 +98,9 @@ export function AppShell({ children, title, subtitle, user, actions, back, heade
               <span className="hidden flex-1 text-left sm:inline">Search…</span>
               <span className="kbd hidden sm:inline-flex">Ctrl K</span>
             </button>
-            <Link href="/sites/new" className="hidden h-8 items-center gap-1.5 rounded-md bg-foreground px-3 text-[13px] font-medium text-background transition-opacity hover:opacity-90 md:flex">
+            {scope.kind === 'local' && account?.role === 'admin' && <Link href="/sites/new" className="hidden h-8 items-center gap-1.5 rounded-md bg-foreground px-3 text-[13px] font-medium text-background transition-opacity hover:opacity-90 md:flex">
               <Plus className="h-3.5 w-3.5" /> New
-            </Link>
+            </Link>}
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
                 <button type="button" aria-label="Account menu" className="flex h-8 w-8 items-center justify-center rounded-full p-[1.5px] spectrum-bar">
@@ -116,10 +126,11 @@ export function AppShell({ children, title, subtitle, user, actions, back, heade
 
         <nav className="mx-auto max-w-[1240px] px-2 sm:px-4" aria-label="Primary navigation">
           <div className="scrollbar-none flex overflow-x-auto">
-            {navItems.map(item => {
-              const active = isNavActive(pathname, item.matches)
+            {workspaceNavItems(pathname).map(item => {
+              const section = item.href.includes('#') ? '#' + item.href.split('#')[1] : ''
+              const active = section ? hash === section : isNavActive(pathname, item.matches) && !(scope.kind === 'remote' && ['#applications', '#deployments', '#server-access'].includes(hash))
               return (
-                <Link key={item.href} href={item.href} aria-current={active ? 'page' : undefined}
+                <Link key={item.href} href={item.href} onClick={() => setHash(section)} aria-current={active ? 'page' : undefined}
                   className={`group relative shrink-0 px-1 pb-2.5 pt-1 text-[13px] transition-colors ${active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
                   <span className="block rounded-md px-2.5 py-1.5 transition-colors group-hover:bg-white/[0.06]">{item.label}</span>
                   {active && <span className="absolute inset-x-2 bottom-0 h-[2px] rounded-full bg-foreground" aria-hidden="true" />}
@@ -146,8 +157,8 @@ export function AppShell({ children, title, subtitle, user, actions, back, heade
 
       <main className="min-w-0">
         <div className="mx-auto max-w-[1240px] px-4 py-6 sm:px-6 sm:py-8">
-          <ServerHealthBanner />
-          {area === 'infrastructure' ? (
+          {scope.kind === 'local' && <ServerHealthBanner />}
+          {area === 'infrastructure' && scope.kind === 'local' ? (
             <div className="grid min-w-0 gap-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-10">
               <aside className="min-w-0">
                 <nav aria-label="Infrastructure" className="scrollbar-none -mx-1 flex gap-1 overflow-x-auto px-1 lg:sticky lg:top-32 lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0">
