@@ -128,17 +128,24 @@ jobs:
           node scripts/build-manager-update.cjs assemble ./update-stage '${{ steps.attest.outputs.bundle-path }}' ./release
 
       - name: Build one-time bootstrap for existing Managers
-        if: matrix.node == 22
+        if: matrix.node == 22 && env.RELEASE_TAG == 'v2.21.0'
         shell: pwsh
         run: node scripts/build-manager-bootstrap.cjs . ./release
 
       - name: Attest bootstrap runtime and entry script
-        if: matrix.node == 22
+        if: matrix.node == 22 && env.RELEASE_TAG == 'v2.21.0'
         uses: actions/attest-build-provenance@v3
         with:
           subject-path: |
             ${{ github.workspace }}/release-source/release/manager-bootstrap-runtime.zip
             ${{ github.workspace }}/release-source/release/bootstrap-manager-upgrade.ps1
+
+      - name: Include versioned release notes
+        if: matrix.node == 22
+        shell: pwsh
+        run: |
+          $version = (Get-Content ./package.json -Raw | ConvertFrom-Json).version
+          Copy-Item -LiteralPath "./docs/releases/$version.md" -Destination ./release/RELEASE-NOTES.md
 
       - name: Collect release assets
         uses: actions/upload-artifact@v4
