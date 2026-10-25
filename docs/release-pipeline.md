@@ -124,9 +124,9 @@ Deployment history reports the current phase, security failures, and an explicit
 
 ## Staging And Related Applications
 
-New application setup requires choosing **Production only** or **Production and staging**. Staging has a separate branch, port and setup state. Production-only creation does not reserve a staging port. Host discovery no longer backfills staging for existing applications. Existing staging environments are not removed.
+New application setup offers **Production only**, **Staging only**, or **Production + Staging**. A pair has separate branches, ports and setup states. Either single-environment choice creates one app and reserves one port. Standalone staging uses the staging install directory and manages its own webhook; promotion requires a linked production app. Host discovery no longer backfills staging for existing applications. Existing staging environments are not removed.
 
-Choose a component role and related application during creation, or open an existing application's **Overview > Link application**. Frontends, backend APIs and services can use different repositories and technologies. Linking production applications includes their existing staging counterparts automatically. A group does not merge databases, secrets, runtime settings, ports, domains or deployment triggers. Each component remains independently managed and deployed.
+Choose a component role and related application during creation, or open an existing application's **Overview > Link application**. Frontends, backend APIs and services can use different repositories and technologies. Linking production applications includes their existing staging counterparts automatically. Standalone staging apps can also join projects and are included in app counts and membership controls. A group does not merge databases, secrets, runtime settings, ports, domains or deployment triggers. Each component remains independently managed and deployed.
 
 The group lists its component environments and provides direct links to databases, domains, environment configuration and the console. Unlink removes only the grouping relationship, not application data or deployments. Moving between existing groups requires an explicit unlink first.
 
