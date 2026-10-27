@@ -110,6 +110,13 @@ async function initialize() {
       console.error('[System] Failed to check database moves:', err)
     }
 
+    // Expired deployment files are reclaimed daily, under the same app locks as deployment admission.
+    try {
+      const { releaseCleanupTick } = await import('@/lib/release-cleanup')
+      setInterval(() => tick('Release storage cleanup', releaseCleanupTick), 60 * 60_000)
+      setTimeout(() => tick('Release storage cleanup', releaseCleanupTick), 90_000)
+    } catch (err) { console.error('[System] Failed to start release cleanup:', err) }
+
     // Memory is sampled every minute for the Memory page, its history and its warnings.
     try {
       const { ensureServerMemorySchema, memorySamplerTick } = await import('@/lib/server-memory')

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { dataServiceRemovalReason, migrationRemovalReason } from '@/lib/data-removal-policy'
 import { remoteServersFixture } from './remote-servers-api'
+import { releaseCleanupFixture } from './release-cleanup-api'
 
 // Synthetic preview API. Never copied into the production application.
 const initialProject = { id: 'fixture-app', name: 'Payments API', slug: 'payments-api', repo_url: 'https://github.com/example/payments-api', default_branch: 'staging', project_type: 'go', root_path: 'C:\\web\\production\\payments-api', pm2_name: 'payments-api', port: 3117, url: null, auto_deploy: false, runtime_versions: {}, install_cmd: null, build_cmd: null, start_cmd: null, deploy_script: null, environment: 'production', production_id: null, component_role: 'backend', is_active: true, github_connection_id: 'github-one', github_connection_name: 'Engineering', github_account_login: 'example', setup_required: true, step: 'repository', decisions: {}, completed_at: null }
@@ -14,6 +15,7 @@ const dataState = (globalThis as unknown as { __dataFixture?: { enabled: boolean
 const listedServices = () => dataState.services.map(service => ({ ...service, removal_blocked_reason: dataServiceRemovalReason({ ...service, migration_count: dataState.migrations.filter(job => job.source_service_id === service.id || job.target_service_id === service.id).length, migration_active: dataState.migrations.some(job => (job.source_service_id === service.id || job.target_service_id === service.id) && ['queued', 'running', 'validating'].includes(job.status)) }) }))
 const fixtureRuntimes = () => ['git', 'node', 'go', 'php', 'composer', 'angular', 'postgresql', 'mysql', 'mariadb', 'caddy', 'sling', 'phpmyadmin'].map(id => ({ id, name: ({ node: 'Node.js', go: 'Go', php: 'PHP', mysql: 'MySQL', postgresql: 'PostgreSQL tools', phpmyadmin: 'phpMyAdmin', angular: 'Angular CLI', caddy: 'Caddy', git: 'Git', composer: 'Composer', mariadb: 'MariaDB', sling: 'Sling migration engine' } as Record<string, string>)[id], purpose: 'Application host dependency', installed: !['mariadb', 'angular'].includes(id), version: ['mariadb', 'angular'].includes(id) ? null : id === 'node' ? 'v24.13.0' : '1.0.0', installedVersions: ['node', 'php', 'go'].includes(id) ? ['1.0.0', '2.0.0'] : [], canInstall: true, canUpdate: true, canConfigure: id === 'mysql', versioned: ['node', 'php', 'go'].includes(id), updateAvailable: id === 'node', latestVersion: id === 'node' ? '24.14.0' : null, updateRisk: 'minor', activeJob: null, latestJob: null }))
 export async function GET(request: Request) {
+  const cleanup = await releaseCleanupFixture(request, state.role); if (cleanup) return cleanup
   const remote = await remoteServersFixture(request); if (remote) return remote
   const url = new URL(request.url); const pathname = url.pathname
   if(pathname==='/api/manager-updates') return result(url.searchParams.get('check')==='1'?{version:'2.22.0',newer:true,available:true,url:'https://github.com/elimichaells/synergy-deployer/releases',notes:'Example release notes for the isolated UI preview.'}:{version:updateState.version,configured:true,assetName:'manager-update-win32-x64-node24.tar',recoveryDirectory:'C:\\ProgramData\\Manager\\updates',job:updateState.job,history:updateState.job?[updateState.job]:[]})
@@ -53,6 +55,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const cleanup = await releaseCleanupFixture(request, state.role); if (cleanup) return cleanup
   const remote = await remoteServersFixture(request); if (remote) return remote
   const pathname = new URL(request.url).pathname
   const body = await request.json().catch(() => ({}))
