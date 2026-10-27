@@ -67,7 +67,7 @@ async function main() {
       try {
         const chunks = []; let size = 0;
         for await (const chunk of req) { size += chunk.length; if (size > 800000) throw new Error('Body too large'); chunks.push(chunk); }
-        const action = req.url.match(/^\/api\/server-agent\/(enroll|heartbeat|claim|report)$/)?.[1];
+        const action = req.url.match(/^\/api\/server-agent\/(enroll|heartbeat|claim|report|update-claim|update-report)$/)?.[1];
         if (!action || req.method !== 'POST') { res.writeHead(404); res.end(); return; }
         const request = new Request(`https://127.0.0.1${req.url}`, { method: 'POST', headers: req.headers, body: Buffer.concat(chunks) });
         const response = await agentRoute.POST(request, { params: Promise.resolve({ action }) });
