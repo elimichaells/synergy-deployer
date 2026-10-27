@@ -160,8 +160,8 @@ function WorkspaceShell({ children, title, subtitle, user, actions, back, header
           {scope.kind === 'local' && <ServerHealthBanner />}
           {area === 'infrastructure' && scope.kind === 'local' ? (
             <div className="grid min-w-0 gap-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-10">
-              <aside className="min-w-0">
-                <nav aria-label="Infrastructure" className="scrollbar-none -mx-1 flex gap-1 overflow-x-auto px-1 lg:sticky lg:top-32 lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0">
+              <aside className="min-w-0 lg:sticky lg:top-32 lg:max-h-[calc(100vh-9rem)] lg:self-start lg:overflow-y-auto">
+                <nav aria-label="Infrastructure" className="scrollbar-none -mx-1 flex gap-1 overflow-x-auto px-1 lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0">
                   <Link href="/infrastructure" aria-current={pathname === '/infrastructure' ? 'page' : undefined}
                     className={`flex shrink-0 items-center gap-2.5 rounded-md px-3 py-2 text-[13px] transition-colors ${pathname === '/infrastructure' ? 'bg-white/[0.07] text-foreground' : 'text-muted-foreground hover:bg-white/[0.04] hover:text-foreground'}`}>
                     <Server className="h-4 w-4" />Overview
