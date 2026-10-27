@@ -162,6 +162,21 @@ async function main() {
     assert.equal(readAgentFile('pm2/pm2.pid'),pm2Pid,'Update restarted PM2');
     assert.equal(readAgentFile('.agent-updates/supervisor.lock'),supervisorPid,'Update restarted the service supervisor');
     check('Real service performed a verified agent update, confirmed heartbeats and preserved enrollment, PM2 and supervisor PIDs');
+    const rejectedVersion=nextVersion.replace(/(\d+)$/,n=>String(Number(n)+1));
+    const rejectedCandidate=candidate.replace(`const AGENT_VERSION = '${nextVersion}';`,`const AGENT_VERSION = '${rejectedVersion}';`)+"\nif(require.main===module&&process.argv[2]==='run')process.exit(23);\n";
+    const rejectedId=(await db.query(`insert into remote_agent_updates(server_id,user_id,from_version,target_version,sha256,source)
+      values($1,$2,$3,$4,$5,$6) returning id`,[server.id,userId,nextVersion,rejectedVersion,createHash('sha256').update(rejectedCandidate).digest('hex'),rejectedCandidate])).rows[0].id;
+    for(let n=0;n<90;n++) {
+      updateState=(await db.query('select status from remote_agent_updates where id=$1',[rejectedId])).rows[0].status;
+      if(['success','failed','rolled_back','recovery_required'].includes(updateState))break;
+      await wait(2000);
+    }
+    assert.equal(updateState,'rolled_back','Crashing candidate was not automatically rolled back');
+    assert.equal((await managed.serverDetail(server.id)).server.metrics.version,nextVersion);
+    assert.equal(readAgentFile('agent.json'),configuration.trim());
+    assert.equal(readAgentFile('pm2/pm2.pid'),pm2Pid);
+    assert.equal(readAgentFile('.agent-updates/supervisor.lock'),supervisorPid);
+    check('Real service automatically rolled back a crashing agent without changing enrollment, PM2 or the supervisor process');
     const audit = JSON.stringify((await db.query('select action,details from audit_logs')).rows);
     for (const secret of secrets) assert.ok(!audit.includes(secret), 'Audit record leaked a credential');
     assert.ok(audit.includes('server.ssh.setup.finish'));
