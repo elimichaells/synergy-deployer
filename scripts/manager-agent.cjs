@@ -462,10 +462,9 @@ async function runAgent(root) {
     await fs.unlink(lock);await fs.writeFile(lock,String(process.pid),{flag:'wx',mode:0o600});
   }
   // Updating the agent must not resurrect stopped apps or restart an existing PM2 daemon.
-  const pm2Pid=Number(await fs.readFile(path.join(root,'pm2','pm2.pid'),'utf8').catch(()=>''));
-  let pm2Alive=false;try{if(Number.isSafeInteger(pm2Pid)&&pm2Pid>0){process.kill(pm2Pid,0);pm2Alive=true;}}catch{}
   const tools=await findTools(root);
-  if(!pm2Alive&&await fs.stat(path.join(root,'pm2','dump.pm2')).catch(()=>null))await tools.pm(['resurrect']);
+  const existingProcesses=await processList(tools.pm);
+  if(!existingProcesses.length&&await fs.stat(path.join(root,'pm2','dump.pm2')).catch(()=>null))await tools.pm(['resurrect']);
   const journalFile=path.join(root,'current-job.json');
   let journal=await readJson(journalFile), prior=cpuSnapshot(), stopped=false;
   const supervised=process.env.MANAGER_AGENT_SUPERVISOR==='1'&&typeof process.send==='function';
