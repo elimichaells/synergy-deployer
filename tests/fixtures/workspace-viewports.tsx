@@ -1,6 +1,7 @@
-export default async function Viewports({ searchParams }: { searchParams: Promise<{ view?: string; section?: string }> }) {
-  const { view, section } = await searchParams
-  const target = view === 'servers' ? '/' : view === 'remote' ? '/infrastructure/servers/11111111-1111-4111-8111-111111111111' : view === 'workspace' ? '/sites/fixture-app?tab=overview' : view === 'data' ? '/data-services' : view === 'settings' ? '/settings?section=' + encodeURIComponent(section || 'general') : view === 'cloudflare' ? '/domains' : view === 'new' ? '/sites/new' : view === 'related' ? '/sites/fixture-app?tab=overview' : '/sites/fixture-app?tab=setup'
+export default async function Viewports({ searchParams }: { searchParams: Promise<{ view?: string; section?: string; app?: string; server?: string }> }) {
+  const { view, section, app, server } = await searchParams
+  const remoteApp = view === 'remote-setup' && /^[a-f0-9-]{36}$/.test(app || '') && /^[a-f0-9-]{36}$/.test(server || '') ? `/infrastructure/servers/${server}?tab=setup#app-${app}` : null
+  const target = remoteApp || (view === 'servers' ? '/' : view === 'remote' ? '/infrastructure/servers/11111111-1111-4111-8111-111111111111' : view === 'workspace' ? '/sites/fixture-app?tab=overview' : view === 'data' ? '/data-services' : view === 'settings' ? '/settings?section=' + encodeURIComponent(section || 'general') : view === 'cloudflare' ? '/domains' : view === 'new' ? '/sites/new' : view === 'related' ? '/sites/fixture-app?tab=overview' : '/sites/fixture-app?tab=setup')
   return <main style={{ padding: 20, background: '#222', minHeight: '100vh' }}>
     <h1 style={{ fontSize: 16, marginBottom: 16 }}>Mobile setup / 390 x 844</h1>
     <iframe title="Mobile application setup" src={target} style={{ display: 'block', width: 390, height: 844, border: '1px solid #555' }} />

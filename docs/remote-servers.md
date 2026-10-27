@@ -222,7 +222,7 @@ and can access resources permitted to that account.
 Monitoring currently shows the latest sample and PM2 process status, not historical
 graphs or continuous application readiness checks. Release directories are retained
 for inspection; monitor disk space and archive old releases deliberately. Webhooks,
-manual release selection/rollback, database provisioning, app-specific runtime installation,
+manual release selection/rollback, app-specific runtime installation,
 per-server roles and shared institutional CAs remain later work. The agent's PM2 and
 application log files stay under its protected data folder.
 
@@ -243,3 +243,70 @@ returns to the chooser, where a shortcut remembers the last server visited for
 the signed-in account. Search accepts server names, locations and addresses.
 Local deep links always open the manager host; remembered preferences never
 change the destination of an action. Account settings remain shared.
+
+## Guided application creation
+
+On a connected server, **New app** now uses the same six setup steps as the Manager
+host: Source, Build, Database, Environment, Domain, Deploy. Import a public HTTPS
+repository or choose one from an existing Git connection. Pick **Production only**,
+**Staging only**, or **Production + Staging**. Both creates two independent app
+records in one transaction; staging-only never creates a hidden production record.
+Each environment has its own branch, port, hostname, database connection, encrypted
+variables, setup progress and releases. Use the environment link above the wizard
+to switch. Nothing deploys until that environment passes review and server checks.
+
+Agent **1.1.0** or later is required. Existing agent 1.0 deployments keep working,
+but older agents cannot receive setup jobs. Download the current script from
+**Server access**. With no job running, stop only the agent's scheduled task/service,
+replace its installed `manager-agent.cjs`, then restart it. Preserve `agent.json`,
+the data folder, service identity, PATH and CA settings; do not enroll again. The
+next heartbeat advertises guided-setup support. SSH enrollment uses the current
+script automatically for new servers.
+
+Repository inspection runs on the selected server and reads manifests without
+installing dependencies or executing app scripts. It detects Next.js, Angular,
+Node.js, Go and Laravel; recognizes npm/pnpm/Yarn lockfiles; and checks tools visible
+to the agent account. Go executable commands match Windows or Linux. Build commands
+remain editable. Angular's default static server serves one built site under `dist`
+with SPA routing; SSR or custom output layouts need a custom start command. Install
+missing runtimes/package managers for the agent account and re-inspect. Runtime
+installation itself is not part of this wizard.
+
+The database step supports PostgreSQL, MySQL and MariaDB: create a database and
+dedicated app user, attach an existing app credential, or explicitly choose none.
+The engine must already be running and its `psql`, `mysql` or `mariadb` client must
+be on the agent account's PATH. These jobs run on the selected server, so localhost
+means that server. PostgreSQL creation can target a reachable database server;
+MySQL/MariaDB creation is restricted to loopback and creates a localhost account.
+Attach remote MySQL/MariaDB databases using an account already authorized there.
+No database engine is installed and no firewall rules are changed.
+
+New database/user names and passwords are generated per environment. Existing names
+are never overwritten or adopted by the create operation. Administrator credentials
+are encrypted only in the queued job and removed on completion/cancellation; only
+the app credential is retained, encrypted. A test query uses the app credential from
+the target server before the connection is marked ready. Verified database TLS uses
+the native client's trusted CA configuration; configure the application's own driver
+to use equivalent certificate verification. SQL is supplied via stdin; PostgreSQL
+passwords use the child environment and MySQL/MariaDB use a private temporary option
+file, never password arguments. Logs redact passwords and encoded variants.
+
+Setup jobs retain the deployment queue's no-automatic-replay rule after interruption.
+Creation can partially finish because database DDL is not globally transactional.
+The saved app credential and generated names are retained: use **Test saved connection**
+after inspecting/repairing a partial database creation. PostgreSQL recovery also
+checks database ownership and revoked PUBLIC access. **No database** detaches the
+connection without deleting the database, user or data. Automatic database cleanup,
+database engine installation and migration rollback are not performed.
+
+Database variables are injected separately from custom app variables and take
+precedence over duplicate `DATABASE_*`/`DB_*` keys. Angular apps cannot attach database
+credentials; use a backend API. Both environments use production runtime mode.
+Review checks prerequisites, a database decision, reviewed variables and a unique
+LAN/WAN hostname. Final agent checks re-test the database and app/IP port availability.
+Editing configuration invalidates readiness. The initial HTTP health check and Caddy
+activation still happen during deployment, with the existing application rollback.
+
+Validation references: [PostgreSQL psql](https://www.postgresql.org/docs/current/app-psql.html),
+[MySQL CREATE USER](https://dev.mysql.com/doc/refman/8.4/en/create-user.html),
+[MySQL connection options](https://dev.mysql.com/doc/refman/8.4/en/connection-options.html).

@@ -45,9 +45,12 @@ export function WorkspaceBar({ title, context, onNew, onHashChange }: { title: s
   const isRemote = !['fleet', 'local'].includes(serverId)
   const label = hash.startsWith('#app-') ? context?.destinations?.[hash] || 'Application' : isRemote ? sectionTitle || 'Overview' : context?.page || pageNames[pathname] || title
   useEffect(() => {
+    // Next can publish the query before the hash listener catches up. Never save
+    // that intermediate location as another page's remembered tab.
+    if (window.location.pathname !== pathname || window.location.hash !== hash || new URLSearchParams(window.location.search).toString() !== params.toString()) return
     if (!userId || !role || !href || error || /^(Loading|Opening)\b/.test(title) || /not found|unavailable/i.test(title)) return
     register(userId, role, allowedServers.split(',').filter(Boolean), { id: activeId, href, title: label, server: serverId, project: context?.project?.name, environment: context?.environment })
-  }, [userId, role, href, activeId, title, label, serverId, allowedServers, error, context?.project?.name, context?.environment, register])
+  }, [userId, role, href, activeId, title, label, serverId, allowedServers, error, context?.project?.name, context?.environment, register, pathname, hash, params])
   useEffect(() => {
     const container = strip.current, active = container?.querySelector<HTMLElement>('[aria-current="page"]')?.parentElement
     if (!container || !active) return

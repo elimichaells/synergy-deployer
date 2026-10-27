@@ -10,7 +10,7 @@ test('agent APIs reject cookie-only access, malformed credentials and invalid id
   let calls=0;
   const client={query:async()=>({rows:[]}),release(){}};
   const m=load('lib/managed-servers.ts',{'@/lib/db':{db:{connect:async()=>client},query:async()=>{calls++;return{rows:[]};}},
-    '@/lib/api':{ApiError},'@/lib/audit':{audit:async()=>{}},'@/lib/secret-crypto':{},'@/lib/github-connections':{},'@/lib/git-provider-policy':{},'@/scripts/manager-agent.cjs':policy});
+    '@/lib/api':{ApiError},'@/lib/audit':{audit:async()=>{}},'@/lib/secret-crypto':{},'@/lib/github-connections':{},'@/lib/git-provider-policy':{},'@/scripts/manager-agent.cjs':policy,'@/lib/remote-setup-policy':require('../lib/remote-setup-policy.ts')});
   await assert.rejects(m.authenticateAgent(new Request('https://manager/api/server-agent/claim',{headers:{Cookie:'manager_session=anything'}})),e=>e.status===401);
   assert.equal(calls,0);
   for(const value of ['x','../../file','00000000-0000-0000-0000-000000000000;drop table users'])assert.throws(()=>m.uuid(value));
@@ -30,7 +30,7 @@ test('real PostgreSQL enrollment, concurrent claims, multi-app isolation and dur
   const key=process.env.MANAGER_ENCRYPTION_KEY;process.env.MANAGER_ENCRYPTION_KEY='isolated-integration-fixture-key';
   t.after(()=>{if(key===undefined)delete process.env.MANAGER_ENCRYPTION_KEY;else process.env.MANAGER_ENCRYPTION_KEY=key;});
   const m=load('lib/managed-servers.ts',{'@/lib/db':{db:pool,query},'@/lib/api':{ApiError},'@/lib/audit':{audit:async()=>{}},
-    '@/lib/secret-crypto':crypto,'@/lib/github-connections':{},'@/lib/git-provider-policy':{},'@/scripts/manager-agent.cjs':policy});
+    '@/lib/secret-crypto':crypto,'@/lib/github-connections':{},'@/lib/git-provider-policy':{},'@/scripts/manager-agent.cjs':policy,'@/lib/remote-setup-policy':require('../lib/remote-setup-policy.ts')});
   const server=await m.addServer({name:'Campus',platform:'linux',location:'LAN'},userId);
   const agentToken=randomBytes(32).toString('base64url');
   const enrollment={serverId:server.id,enrollmentToken:server.enrollmentToken,agentToken,platform:'linux',protocol:1};

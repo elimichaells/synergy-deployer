@@ -12,6 +12,7 @@ export interface RemoteMetrics {
   tools: { node: string; git: string | null; pm2: string | null; caddy: string | null }
   apps: { id: string; status: string; cpu: number; memory: number }[]
   proxyError?: string | null
+  capabilities?: string[]
 }
 
 export interface ManagedServer {
@@ -47,6 +48,12 @@ export interface RemoteApp {
   env_names: string[]
   live_commit: string | null
   deployed_at: string | null
+  environment_name?: 'production' | 'staging'
+  production_id?: string | null
+  project_type?: 'next' | 'angular' | 'go' | 'laravel' | 'node' | null
+  guided_setup?: boolean
+  setup_step?: string
+  setup_completed_at?: string | null
 }
 
 export interface RemoteJob {
@@ -60,4 +67,5 @@ export interface RemoteJob {
   started_at: string | null
   finished_at: string | null
   updated_at: string
+  kind?: 'deploy' | 'inspect' | 'database' | 'validate'
 }
