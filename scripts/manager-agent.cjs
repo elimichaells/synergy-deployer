@@ -12,7 +12,8 @@ const { randomBytes, X509Certificate } = require('node:crypto');
 const { rootCertificates } = require('node:tls');
 const { createInterface } = require('node:readline/promises');
 const PROTOCOL_VERSION = 1;
-const AGENT_VERSION = '1.0.0';
+const AGENT_VERSION = '1.1.0';
+const SETUP_CAPABILITY = 'guided-setup-v1';
 const ID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -82,7 +83,8 @@ function sanitizeMetrics(raw) {
     tools: Object.fromEntries(['node','git','pm2','caddy'].map(key => [key, str(raw.tools?.[key]) || null])),
     apps: (Array.isArray(raw.apps) ? raw.apps : []).slice(0, 200).filter(x => ID.test(x.id)).map(x => ({ id: x.id,
       status: ['online','stopped','errored','launching','stopping','missing'].includes(x.status) ? x.status : 'unknown', cpu: number(x.cpu, 10000), memory: number(x.memory) })),
-    proxyError: raw.proxyError ? str(raw.proxyError, 500) : null };
+    proxyError: raw.proxyError ? str(raw.proxyError, 500) : null,
+    capabilities: Array.isArray(raw.capabilities) && raw.capabilities.includes(SETUP_CAPABILITY) ? [SETUP_CAPABILITY] : [] };
   if (result.memoryFree > result.memoryTotal || (result.diskFree !== null && result.diskTotal !== null && result.diskFree > result.diskTotal)) throw new Error('Invalid capacity');
   return result;
 }
@@ -156,7 +158,8 @@ function run(file, args = [], options = {}) {
   return new Promise((resolve, reject) => {
     let output = '', settled = false, timedOut = false;
     const child = spawn(file, args, { cwd: options.cwd, env: options.env || baseEnv(), shell: !!options.shell,
-      detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore','pipe','pipe'] });
+      detached: process.platform !== 'win32', windowsHide: true, stdio: [options.input === undefined ? 'ignore' : 'pipe','pipe','pipe'] });
+    if (child.stdin) { child.stdin.on('error', () => {}); child.stdin.end(options.input); }
     const emit = text => { output = (output + text).slice(-262144); options.log?.(text); };
     const stdout = streamRedactor(options.secrets || [], emit), stderr = streamRedactor(options.secrets || [], emit);
     child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
@@ -339,8 +342,9 @@ async function deploy(root, job, journal, tools, persist, log, dependencies = {}
   finally { if(caFile)await fs.unlink(caFile); }
   const commit = await command('git',['-C',release,'rev-parse','HEAD'],{env:{...baseEnv(),GIT_CONFIG_NOSYSTEM:'1'}});
   if (!/^[a-f0-9]{40,64}$/.test(commit)) throw new Error('Git did not identify the checked-out commit');
-  const env = {...baseEnv(),...app.environment,NODE_ENV:'production',PORT:String(app.port),HOST:'127.0.0.1',HOSTNAME:'127.0.0.1'};
-  await writeEnv(release,{...app.environment,PORT:String(app.port),HOST:'127.0.0.1',HOSTNAME:'127.0.0.1',NODE_ENV:'production'});
+  const appEnv = {...app.environment,...(job.payload.project_type==='go'?{APP_PORT:String(app.port)}:{}),PORT:String(app.port),HOST:'127.0.0.1',HOSTNAME:'127.0.0.1',NODE_ENV:'production'};
+  const env = {...baseEnv(),...appEnv};
+  await writeEnv(release,appEnv);
   for (const [stage, appCommand] of [['install',app.install_cmd],['build',app.build_cmd]]) {
     if (!appCommand) continue;
     log(`[stage] ${stage}\n`);
@@ -360,6 +364,10 @@ function stop(){if(closing)return;closing=true;if(child.pid){if(process.platform
 process.on('SIGINT',stop);process.on('SIGTERM',stop);process.on('message',m=>{if(m==='shutdown')stop()});
 child.on('error',e=>{console.error(e.message);process.exit(1)});child.on('exit',c=>{if(!closing)process.exit(c??1)});
 `,{mode:0o600});
+  if(app.start_cmd==='@manager/static') {
+    const staticRoot=await findStaticRoot(release);
+    await fs.writeFile(runner,`(${serveStatic.toString()})(${JSON.stringify(staticRoot)},${app.port});\n`,{mode:0o600});
+  }
   const ecosystem = path.join(releaseState,'ecosystem.config.js');
   const definition = {apps:[{name:`manager-remote-${app.id}`,script:runner,cwd:release,interpreter:process.execPath,
     kill_timeout:10000,shutdown_with_message:true,min_uptime:'10s',max_restarts:10,env:{NODE_ENV:'production'}}]};
@@ -471,7 +479,7 @@ async function runAgent(root) {
     if(!journal||reportBusy)return;reportBusy=true;
     try{
       journal.sequence++;
-      const snapshot={id:journal.id,claimToken:journal.claimToken,status:journal.status,log:journal.log,sequence:journal.sequence,commitSha:journal.commitSha};
+      const snapshot={id:journal.id,claimToken:journal.claimToken,status:journal.status,log:journal.log,sequence:journal.sequence,commitSha:journal.commitSha,result:journal.result};
       await persist();
       await request(config,'report',snapshot);
       if(snapshot.status!=='running'&&journal?.id===snapshot.id){await fs.unlink(journalFile);journal=null;}
@@ -485,7 +493,7 @@ async function runAgent(root) {
   let heartbeatBusy=false;
   const pulse=async()=>{
     if(heartbeatBusy)return;heartbeatBusy=true;
-    try{const data=await sample(root,tools,prior);prior=data.cpu;await request(config,'heartbeat',{protocol:PROTOCOL_VERSION,metrics:data.metrics,caPem:data.caPem});}
+    try{const data=await sample(root,tools,prior);prior=data.cpu;data.metrics.capabilities=[SETUP_CAPABILITY];await request(config,'heartbeat',{protocol:PROTOCOL_VERSION,metrics:data.metrics,caPem:data.caPem});}
     finally{heartbeatBusy=false;}
   };
   const describe=error=>console.error(`[agent] ${redact(error.message,[config.agentToken])}`);
@@ -499,10 +507,17 @@ async function runAgent(root) {
         const {job,protocol}=await request(config,'claim',{});
         if(protocol!==PROTOCOL_VERSION)throw new Error('Agent upgrade required');
         if(!job){await wait(5000);continue;}
-        logSecrets=[...Object.values(job.payload.environment||{}),job.payload.git?.token,job.payload.git?.token?Buffer.from(`${job.payload.git.username}:${job.payload.git.token}`).toString('base64'):'',config.agentToken].filter(Boolean);
+        logSecrets=[...jobSecrets(job.payload),config.agentToken];
         journal={id:job.id,appId:job.payload.id,claimToken:job.claimToken,status:'running',sequence:0,log:'',commitSha:null};
         await persist();
-        try{journal.commitSha=await deploy(root,job,journal,tools,persist,log);journal.status='success';}
+        try{
+          if (!job.kind || job.kind==='deploy') journal.commitSha=await deploy(root,job,journal,tools,persist,log);
+          else if (job.kind==='inspect') { journal.result=await inspectRepository(root,job,tools,log); journal.commitSha=journal.result.commit; }
+          else if (job.kind==='database') journal.result=await setupDatabase(root,job,log);
+          else if (job.kind==='validate') journal.result=await validateSetup(root,job,tools);
+          else throw new Error('Unknown agent operation; upgrade the agent');
+          journal.status='success';
+        }
         catch(error){log(`[failed] ${error.message}\n`);journal.status='failed';}
         await persist();await report();logSecrets=[];
       }catch(error){describe(error);if(error.status===401){stopped=true;break;}await wait(10000);}
@@ -511,6 +526,198 @@ async function runAgent(root) {
     clearInterval(timer);while(reportBusy||heartbeatBusy)await wait(100);
     await fs.unlink(lock).catch(()=>{});process.off('SIGINT',onStop);process.off('SIGTERM',onStop);
   }
+}
+
+async function findStaticRoot(release) {
+  const roots=[];
+  async function visit(relative,depth) {
+    const directory=await contained(release,relative);
+    for(const entry of await fs.readdir(directory,{withFileTypes:true})) {
+      if(entry.isSymbolicLink())throw new Error('Static output cannot contain symlinks');
+      if(entry.name==='index.html' && entry.isFile()) roots.push(directory);
+      else if(entry.isDirectory() && depth<3)await visit(path.join(relative,entry.name),depth+1);
+    }
+  }
+  await visit('dist',0);
+  if(roots.length!==1)throw new Error('Expected one built Angular site under dist. Set a custom start command for a different output layout or SSR.');
+  return roots[0];
+}
+
+function serveStatic(root,portNumber) {
+  const http=require('node:http'),fs=require('node:fs/promises'),path=require('node:path');
+  const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.webp':'image/webp','.ico':'image/x-icon','.woff2':'font/woff2','.woff':'font/woff','.wasm':'application/wasm'};
+  const server=http.createServer(async(req,res)=>{
+    try {
+      if(!['GET','HEAD'].includes(req.method)){res.writeHead(405);return res.end();}
+      const name=decodeURIComponent(new URL(req.url,'http://localhost').pathname);
+      if(name.includes('\\') || name.includes('\0') || name.split('/').some(part=>part.startsWith('.'))){res.writeHead(404);return res.end();}
+      let filename=path.resolve(root,'.'+name),relative=path.relative(root,filename);
+      if(relative.startsWith('..')||path.isAbsolute(relative)){res.writeHead(404);return res.end();}
+      let cursor=root;
+      for(const part of relative.split(path.sep).filter(Boolean)) {cursor=path.join(cursor,part);if((await fs.lstat(cursor).catch(()=>null))?.isSymbolicLink())throw new Error('Linked asset');}
+      const stat=await fs.stat(filename).catch(()=>null);
+      if(!stat?.isFile()) {if(path.extname(name)){res.writeHead(404);return res.end();}filename=path.join(root,'index.html');}
+      const data=await fs.readFile(filename);
+      res.writeHead(200,{'Content-Type':types[path.extname(filename)]||'application/octet-stream','X-Content-Type-Options':'nosniff'});res.end(req.method==='HEAD'?undefined:data);
+    }catch{res.writeHead(404);res.end();}
+  });
+  server.listen(portNumber,'127.0.0.1');
+  return server;
+}
+
+function jobSecrets(payload) {
+  const database = payload.database || {};
+  const values = [...Object.values(payload.environment || {}),payload.git?.token,database.password,database.adminPassword,
+    payload.git?.token ? Buffer.from(`${payload.git.username}:${payload.git.token}`).toString('base64') : ''].filter(x=>typeof x==='string' && x);
+  return [...values,...values.flatMap(value=>{try{return [encodeURIComponent(value)];}catch{return [];}}),...values.map(x=>x.replace(/'/g,"''"))];
+}
+
+async function cloneForSetup(root, job, log, command = run) {
+  const app = validateApp(job.payload);
+  if (!ID.test(job.id) || !ID.test(job.payload.id)) throw new Error('Invalid setup identifier');
+  const destination = await contained(root,'setup',job.payload.id,job.id);
+  await fs.mkdir(path.dirname(destination),{recursive:true,mode:0o700});
+  if (await fs.lstat(destination).catch(()=>null)) throw new Error('Inspection directory already exists; refusing to replay');
+  const config = [['credential.helper',''],['http.extraHeader',''],['http.followRedirects','false'],['http.sslVerify','true'],
+    ['protocol.allow','never'],['protocol.https.allow','always'],['core.hooksPath',path.join(root,'disabled-hooks')]];
+  const git = job.payload.git;
+  if (git?.token) config.push([`http.${app.repo_url}.extraHeader`,`Authorization: Basic ${Buffer.from(`${git.username}:${git.token}`).toString('base64')}`]);
+  const ca = git?.caPem ? await contained(root,`setup-ca-${job.id}.pem`) : null;
+  if (ca) { await fs.writeFile(ca,[...rootCertificates,git.caPem].join('\n'),{mode:0o600}); config.push(['http.sslCAInfo',ca],['http.sslBackend','openssl']); }
+  const env = {...baseEnv(),GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'never',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null',GIT_CONFIG_COUNT:String(config.length)};
+  config.forEach(([key,value],i)=>{env[`GIT_CONFIG_KEY_${i}`]=key;env[`GIT_CONFIG_VALUE_${i}`]=value;});
+  log('[source] Cloning the selected branch on this server. No repository scripts are executed.\n');
+  try { await command('git',['clone','--depth','1','--single-branch','--branch',app.branch,'--',app.repo_url,destination],{env,timeout:600000,log,secrets:jobSecrets(job.payload)}); }
+  finally { if(ca)await fs.unlink(ca); }
+  const commit = await command('git',['-C',destination,'rev-parse','HEAD'],{env});
+  if(!/^[a-f0-9]{40,64}$/.test(commit))throw new Error('Git did not identify the inspected commit');
+  return {destination,commit};
+}
+
+async function manifest(root, name) {
+  const filename = await contained(root,name);
+  const stat = await fs.lstat(filename).catch(error=>{if(error.code==='ENOENT')return null;throw error;});
+  if(!stat)return null;
+  if(!stat.isFile() || stat.size>1024*1024)throw new Error(`Invalid or oversized ${name}`);
+  return fs.readFile(filename,'utf8');
+}
+
+async function detectFramework(root, platform = process.platform, appPort = 3000) {
+  const pkgText = await manifest(root,'package.json'), composerText = await manifest(root,'composer.json');
+  const pkg = pkgText ? JSON.parse(pkgText) : null, composer = composerText ? JSON.parse(composerText) : null;
+  const deps = {...pkg?.dependencies,...pkg?.devDependencies};
+  const framework = composer?.require?.['laravel/framework'] ? 'laravel' : await manifest(root,'go.mod') !== null ? 'go' :
+    deps.next ? 'next' : deps['@angular/core'] || await manifest(root,'angular.json') !== null ? 'angular' : pkg ? 'node' : null;
+  const packageManager = pkg ? await manifest(root,'pnpm-lock.yaml') !== null ? 'pnpm' : await manifest(root,'yarn.lock') !== null ? 'yarn' : 'npm' : null;
+  const locked = pkg && (await manifest(root,'package-lock.json') !== null || await manifest(root,'npm-shrinkwrap.json') !== null);
+  const classicYarn = packageManager==='yarn' && (await manifest(root,'yarn.lock')).includes('yarn lockfile v1');
+  const install = packageManager === 'pnpm' ? 'pnpm install --frozen-lockfile --prod=false' : packageManager === 'yarn' ? classicYarn ? 'yarn install --frozen-lockfile --production=false' : 'yarn install --immutable' : locked ? 'npm ci --include=dev' : 'npm install --include=dev';
+  const runner = packageManager || 'npm';
+  const commands = {install_cmd: pkg ? install : '', build_cmd: pkg?.scripts?.build ? `${runner} run build` : '', start_cmd: pkg?.scripts?.start ? `${runner} run start` : ''};
+  if(framework==='go') Object.assign(commands,{install_cmd:'go mod download',build_cmd:`go build -o ${platform==='win32'?'app.exe':'app'} .`,start_cmd:platform==='win32'?'.\\app.exe':'./app'});
+  if(framework==='laravel') Object.assign(commands,{install_cmd:'composer install --no-dev --optimize-autoloader',build_cmd:'php artisan config:cache',start_cmd:`php artisan serve --host=127.0.0.1 --port=${appPort} --no-reload`});
+  if(framework==='angular') commands.start_cmd='@manager/static';
+  return {framework,commands,packageManager};
+}
+
+async function inspectTools(tools, command = run) {
+  const result = {...tools.tools};
+  for(const name of ['npm','pnpm','yarn','go','php','composer','psql','mysql','mariadb']) {
+    try {
+      // These are fixed tool names, never repository-controlled shell text.
+      result[name] = (await command(name,[name==='go'?'version':'--version'],{shell:process.platform==='win32' && ['npm','pnpm','yarn','composer'].includes(name),timeout:10000})).split(/\r?\n/)[0].slice(0,200);
+    } catch { result[name]=null; }
+  }
+  return result;
+}
+
+async function inspectRepository(root, job, tools, log, dependencies = {}) {
+  const {destination,commit} = await cloneForSetup(root,job,log,dependencies.run || run);
+  const detection = await detectFramework(destination,dependencies.platform || process.platform,job.payload.port);
+  const installed = await inspectTools(tools,dependencies.run || run);
+  log(`[source] ${detection.framework || 'No supported framework'} detected. Commit ${commit.slice(0,12)}.\n`);
+  return {...detection,commit,tools:installed};
+}
+
+function validateDatabase(input) {
+  if(!input || !['create','existing'].includes(input.mode) || !['postgresql','mysql','mariadb'].includes(input.provider))throw new Error('Choose PostgreSQL, MySQL or MariaDB and a database action');
+  const host=requireText(input.host,'database host',253);
+  if(!net.isIP(host) && !/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i.test(host))throw new Error('Use a database hostname or IP address');
+  const number=Number(input.port);
+  if(!Number.isInteger(number)||number<1||number>65535)throw new Error('Invalid database port');
+  const identifier=(value,label,max=63)=>{if(typeof value!=='string'||!new RegExp(`^[a-zA-Z_][a-zA-Z0-9_]{0,${max-1}}$`).test(value))throw new Error(`Invalid ${label}: use letters, numbers and underscores`);return value;};
+  const password=(value)=>{if(typeof value!=='string'||!value||value.length>4096||/[\0\r\n]/.test(value)||!value.isWellFormed())throw new Error('A database password is required (maximum 4096 characters, one valid Unicode line)');return value;};
+  const result={mode:input.mode,provider:input.provider,host,port:number,database:identifier(input.database,'database name'),username:identifier(input.username,'database user',input.provider==='postgresql'?63:32),password:password(input.password),tls:input.tls===true,managed:input.managed===true || input.mode==='create'};
+  if(input.mode==='create') {
+    result.adminUsername=identifier(input.adminUsername,'database administrator');result.adminPassword=password(input.adminPassword);
+    if(input.provider!=='postgresql' && !['127.0.0.1','localhost','::1'].includes(host))throw new Error('Create MySQL/MariaDB databases on this server using a loopback address; attach remote databases with an existing account');
+  }
+  return result;
+}
+
+function databaseEnvironment(input) {
+  const d=validateDatabase({...input,mode:'existing'}),host=net.isIP(d.host)===6?`[${d.host}]`:d.host;
+  const url=`${d.provider==='postgresql'?'postgresql':'mysql'}://${encodeURIComponent(d.username)}:${encodeURIComponent(d.password)}@${host}:${d.port}/${encodeURIComponent(d.database)}${d.provider==='postgresql'?`?sslmode=${d.tls?'verify-full':'disable'}`:''}`;
+  return {DATABASE_URL:url,DATABASE_HOST:d.host,DATABASE_PORT:String(d.port),DATABASE_NAME:d.database,DATABASE_USER:d.username,DATABASE_PASSWORD:d.password,
+    DB_CONNECTION:d.provider==='postgresql'?'pgsql':'mysql',DB_HOST:d.host,DB_PORT:String(d.port),DB_DATABASE:d.database,DB_USERNAME:d.username,DB_PASSWORD:d.password,
+    ...(d.provider==='postgresql'?{PGSSLMODE:d.tls?'verify-full':'disable'}:{})};
+}
+
+async function setupDatabase(root, job, log, dependencies = {}) {
+  if(!ID.test(job.id)||!ID.test(job.payload.id))throw new Error('Invalid database job identifier');
+  const d=validateDatabase(job.payload.database),command=dependencies.run || run;
+  const secrets=jobSecrets(job.payload);
+  const sqlString=value=>`'${value.replace(/'/g,"''")}'`;
+  async function sql(statement, admin=false, database=d.database) {
+    const username=admin?d.adminUsername:d.username,password=admin?d.adminPassword:d.password;
+    if(d.provider==='postgresql')return command('psql',['-X','--no-password','--set','ON_ERROR_STOP=1','--tuples-only','--no-align','--host',d.host,'--port',String(d.port),'--username',username,'--dbname',database],{
+      env:{...baseEnv(),PGPASSWORD:password,PGSSLMODE:d.tls?'verify-full':'disable',PGCONNECT_TIMEOUT:'10',PGOPTIONS:'-c statement_timeout=15000'},
+      input:`SET standard_conforming_strings=on;\n${statement}\n`,timeout:30000,secrets});
+    const filename=await contained(root,`db-client-${job.id}.cnf`);
+    const quoted=value=>`"${String(value).replace(/\\/g,'\\\\').replace(/"/g,'\\"')}"`;
+    try {
+      const tls=d.provider==='mysql'?`ssl-mode=${d.tls?'VERIFY_IDENTITY':'DISABLED'}`:d.tls?'ssl\nssl-verify-server-cert':'skip-ssl';
+      await fs.writeFile(filename,`[client]\nhost=${quoted(d.host)}\nport=${d.port}\nuser=${quoted(username)}\npassword=${quoted(password)}\nprotocol=tcp\n${tls}\n`,{mode:0o600,flag:'wx'});
+      return await command(d.provider==='mysql'?'mysql':'mariadb',[`--defaults-extra-file=${filename}`,'--batch','--skip-column-names','--raw',...(database?['--database',database]:[])],{input:`SET SESSION sql_mode='NO_BACKSLASH_ESCAPES';\n${statement}\n`,timeout:30000,secrets});
+    } finally { await fs.unlink(filename).catch(()=>{}); }
+  }
+  if(d.mode==='create') {
+    log('[database] Creating an isolated database and application account. Existing names are never reused or altered.\n');
+    if(d.provider==='postgresql') {
+      const existing=await sql(`SELECT 1 FROM pg_database WHERE datname=${sqlString(d.database)} UNION ALL SELECT 1 FROM pg_roles WHERE rolname=${sqlString(d.username)};`,true,'postgres');
+      if(/(?:^|\n)1(?:\n|$)/.test(existing))throw new Error('Database or role already exists. Use Test saved connection to recover a partial creation, or attach an existing database.');
+      await sql(`CREATE ROLE "${d.username}" LOGIN PASSWORD ${sqlString(d.password)} NOSUPERUSER NOCREATEDB NOCREATEROLE;`,true,'postgres');
+      await sql(`CREATE DATABASE "${d.database}" OWNER "${d.username}";`,true,'postgres');
+      await sql(`REVOKE ALL ON DATABASE "${d.database}" FROM PUBLIC;`,true,'postgres');
+      await sql(`REVOKE ALL ON SCHEMA public FROM PUBLIC; GRANT USAGE, CREATE ON SCHEMA public TO "${d.username}";`,true,d.database);
+    } else {
+      const existing=await sql(`SELECT 1 FROM information_schema.schemata WHERE schema_name=${sqlString(d.database)} UNION ALL SELECT 1 FROM mysql.user WHERE user=${sqlString(d.username)};`,true,'');
+      if(/(?:^|\n)1(?:\n|$)/.test(existing))throw new Error('Database or user already exists. Use Test saved connection to recover a partial creation, or attach an existing database.');
+      await sql(`CREATE USER ${sqlString(d.username)}@'localhost' IDENTIFIED BY ${sqlString(d.password)};\nCREATE DATABASE \`${d.database}\`;\nGRANT ALL PRIVILEGES ON \`${d.database}\`.* TO ${sqlString(d.username)}@'localhost';`,true,'');
+    }
+  }
+  const checked=await sql('SELECT 1;');
+  if(!/(?:^|\n)1(?:\n|$)/.test(checked))throw new Error('Database did not return a successful test query');
+  if(d.managed && d.provider==='postgresql') {
+    const privateDatabase=await sql(`SELECT 1 FROM pg_database d WHERE d.datname=current_database() AND pg_get_userbyid(d.datdba)=current_user AND NOT EXISTS (SELECT 1 FROM aclexplode(coalesce(d.datacl,acldefault('d',d.datdba))) a WHERE a.grantee=0 AND a.privilege_type IN ('CONNECT','CREATE','TEMPORARY'));`);
+    if(!/(?:^|\n)1(?:\n|$)/.test(privateDatabase))throw new Error('Database creation is incomplete: verify the app owns its database and revoke PUBLIC access before testing the saved connection again');
+  }
+  log('[database] Application credentials verified from this server.\n');
+  return {ok:true};
+}
+
+async function validateSetup(root, job, tools, dependencies = {}) {
+  const app=validateApp(job.payload);
+  const installed=await inspectTools(tools,dependencies.run || run);
+  const framework=job.payload.project_type;
+  const required=['git','caddy','pm2',...(framework==='go'?['go']:framework==='laravel'?['php','composer']:['node']),...(job.payload.packageManager?[job.payload.packageManager]:[])];
+  const missing=required.filter(name=>!installed[name]);
+  if(missing.length)throw new Error(`Install these tools for the agent account: ${missing.join(', ')}`);
+  const apps=await readJson(path.join(root,'apps.json'),{});
+  if(!apps[job.payload.id] || apps[job.payload.id].app.port!==app.port)await (dependencies.checkPort || checkPort)(app.port);
+  if(app.ip_port && (!apps[job.payload.id] || apps[job.payload.id].app.ip_port!==app.ip_port))await (dependencies.checkPort || checkPort)(app.ip_port);
+  if(job.payload.database)await setupDatabase(root,{...job,payload:{...job.payload,database:{...job.payload.database,mode:'existing'}}},()=>{},dependencies);
+  return {ok:true};
 }
 
 async function main(){
@@ -530,5 +737,5 @@ async function main(){
   if(action==='enroll')await enrollCli(root,options);else await runAgent(root);
 }
 
-module.exports={PROTOCOL_VERSION,AGENT_VERSION,validateApp,sanitizeMetrics,redact,streamRedactor,caddyConfig,managerAddress,contained,run,request,deploy,restoreActivation,healthy,atomicJson,readJson,enrollCli};
+module.exports={PROTOCOL_VERSION,AGENT_VERSION,SETUP_CAPABILITY,validateApp,sanitizeMetrics,redact,streamRedactor,caddyConfig,managerAddress,contained,run,request,deploy,restoreActivation,healthy,atomicJson,readJson,enrollCli,detectFramework,inspectRepository,validateDatabase,databaseEnvironment,setupDatabase,validateSetup,jobSecrets,findStaticRoot,serveStatic};
 if(require.main===module)main().catch(error=>{console.error(error.message);process.exitCode=1;});

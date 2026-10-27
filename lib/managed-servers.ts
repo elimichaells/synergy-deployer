@@ -7,7 +7,8 @@ import { audit } from '@/lib/audit'
 import { decryptSecret, encryptSecret } from '@/lib/secret-crypto'
 import { getGitConnection, getGitHubConnectionToken } from '@/lib/github-connections'
 import { repositoryPath } from '@/lib/git-provider-policy'
-import { validateApp, sanitizeMetrics, redact, PROTOCOL_VERSION } from '@/scripts/manager-agent.cjs'
+import { validateApp, sanitizeMetrics, redact, PROTOCOL_VERSION, databaseEnvironment, jobSecrets } from '@/scripts/manager-agent.cjs'
+import { cleanInspection, REMOTE_SETUP_CAPABILITY } from '@/lib/remote-setup-policy'
 import type { ManagedServer, RemoteApp } from './managed-server-types'
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex')
@@ -16,7 +17,8 @@ const serverColumns = `s.id,s.name,s.location,s.platform,s.enabled,s.enrolled_at
   (s.ca_pem is not null) as has_ca,
   (select count(*)::int from remote_apps a where a.server_id=s.id) as app_count`
 const appColumns = `id,server_id,name,repo_url,branch,install_cmd,build_cmd,start_cmd,port,health_path,
-  access_mode,hostname,ip_address,ip_port,git_connection_id,env_names,live_commit,deployed_at`
+  access_mode,hostname,ip_address,ip_port,git_connection_id,env_names,live_commit,deployed_at,
+  environment_name,production_id,project_type,guided_setup,setup_step,setup_completed_at`
 let schema: Promise<void> | null = null
 
 export function ensureManagedServers() {
@@ -27,6 +29,7 @@ export function ensureManagedServers() {
       await client.query('begin')
       await client.query("select pg_advisory_xact_lock(hashtext('manager-managed-servers-schema'))")
       await client.query(sql)
+      await client.query(await readFile(path.join(process.cwd(), 'db/migrations/026_remote_app_setup.sql'), 'utf8'))
       await client.query('commit')
     } catch (error) { await client.query('rollback'); throw error } finally { client.release() }
   })().catch(error => { schema = null; throw error })
@@ -59,8 +62,8 @@ export async function serverDetail(id: string) {
   if (!result.rows[0]) throw new ApiError('Server not found', 404)
   const [apps, jobs] = await Promise.all([
     query<RemoteApp>(`select ${appColumns} from remote_apps where server_id=$1 order by name`, [id]),
-    query(`select j.id,j.app_id,a.name as app_name,j.status,j.log,j.commit_sha,j.created_at,j.started_at,j.finished_at,j.updated_at
-      from remote_jobs j join remote_apps a on a.id=j.app_id where j.server_id=$1 order by j.created_at desc limit 30`, [id]),
+    query(`select j.id,j.app_id,a.name as app_name,j.kind,j.status,j.log,j.commit_sha,j.created_at,j.started_at,j.finished_at,j.updated_at
+      from remote_jobs j join remote_apps a on a.id=j.app_id where j.server_id=$1 and j.kind='deploy' order by j.created_at desc limit 30`, [id]),
   ])
   return { server: status(result.rows[0]), apps: apps.rows, jobs: jobs.rows }
 }
@@ -163,6 +166,7 @@ export async function saveRemoteApp(serverId: string, appId: string | null, body
     await client.query('begin')
     const server = await client.query('select id from managed_servers where id=$1 and enabled=true for update', [serverId])
     if (!server.rowCount) throw new ApiError('Server is revoked or missing', 409)
+    if (appId && (await client.query('select id from remote_apps where id=$1 and server_id=$2 and guided_setup=true', [appId,serverId])).rowCount) throw new ApiError('Use guided setup to change this application', 409)
     if (appId && (await client.query("select id from remote_jobs where app_id=$1 and status in ('queued','running')", [appId])).rowCount) throw new ApiError('Wait for the active deployment before editing this app', 409)
     const collision = await client.query(`select name from remote_apps where server_id=$1 and ($2::uuid is null or id<>$2)
       and (hostname=$3 or port=$4 or port=$5 or ip_port=$4 or ip_port=$5)`, [serverId, appId, app.hostname, app.port, app.ip_port])
@@ -207,10 +211,14 @@ export async function queueRemoteDeploy(serverId: string, appId: string, userId:
     if (!server?.enabled || !server.enrolled_at) throw new ApiError('Enroll an active server first', 409)
     const app = (await client.query('select * from remote_apps where id=$1 and server_id=$2', [appId, serverId])).rows[0]
     if (!app) throw new ApiError('App not found', 404)
+    if (app.guided_setup && !app.setup_completed_at) throw new ApiError('Complete guided setup and server checks before deploying this environment', 409)
+    if (app.guided_setup && !server.metrics?.capabilities?.includes(REMOTE_SETUP_CAPABILITY)) throw new ApiError('Update the agent before deploying this guided application',409)
     if ((await client.query("select id from remote_jobs where app_id=$1 and status in ('queued','running')", [appId])).rowCount) throw new ApiError('This app already has a queued or running deployment', 409)
     if (app.git_connection_id !== before.git_connection_id) throw new ApiError('Git connection changed. Retry deployment.', 409)
     if (connection) repositoryPath(app.repo_url, connection)
-    const payload = { ...validateApp({ ...app, environment: JSON.parse(decryptSecret(app.env_ciphertext)) }), id: app.id, git }
+    const database = app.database_config?.status === 'ready' && app.database_ciphertext ? JSON.parse(decryptSecret(app.database_ciphertext)) : null
+    const environment = { ...JSON.parse(decryptSecret(app.env_ciphertext)), ...(database ? databaseEnvironment(database) : {}) }
+    const payload = { ...validateApp({ ...app, environment }), id: app.id, git, project_type: app.project_type, requiredCapability: app.guided_setup ? REMOTE_SETUP_CAPABILITY : null }
     const result = await client.query(`insert into remote_jobs (server_id,app_id,user_id,payload_ciphertext) values ($1,$2,$3,$4) returning id`,
       [serverId, appId, userId, encryptSecret(JSON.stringify(payload))])
     jobId = result.rows[0].id
@@ -224,14 +232,17 @@ export async function claimJob(serverId: string) {
   const client = await db.connect()
   try {
     await client.query('begin')
-    const server = await client.query('select id from managed_servers where id=$1 and enabled=true for update', [serverId])
+    const server = await client.query('select id,metrics from managed_servers where id=$1 and enabled=true for update', [serverId])
     if (!server.rowCount) throw new ApiError('Server revoked', 401)
     // One job per server. A disconnected claim remains assigned, NEVER automatically re-executed.
     let job = (await client.query("select * from remote_jobs where server_id=$1 and status='running'", [serverId])).rows[0]
     if (!job) job = (await client.query(`update remote_jobs set status='running',claim_token=$2,started_at=now(),updated_at=now()
-      where id=(select id from remote_jobs where server_id=$1 and status='queued' order by created_at limit 1)
-      returning *`, [serverId, token()])).rows[0]
-    const result = job ? { id: job.id, claimToken: job.claim_token, payload: JSON.parse(decryptSecret(job.payload_ciphertext)) } : null
+      where id=(select id from remote_jobs where server_id=$1 and status='queued' and (kind='deploy' or $3) order by created_at limit 1)
+      returning *`, [serverId, token(), server.rows[0].metrics?.capabilities?.includes(REMOTE_SETUP_CAPABILITY) === true])).rows[0]
+    // An older agent must never execute a setup payload as a deployment, including after a downgrade.
+    const payload = job ? JSON.parse(decryptSecret(job.payload_ciphertext)) : null
+    const capable = !job || (job.kind === 'deploy' && !payload.requiredCapability) || server.rows[0].metrics?.capabilities?.includes(REMOTE_SETUP_CAPABILITY) === true
+    const result = job && capable ? { id: job.id, kind: job.kind, claimToken: job.claim_token, payload } : null
     await client.query('commit')
     return { job: result, protocol: PROTOCOL_VERSION }
   } catch (error) { await client.query('rollback'); throw error } finally { client.release() }
@@ -248,15 +259,33 @@ export async function reportJob(serverId: string, body: Record<string, unknown>)
     if (!job) throw new ApiError('Job does not belong to this agent', 404)
     if (job.status !== 'running' || Number(body.sequence) <= job.report_sequence) { await client.query('commit'); return { ok: true } }
     const payload = JSON.parse(decryptSecret(job.payload_ciphertext))
-    const secrets = [...Object.values(payload.environment) as string[], payload.git?.token,
-      payload.git ? Buffer.from(`${payload.git.username}:${payload.git.token}`).toString('base64') : ''].filter(Boolean)
+    const secrets = jobSecrets(payload)
     const log = redact(body.log, secrets)
     const finished = body.status !== 'running'
-    if (body.status === 'success' && !body.commitSha) throw new ApiError('Successful deployment must identify its commit', 400)
+    const kind = job.kind || 'deploy'
+    if (body.status === 'success' && ['deploy','inspect'].includes(kind) && !body.commitSha) throw new ApiError('Successful deployment or inspection must identify its commit', 400)
+    let result: object | null = null
+    if (body.status === 'success' && kind === 'inspect') {
+      try { result = cleanInspection(body.result) } catch (error) { throw new ApiError((error as Error).message,400) }
+      if ((result as { commit: string }).commit !== body.commitSha) throw new ApiError('Inspection commit mismatch',400)
+    } else if (body.status === 'success' && ['database','validate'].includes(kind)) {
+      if ((body.result as { ok?: boolean } | undefined)?.ok !== true) throw new ApiError('Setup job must report a successful check',400)
+      result = { ok: true }
+    }
     await client.query(`update remote_jobs set status=$2,log=$3,commit_sha=$4,report_sequence=$5,updated_at=now(),
-      finished_at=case when $6 then now() else null end,payload_ciphertext=case when $6 then null else payload_ciphertext end where id=$1`,
-    [id,body.status,log,body.commitSha || null,body.sequence,finished])
-    if (body.status === 'success') await client.query('update remote_apps set live_commit=$2,deployed_at=now() where id=$1', [job.app_id,body.commitSha])
+      finished_at=case when $6 then now() else null end,payload_ciphertext=case when $6 then null else payload_ciphertext end,result=$7::jsonb where id=$1`,
+    [id,body.status,log,body.commitSha || null,body.sequence,finished,JSON.stringify(result)])
+    if (body.status === 'success' && kind === 'deploy') await client.query('update remote_apps set live_commit=$2,deployed_at=now() where id=$1', [job.app_id,body.commitSha])
+    if (body.status === 'success' && kind === 'inspect') {
+      const inspection = result as ReturnType<typeof cleanInspection>
+      await client.query(`update remote_apps set inspection=$2::jsonb,project_type=coalesce(project_type,$3),
+        install_cmd=case when inspection is null then $4 else install_cmd end,build_cmd=case when inspection is null then $5 else build_cmd end,
+        start_cmd=case when inspection is null then $6 else start_cmd end,setup_step='runtime',setup_completed_at=null where id=$1`,
+      [job.app_id,JSON.stringify(inspection),inspection.framework,inspection.commands.install_cmd,inspection.commands.build_cmd,inspection.commands.start_cmd])
+    }
+    if (finished && kind === 'database') await client.query(`update remote_apps set database_config=jsonb_set(database_config,'{status}',to_jsonb($2::text)),
+      setup_decisions=setup_decisions||jsonb_build_object('database',case when $2='ready' then 'configured' else 'pending' end),setup_completed_at=null where id=$1`,[job.app_id,body.status === 'success' ? 'ready' : 'failed'])
+    if (body.status === 'success' && kind === 'validate') await client.query("update remote_apps set setup_completed_at=now(),setup_step='review' where id=$1",[job.app_id])
     await client.query('commit')
     return { ok: true }
   } catch (error) { await client.query('rollback'); throw error } finally { client.release() }
