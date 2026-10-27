@@ -180,7 +180,7 @@ function GitHubAccountConnections({ isAdmin }: { isAdmin: boolean }) {
 
   if (!isAdmin) {
     return (
-      <div className="rounded-lg border border-white/10 bg-black/30 p-4">
+      <div className="rounded-lg border border-white/10 bg-well/30 p-4">
         <p className="text-sm text-muted-foreground">GitHub: {hasToken ? 'Connected' : 'Not connected'}</p>
       </div>
     )
@@ -281,7 +281,7 @@ function GitHubAccountConnections({ isAdmin }: { isAdmin: boolean }) {
 
   // Idle / Requesting state
   return (
-    <div className="rounded-lg border border-white/10 bg-black/30 p-4 space-y-3">
+    <div className="rounded-lg border border-white/10 bg-well/30 p-4 space-y-3">
       <div>
         <p className="text-sm text-foreground mb-0.5">New GitHub connection</p>
         <p className="text-[11px] text-muted-foreground">Give this account a recognizable name, then authorize it with GitHub.</p>

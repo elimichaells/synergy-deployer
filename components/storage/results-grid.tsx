@@ -18,7 +18,7 @@ export function ResultsGrid({ columns, rows }: { columns: GridColumn[]; rows: Re
   return (
     <div className="overflow-auto rounded-lg border border-white/[0.08]">
       <table className="w-full min-w-max border-collapse text-left font-mono text-xs">
-        <thead className="sticky top-0 bg-[#101318]">
+        <thead className="sticky top-0 bg-muted">
           <tr>{columns.map(column => (
             <th key={column.name} className="whitespace-nowrap border-b border-white/10 px-3 py-2 font-semibold text-foreground">
               {column.name}<span className="ml-1.5 text-[10px] font-normal text-muted-foreground">{column.type}</span>
@@ -30,7 +30,7 @@ export function ResultsGrid({ columns, rows }: { columns: GridColumn[]; rows: Re
             ? <tr><td colSpan={columns.length} className="px-3 py-8 text-center italic text-muted-foreground">No rows</td></tr>
             : rows.map((row, index) => (
               <tr key={index} className="transition-colors hover:bg-white/[0.03]">
-                {columns.map(column => <td key={column.name} className="max-w-md truncate whitespace-nowrap px-3 py-1.5 text-[#c9cbd1]"><CellValue value={row[column.name]} /></td>)}
+                {columns.map(column => <td key={column.name} className="max-w-md truncate whitespace-nowrap px-3 py-1.5 text-foreground/85"><CellValue value={row[column.name]} /></td>)}
               </tr>
             ))}
         </tbody>

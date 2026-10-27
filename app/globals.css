@@ -4,12 +4,13 @@
 
 /*
  * Synergy design language
- * Monochrome surfaces, hairline borders and one signature accent: the
- * "synergy spectrum" (violet → cyan → mint) reserved for brand moments and
- * live pipeline progress, so it always means "something is happening".
+ * Quiet surfaces, precise borders and the Synergy violet → cyan → mint spectrum.
+ * Theme tokens also adapt older neutral/tinted utilities without changing layouts.
  */
 @layer base {
   :root {
+    --contrast-rgb: 255 255 255;
+    --well: 0 0% 0%;
     --background: 0 0% 2.4%;
     --foreground: 0 0% 93%;
     --card: 0 0% 4.7%;
@@ -42,6 +43,53 @@
 
     --spectrum: linear-gradient(90deg, hsl(var(--syn-violet)), hsl(var(--syn-cyan)) 55%, hsl(var(--syn-mint)));
   }
+
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --background: 220 30% 98%;
+    --foreground: 225 31% 16%;
+    --card: 0 0% 100%;
+    --card-foreground: 225 31% 16%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 225 31% 16%;
+    --primary: 255 62% 49%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 230 28% 95%;
+    --secondary-foreground: 225 31% 22%;
+    --muted: 225 25% 95%;
+    --muted-foreground: 220 14% 43%;
+    --accent: 250 55% 96%;
+    --accent-foreground: 255 62% 38%;
+    --destructive: 0 72% 45%;
+    --border: 225 22% 89%;
+    --input: 225 20% 82%;
+    --ring: 255 62% 49%;
+    --sidebar: 225 30% 97%;
+    --well: 225 30% 96%;
+    --contrast-rgb: 28 37 59;
+    --syn-violet: 255 69% 55%;
+    --syn-cyan: 191 88% 35%;
+    --syn-mint: 158 79% 30%;
+    --ready: 158 79% 29%;
+    --building: 32 91% 35%;
+    --failed: 0 72% 44%;
+    --queued: 220 14% 45%;
+    --tone-sky: 3 105 161;
+    --tone-blue: 29 78 216;
+    --tone-cyan: 14 116 144;
+    --tone-teal: 15 118 110;
+    --tone-emerald: 4 120 87;
+    --tone-green: 21 128 61;
+    --tone-violet: 109 40 217;
+    --tone-purple: 126 34 206;
+    --tone-indigo: 67 56 202;
+    --tone-amber: 146 64 14;
+    --tone-yellow: 133 77 14;
+    --tone-orange: 194 65 12;
+    --tone-red: 185 28 28;
+    --tone-rose: 190 18 60;
+    --tone-zinc: 82 82 91;
+  }
 }
 
 @layer base {
@@ -49,7 +97,7 @@
     @apply border-border;
   }
 
-  html {
+  html[data-theme="dark"] {
     color-scheme: dark;
   }
 
@@ -98,7 +146,7 @@
   .summary-list dd { @apply min-w-0; }
   .inline-tab { @apply shrink-0 border-b-2 border-transparent px-3 py-3 text-sm text-muted-foreground transition-colors hover:text-foreground; }
   .inline-tab-active { @apply border-foreground text-foreground; }
-  .terminal-output { @apply max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-black p-4 font-mono text-xs leading-5; }
+  .terminal-output { @apply max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-well p-4 font-mono text-xs leading-5; }
   .workspace-tabs { @apply flex h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b border-border bg-transparent p-0; }
   .workspace-tabs > button { @apply min-h-10 rounded-none border-b-2 border-transparent px-3 py-2.5 text-[13px] text-muted-foreground shadow-none hover:text-foreground data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none; }
   .application-workspace .glass-card { @apply rounded-none border-x-0 border-t-0 bg-transparent shadow-none; }
@@ -123,12 +171,12 @@
   }
 
   .glass-well {
-    background: #000;
+    background: hsl(var(--well));
     border: 1px solid hsl(var(--border));
   }
 
   .glass-hover { transition: border-color 160ms ease, background 160ms ease; }
-  .glass-hover:hover { border-color: hsl(0 0% 100% / 0.18); }
+  .glass-hover:hover { border-color: hsl(var(--primary) / 0.35); }
 
   /* Interactive card used by project and deployment tiles */
   .syn-tile {
@@ -157,7 +205,7 @@
 
   /* Dotted canvas behind page headers */
   .syn-canvas {
-    background-image: radial-gradient(hsl(0 0% 100% / 0.07) 1px, transparent 1px);
+    background-image: radial-gradient(hsl(var(--foreground) / 0.07) 1px, transparent 1px);
     background-size: 18px 18px;
     mask-image: linear-gradient(180deg, #000 0%, transparent 100%);
   }
@@ -180,6 +228,32 @@
     from { opacity: 0; transform: translateY(6px); }
     to { opacity: 1; transform: translateY(0); }
   }
+
+  .workspace-chrome { border-top: 1px solid hsl(var(--border)); }
+  .workspace-strip { background: hsl(var(--muted) / 0.45); }
+  .workspace-page-tab { @apply relative flex w-48 shrink-0 items-center rounded-t-lg border border-b-0 border-transparent text-muted-foreground transition-colors; }
+  .workspace-page-tab:hover { background: hsl(var(--card) / 0.75); }
+  .workspace-page-tab.is-active { @apply border-border bg-card text-foreground; box-shadow: 0 -2px 10px hsl(var(--primary) / 0.04); }
+  .workspace-page-tab.is-active::before { content: ''; position: absolute; top: 0; left: 12px; right: 12px; height: 2px; border-radius: 2px; background: hsl(var(--primary)); }
+  .workspace-tab-icon { @apply flex h-7 w-7 shrink-0 items-center justify-center rounded-md; }
+  .workspace-tab-icon.is-local { background: hsl(var(--syn-violet) / 0.09); color: hsl(var(--syn-violet)); }
+  .workspace-tab-icon.is-remote { background: hsl(var(--syn-cyan) / 0.09); color: hsl(var(--syn-cyan)); }
+  .workspace-tab-icon.is-fleet { background: hsl(var(--syn-mint) / 0.09); color: hsl(var(--syn-mint)); }
+  .workspace-context { border-top: 1px solid hsl(var(--border)); background: hsl(var(--card)); }
+  .environment-chip { @apply items-center rounded-full border px-2 py-0.5 text-[10px] font-medium capitalize; }
+  .environment-chip.production { color: rgb(var(--tone-sky, 125 211 252)); border-color: rgb(var(--tone-sky, 125 211 252) / 0.2); background: rgb(var(--tone-sky, 125 211 252) / 0.06); }
+  .environment-chip.staging { color: rgb(var(--tone-amber, 252 211 77)); border-color: rgb(var(--tone-amber, 252 211 77) / 0.2); background: rgb(var(--tone-amber, 252 211 77) / 0.06); }
+  .continue-workspace { background: linear-gradient(110deg, hsl(var(--syn-violet) / 0.06), hsl(var(--syn-cyan) / 0.035)); border-color: hsl(var(--syn-violet) / 0.18); }
+  .manager-page-header { background: linear-gradient(110deg, hsl(var(--syn-violet) / 0.035), hsl(var(--card)) 60%, hsl(var(--syn-cyan) / 0.035)); }
+  :root:not([data-theme="dark"]) .syn-tile { box-shadow: 0 2px 5px hsl(225 35% 20% / 0.025); }
+  :root:not([data-theme="dark"]) .syn-tile:hover { border-color: hsl(var(--primary) / 0.35); box-shadow: 0 4px 14px hsl(var(--primary) / 0.07); }
+  :root:not([data-theme="dark"]) .manager-header { box-shadow: 0 1px 6px hsl(225 35% 20% / 0.035); }
+  .manager-shell [id] { scroll-margin-top: 14rem; }
+  .metric-tile { position: relative; background-image: linear-gradient(135deg, hsl(var(--metric-color) / 0.045), transparent 70%); }
+  .metric-tile[data-tone="0"] { --metric-color: var(--syn-violet); }
+  .metric-tile[data-tone="1"] { --metric-color: var(--syn-cyan); }
+  .metric-tile[data-tone="2"] { --metric-color: var(--syn-mint); }
+  .metric-tile > p:first-child::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 7px; border-radius: 2px; background: hsl(var(--metric-color)); vertical-align: 1px; }
 }
 
 @layer utilities {

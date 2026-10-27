@@ -76,7 +76,7 @@ export function SecurityFindings({ findings, compact }: { findings: SecurityFind
 function CopyCommand({ command }: { command: string }) {
   const [copied, setCopied] = useState(false)
   return (
-    <span className="flex items-center gap-2 rounded-md border border-border bg-black px-2.5 py-1.5">
+    <span className="flex items-center gap-2 rounded-md border border-border bg-well px-2.5 py-1.5">
       <code className="min-w-0 flex-1 break-all font-mono text-xs">{command}</code>
       <button type="button" className="shrink-0 text-muted-foreground hover:text-foreground" aria-label={`Copy ${command}`}
         onClick={() => { void navigator.clipboard.writeText(command).catch(() => {}); setCopied(true); window.setTimeout(() => setCopied(false), 1500) }}>
@@ -219,7 +219,7 @@ export function SecurityOverrideSheet({ open, onOpenChange, target, appName, fin
 
           <div className="flex flex-wrap justify-end gap-2">
             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={working}>Cancel, I will fix it</Button>
-            <Button onClick={() => void submit()} disabled={!ready || working} className="bg-status-failed text-white hover:bg-status-failed/90">
+            <Button onClick={() => void submit()} disabled={!ready || working} className="bg-status-failed text-[#fff] hover:bg-status-failed/90">
               {working ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldOff className="mr-2 h-4 w-4" />}
               {deploymentId ? 'Deploy anyway' : 'Turn the gate off'}
             </Button>

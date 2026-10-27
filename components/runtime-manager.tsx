@@ -165,7 +165,7 @@ export function RuntimeManager({ isAdmin, runtimeIds, workspace = false, onChang
       {message && <p role="status" className="text-xs text-muted-foreground">{message}</p>}
 
       <Sheet open={job !== null} onOpenChange={(open) => { if (!open) { streamRef.current?.close(); streamRef.current = null; setJob(null) } }}>
-        <SheetContent className="overflow-y-auto sm:max-w-2xl"><SheetHeader><SheetTitle>{jobTitle}</SheetTitle><SheetDescription>{job?.requested_version ? `Version ${job.requested_version}` : job?.runtime_id === 'mysql' && job.action === 'configure' ? 'Service and provisioning credential verification' : 'Live installer output'} · {jobStatus}</SheetDescription></SheetHeader>{job && <pre ref={logRef} className="mt-6 h-[34rem] overflow-auto whitespace-pre-wrap bg-[#080a0d] p-4 font-mono text-xs leading-5">{job.log || 'Waiting for installer output...'}</pre>}</SheetContent>
+        <SheetContent className="overflow-y-auto sm:max-w-2xl"><SheetHeader><SheetTitle>{jobTitle}</SheetTitle><SheetDescription>{job?.requested_version ? `Version ${job.requested_version}` : job?.runtime_id === 'mysql' && job.action === 'configure' ? 'Service and provisioning credential verification' : 'Live installer output'} · {jobStatus}</SheetDescription></SheetHeader>{job && <pre ref={logRef} className="mt-6 h-[34rem] overflow-auto whitespace-pre-wrap bg-well p-4 font-mono text-xs leading-5">{job.log || 'Waiting for installer output...'}</pre>}</SheetContent>
       </Sheet>
 
       <Sheet open={versionRuntime !== null} onOpenChange={(open) => { if (!open) setVersionRuntime(null) }}>

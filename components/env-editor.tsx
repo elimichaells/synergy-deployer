@@ -104,7 +104,7 @@ export function EnvEditor({ value, onChange, placeholder, className = '', disabl
     'absolute inset-0 h-full w-full whitespace-pre font-mono text-xs leading-5 p-3 overflow-auto'
 
   return (
-    <div className={`relative rounded-lg border border-white/10 bg-black/40 focus-within:ring-1 focus-within:ring-sky-500/60 focus-within:border-sky-500/40 transition-shadow ${className}`}>
+    <div className={`relative rounded-lg border border-white/10 bg-well/40 focus-within:ring-1 focus-within:ring-sky-500/60 focus-within:border-sky-500/40 transition-shadow ${className}`}>
       {/* Highlight layer */}
       <pre ref={highlightRef} aria-hidden className={`${sharedClasses} pointer-events-none m-0 scrollbar-none`}>
         {lines.map((line, i) => highlightLine(line, i))}

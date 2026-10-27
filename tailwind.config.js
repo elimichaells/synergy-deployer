@@ -1,3 +1,8 @@
+const palette = require('tailwindcss/colors')
+const accessibleTones = Object.fromEntries(['sky', 'blue', 'cyan', 'teal', 'emerald', 'green', 'violet', 'purple', 'indigo', 'amber', 'yellow', 'orange', 'red', 'rose', 'zinc'].map(name => [name, Object.fromEntries([200, 300, 400, 500].map(shade => {
+  const rgb = palette[name][shade].slice(1).match(/../g).map(value => parseInt(value, 16)).join(' ')
+  return [shade, `rgb(var(--tone-${name}, ${rgb}) / <alpha-value>)`]
+}))]))
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   darkMode: ["class"],
@@ -17,6 +22,9 @@ module.exports = {
     },
     extend: {
       colors: {
+        ...accessibleTones,
+        white: 'rgb(var(--contrast-rgb) / <alpha-value>)',
+        well: 'hsl(var(--well) / <alpha-value>)',
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",

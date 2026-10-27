@@ -124,7 +124,7 @@ export default function Dashboard() {
               ['Success rate', stats.successRate === null ? '—' : `${stats.successRate}%`, 'last 7 days'],
               ['Needs attention', String(stats.failing), stats.failing ? 'latest release failed' : 'no recent release failures'],
             ].map(([label, value, hint], index) => (
-              <div key={label} className={cn('px-5 py-4', index % 2 === 1 && 'border-l border-border', index > 1 && 'border-t border-border md:border-t-0', index === 2 && 'md:border-l')}>
+              <div key={label} className={cn('metric-tile px-5 py-4', index % 2 === 1 && 'border-l border-border', index > 1 && 'border-t border-border md:border-t-0', index === 2 && 'md:border-l')} data-tone={index % 3}>
                 <p className="text-xs text-muted-foreground">{label}</p>
                 <p className={cn('mt-1 text-2xl font-semibold tracking-tight', label === 'Needs attention' && stats.failing > 0 && 'text-status-failed')}>{loading ? '–' : value}</p>
                 <p className="mt-0.5 text-[11px] text-muted-foreground/80">{hint}</p>
@@ -215,7 +215,7 @@ export default function Dashboard() {
                 { href: '/automation', icon: Workflow, title: 'Schedule a job', hint: 'Cron jobs and background workers' },
               ].map(item => (
                 <Link key={item.href} href={item.href} className="syn-tile flex items-center gap-3 px-4 py-3">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-md border border-border bg-black"><item.icon className="h-4 w-4" /></span>
+                  <span className="flex h-8 w-8 items-center justify-center rounded-md border border-border bg-well"><item.icon className="h-4 w-4" /></span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-[13px] font-medium">{item.title}</span>
                     <span className="block truncate text-[11px] text-muted-foreground">{item.hint}</span>

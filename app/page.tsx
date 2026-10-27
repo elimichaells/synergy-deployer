@@ -7,9 +7,11 @@ import { AppShell } from '@/components/layout/app-shell'
 import { Button } from '@/components/ui/button'
 import { serverStatusColor, serverStatusLabel, useServerDirectory } from '@/components/infrastructure/server-directory'
 import { recentServerKey, serverOverview } from '@/lib/server-navigation'
+import { useWorkspace } from '@/components/layout/workspace-provider'
 
 function ServerChooser() {
   const { data, error, refresh } = useServerDirectory()
+  const { resume } = useWorkspace()
   const [search, setSearch] = useState('')
   const [recentId, setRecentId] = useState<string | null>(null)
   useEffect(() => {
@@ -31,19 +33,19 @@ function ServerChooser() {
       </ol>
       {data?.role === 'admin' && <Button asChild size="sm"><Link href="/infrastructure/servers?add=1"><Plus className="mr-1.5 h-4 w-4" />Add server</Link></Button>}
     </div>
-    {recentName && recentId && <Link href={serverOverview(recentId)} className="flex items-center gap-3 rounded-xl border border-border bg-card px-5 py-4 transition-colors hover:border-white/25">
+    {recentName && recentId && <Link href={resume(recentId, data?.userId, data?.role)} className="continue-workspace flex items-center gap-3 rounded-xl border border-border bg-card px-5 py-4 transition-colors hover:border-primary/40">
       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/[0.05]"><Server className="h-4 w-4" /></span>
       <span className="min-w-0 flex-1"><span className="block text-xs text-muted-foreground">Last visited</span><span className="block truncate text-sm font-medium">Continue with {recentName}</span></span><ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
     </Link>}
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <h2 className="text-sm font-semibold">Your servers{data && <span className="ml-2 font-normal text-muted-foreground">{data.servers.length + 1}</span>}</h2>
+      <div><h2 className="text-sm font-semibold">Your servers{data && <span className="ml-2 font-normal text-muted-foreground">{data.servers.length + 1}</span>}</h2>{data && !error && <p className="mt-1 flex items-center gap-3 text-[11px] text-muted-foreground"><span className="inline-flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-status-ready" />{data.servers.filter(server => server.status === 'online').length} remote reporting</span>{data.servers.some(server => server.status === 'pending') && <span className="text-amber-400">{data.servers.filter(server => server.status === 'pending').length} awaiting setup</span>}</p>}</div>
       <label className="flex w-full items-center gap-2 rounded-md border border-border bg-card px-3 sm:w-80"><Search className="h-4 w-4 text-muted-foreground" /><span className="sr-only">Find a server</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Name, location or address…" className="h-9 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground" /></label>
     </div>
     {error && <div role="alert" className="notice-error flex flex-wrap items-center justify-between gap-3"><span>{error}. Server statuses may be out of date.</span><Button variant="outline" size="sm" onClick={refresh}>Retry</Button></div>}
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
       {showLocal && <Link href="/overview" className="syn-tile flex min-w-0 flex-col gap-3 p-4">
         <div className="flex items-center gap-2.5">
-          <Server className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="workspace-tab-icon is-local"><Server className="h-4 w-4" /></span>
           <h3 className="min-w-0 flex-1 truncate text-sm font-semibold">Manager host</h3>
           <span className="shrink-0 text-[11px] text-muted-foreground">This server</span>
         </div>
@@ -52,7 +54,7 @@ function ServerChooser() {
       </Link>}
       {servers.map(server => <Link key={server.id} href={serverOverview(server.id)} className="syn-tile flex min-w-0 flex-col gap-3 p-4">
         <div className="flex items-center gap-2.5">
-          <Server className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="workspace-tab-icon is-remote"><Server className="h-4 w-4" /></span>
           <h3 className="min-w-0 flex-1 truncate text-sm font-semibold" title={server.name}>{server.name}</h3>
           <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px]"><span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${error ? 'bg-zinc-500' : serverStatusColor[server.status]}`} />{error ? 'Unknown' : serverStatusLabel[server.status]}</span>
         </div>

@@ -115,7 +115,7 @@ export default function NewSitePage() {
         <div className="mx-auto max-w-3xl">
           <button type="button" onClick={() => setConfiguring(null)} className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" />Choose a different repository</button>
           <form onSubmit={create} className="overflow-hidden rounded-xl border border-border bg-card">
-            <div className="flex flex-wrap items-center gap-3 border-b border-border bg-black px-6 py-5">
+            <div className="flex flex-wrap items-center gap-3 border-b border-border bg-well px-6 py-5">
               {configuring.avatarUrl ? <Image src={configuring.avatarUrl} alt="" width={36} height={36} unoptimized className="h-9 w-9 rounded-full" /> : <span className="flex h-9 w-9 items-center justify-center rounded-full border border-border"><GitHubIcon /></span>}
               <div className="min-w-0 flex-1">
                 <p className="text-xs text-muted-foreground">Importing from Git</p>
@@ -241,7 +241,7 @@ export default function NewSitePage() {
               <Button type="submit" variant="outline" disabled={!urlInput.trim() || role === 'viewer'}>Continue</Button>
             </form>
           </section>
-          <section className="relative overflow-hidden rounded-xl border border-border bg-black p-5">
+          <section className="relative overflow-hidden rounded-xl border border-border bg-well p-5">
             <div className="syn-canvas pointer-events-none absolute inset-0 opacity-60" aria-hidden="true" />
             <div className="relative">
               <h2 className="flex items-center gap-2 text-sm font-semibold"><Layers className="h-4 w-4 text-syn-violet" />Frontend + backend? One project</h2>

@@ -32,6 +32,7 @@ import { StackPanel } from '@/components/app/stack-panel'
 import { PROJECT_TYPES as projectTypeDefaults, getProjectCommandOverrides, type ProjectType } from '@/lib/project-types'
 import { deploymentDuration, formatSeconds, relativeTime } from '@/lib/deployment-stages'
 import { cn } from '@/lib/utils'
+import { useWorkspace } from '@/components/layout/workspace-provider'
 
 interface Project {
   setup_required?: boolean
@@ -96,16 +97,16 @@ function logClass(line: string) {
   const http = /\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/.test(line)
   if (line.startsWith('PS ')) return 'mt-2 font-medium text-white'
   if (line.startsWith('[exit]') && line.endsWith('code 0')) return 'text-emerald-400'
-  if (/error|fatal|exception|elifecycle/.test(lower)) return 'font-medium text-[#ff8a8a]'
-  if (/warn|deprecat/.test(lower)) return 'text-[#f5c26b]'
-  if (status >= 500) return 'text-[#ff8a8a]'
-  if (status >= 400) return 'text-[#fb923c]'
-  if (http && status >= 200 && status < 300) return 'text-[#5fe0a6]'
-  if (http && status >= 300 && status < 400) return 'text-[#8fb8ff]'
-  if (/ready|started|listening|compiled/.test(lower)) return 'text-[#5fe0a6]'
-  if (/\b(info|event)\b/.test(lower)) return 'text-[#8fb8ff]'
+  if (/error|fatal|exception|elifecycle/.test(lower)) return 'font-medium text-red-300'
+  if (/warn|deprecat/.test(lower)) return 'text-amber-300'
+  if (status >= 500) return 'text-red-300'
+  if (status >= 400) return 'text-orange-400'
+  if (http && status >= 200 && status < 300) return 'text-emerald-300'
+  if (http && status >= 300 && status < 400) return 'text-blue-300'
+  if (/ready|started|listening|compiled/.test(lower)) return 'text-emerald-300'
+  if (/\b(info|event)\b/.test(lower)) return 'text-blue-300'
   if (/debug|trace|verbose/.test(lower)) return 'text-white/35'
-  return 'text-[#d6d6d6]'
+  return 'text-foreground/85'
 }
 
 function renderLogLines(text: string) {
@@ -129,11 +130,16 @@ const commitUrl = (repo: string | null | undefined, sha: string | null) => {
 }
 
 export default function SitePage() {
-  const { health, error: healthError } = useServerHealth()
   const params = useParams()
+  const siteId = Array.isArray(params.id) ? params.id[0] : params.id
+  return <ApplicationWorkspace key={siteId} siteId={siteId || ''} />
+}
+
+function ApplicationWorkspace({ siteId }: { siteId: string }) {
+  const { navigate } = useWorkspace()
+  const { health, error: healthError } = useServerHealth()
   const router = useRouter()
   const searchParams = useSearchParams()
-  const siteId = Array.isArray(params.id) ? params.id[0] : params.id
   const [project, setProject] = useState<Project | null>(null)
   const [userRole, setUserRole] = useState<'admin' | 'operator' | 'viewer'>('viewer')
   const [deployments, setDeployments] = useState<Deployment[]>([])
@@ -150,6 +156,7 @@ export default function SitePage() {
   const [error, setError] = useState<string | null>(null)
   const [envFile, setEnvFile] = useState('.env')
   const [envContent, setEnvContent] = useState('')
+  const [envBaseline, setEnvBaseline] = useState('')
   const [envSaved, setEnvSaved] = useState(false)
   const [savingEnv, setSavingEnv] = useState(false)
   const [logsType, setLogsType] = useState<'out' | 'err'>('out')
@@ -166,6 +173,9 @@ export default function SitePage() {
     installCmd: '', buildCmd: '', deployScript: '', startCmd: '', preDeployCmd: '', postDeployCmd: '', autoDeploy: true, githubConnectionId: '',
     runtimeVersions: {} as { node?: string; php?: string; go?: string },
   })
+  const [settingsBaseline, setSettingsBaseline] = useState('')
+  const formSignature = JSON.stringify({ ...projectForm, autoDeploy: undefined })
+  const unsavedChanges = envContent !== envBaseline || (!!settingsBaseline && formSignature !== settingsBaseline)
   const [githubConnections, setGithubConnections] = useState<GitHubConnectionOption[]>([])
   const [webhookUrl, setWebhookUrl] = useState('')
   const [webhookSecret, setWebhookSecret] = useState<string | null>(null)
@@ -213,9 +223,14 @@ export default function SitePage() {
 
   const changeTab = (value: string) => {
     const tab = tabFromParam(value)
-    setActiveTab(tab)
-    window.history.replaceState(null, '', `?tab=${tab}`)
-    if (tab === 'settings') void loadWebhook()
+    if (tab === activeTab) return
+    navigate(() => {
+      setEnvContent(envBaseline)
+      if (settingsBaseline) setProjectForm(current => ({ ...current, ...JSON.parse(settingsBaseline) }))
+      setActiveTab(tab)
+      window.history.replaceState(null, '', `?tab=${tab}`)
+      if (tab === 'settings') void loadWebhook()
+    })
   }
 
   const loadToolchainRuntimes = useCallback(async () => {
@@ -252,7 +267,7 @@ export default function SitePage() {
       }
       setProject(projectData)
       setDeployments(deploymentsData.filter((item: Deployment) => item.project_id === siteId))
-      setProjectForm({
+      const nextForm = {
         name: projectData.name || '',
         projectType: projectData.project_type || 'next',
         repoUrl: projectData.repo_url || '',
@@ -268,7 +283,9 @@ export default function SitePage() {
         autoDeploy: projectData.auto_deploy !== false,
         githubConnectionId: projectData.github_connection_id || '',
         runtimeVersions: projectData.runtime_versions || {},
-      })
+      }
+      setProjectForm(nextForm)
+      setSettingsBaseline(JSON.stringify({ ...nextForm, autoDeploy: undefined }))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load')
     } finally {
@@ -283,9 +300,12 @@ export default function SitePage() {
         const body = await res.json().catch(() => ({}))
         throw new Error(body.error || 'Failed to load env file')
       }
-      setEnvContent((await res.json()).content || '')
+      const content = (await res.json()).content || ''
+      setEnvContent(content)
+      setEnvBaseline(content)
     } catch (err) {
       setEnvContent('')
+      setEnvBaseline('')
       setError(err instanceof Error ? err.message : 'Failed to load env file')
     }
   }, [siteId])
@@ -352,6 +372,7 @@ export default function SitePage() {
         throw new Error(body.error || 'Failed to save env file')
       }
       setEnvSaved(true)
+      setEnvBaseline(envContent)
       window.setTimeout(() => setEnvSaved(false), 2500)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save env file')
@@ -773,6 +794,8 @@ export default function SitePage() {
     <Tabs value={activeTab} onValueChange={changeTab}>
       <AppShell
         title={project.name}
+        unsavedChanges={unsavedChanges}
+        workspace={{ environment: project.environment, project: inStack ? { name: stack!.group_name || 'Project', href: `/projects/${stack!.application_group_id}` } : undefined }}
         back={inStack ? { href: `/projects/${stack!.application_group_id}`, label: stack!.group_name || 'Project' } : { href: '/projects', label: 'Projects' }}
         subtitle={<span className="flex flex-wrap items-center gap-2">
           <EnvironmentBadge environment={project.environment} />
@@ -815,7 +838,7 @@ export default function SitePage() {
 
         <TabsContent value="overview" className="mt-0 space-y-6">
           {project.setup_required ? (
-            <div className="relative overflow-hidden rounded-xl border border-border bg-black p-8">
+            <div className="relative overflow-hidden rounded-xl border border-border bg-well p-8">
               <div className="syn-canvas pointer-events-none absolute inset-0 opacity-70" aria-hidden="true" />
               <div className="pointer-events-none absolute -left-24 -top-24 h-72 w-72 rounded-full bg-syn-violet/15 blur-3xl" aria-hidden="true" />
               <div className="relative flex flex-wrap items-center justify-between gap-6">
@@ -828,7 +851,7 @@ export default function SitePage() {
             </div>
           ) : (
             <section className="grid overflow-hidden rounded-xl border border-border bg-card lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-              <div className="relative flex min-h-[240px] flex-col justify-between overflow-hidden border-b border-border bg-black p-6 lg:border-b-0 lg:border-r">
+              <div className="relative flex min-h-[240px] flex-col justify-between overflow-hidden border-b border-border bg-well p-6 lg:border-b-0 lg:border-r">
                 <div className="syn-canvas pointer-events-none absolute inset-0 opacity-70" aria-hidden="true" />
                 {hasRunningDeploy && <div className="pointer-events-none absolute -left-24 -top-24 h-72 w-72 rounded-full bg-syn-violet/20 blur-3xl" aria-hidden="true" />}
                 <div className="relative flex items-center gap-3">
@@ -958,7 +981,7 @@ export default function SitePage() {
             title="Environment variables"
             description={<>Save these settings before deploying. Every deployment reads the saved <span className="font-mono text-xs">.env</span> and <span className="font-mono text-xs">.env.local</span> for the candidate and live application; .env.local takes precedence for Node apps. Managed database connections provide standard variables automatically. Custom names such as DATABASE_OWNER_URL still need their correct credentials here.</>}
             action={<div className="flex h-8 items-center rounded-md border border-border p-0.5" role="group" aria-label="File">
-              {['.env', '.env.local'].map(file => <button key={file} type="button" onClick={() => setEnvFile(file)} aria-pressed={envFile === file} className={cn('h-full rounded-[5px] px-2.5 font-mono text-xs', envFile === file ? 'bg-white/[0.09] text-foreground' : 'text-muted-foreground hover:text-foreground')}>{file}</button>)}
+              {['.env', '.env.local'].map(file => <button key={file} type="button" onClick={() => { if (file !== envFile) navigate(() => { setEnvContent(envBaseline); setEnvFile(file) }) }} aria-pressed={envFile === file} className={cn('h-full rounded-[5px] px-2.5 font-mono text-xs', envFile === file ? 'bg-white/[0.09] text-foreground' : 'text-muted-foreground hover:text-foreground')}>{file}</button>)}
             </div>}
             footer={<>
               <span>{browserApp ? 'Browser builds expose these values to visitors. Never store secrets here.' : 'Stored only on this server, inside the application directory.'}</span>
@@ -995,7 +1018,7 @@ export default function SitePage() {
               <Button variant="outline" size="sm" onClick={() => void handleClearLogs()} disabled={clearingLogs || !canWrite}>{clearingLogs ? 'Clearing…' : 'Clear'}</Button>
             </>}
           >
-            <div className="h-[520px] overflow-y-auto rounded-lg border border-border bg-black p-4 font-mono text-xs leading-5">
+            <div className="h-[520px] overflow-y-auto rounded-lg border border-border bg-well p-4 font-mono text-xs leading-5">
               {logs ? renderLogLines(logs) : <p className="py-10 text-center text-white/40">{logsStatus || 'No output yet. Logs appear once the app is running.'}</p>}
             </div>
           </Section>
@@ -1010,7 +1033,7 @@ export default function SitePage() {
                 {Object.entries(npmScripts).map(([name, script]) => <Button key={name} variant="secondary" size="sm" className="font-mono text-xs" disabled={npmRunning || !canWrite} title={script} onClick={() => { setNpmCommand(`npm run ${name}`); void runNpmCommand(`npm run ${name}`) }}><Play className="mr-1.5 h-3 w-3" />{name}</Button>)}
               </div>
             )}
-            <div className="overflow-hidden rounded-lg border border-border bg-black">
+            <div className="overflow-hidden rounded-lg border border-border bg-well">
               <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
                 <span className="flex min-w-0 items-center gap-2 truncate font-mono text-xs text-muted-foreground"><Terminal className="h-3.5 w-3.5" />PowerShell · {project.name}</span>
                 <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
@@ -1019,7 +1042,7 @@ export default function SitePage() {
                   {npmOutput && !npmRunning && <button onClick={() => { setNpmOutput(''); requestAnimationFrame(() => terminalInputRef.current?.focus()) }} className="hover:text-foreground">Clear</button>}
                 </div>
               </div>
-              <div ref={npmOutputRef} className="h-[480px] cursor-text overflow-y-auto whitespace-pre-wrap break-words p-4 font-mono text-xs leading-5 text-[#d6d6d6]" onClick={() => terminalInputRef.current?.focus()}>
+              <div ref={npmOutputRef} className="h-[480px] cursor-text overflow-y-auto whitespace-pre-wrap break-words p-4 font-mono text-xs leading-5 text-foreground/85" onClick={() => terminalInputRef.current?.focus()}>
                 {npmOutput && renderLogLines(npmOutput)}
                 <div className="mt-1 flex min-h-7 items-start gap-2 text-[13px] leading-7">
                   <span className="shrink-0 font-semibold text-white">PS</span>
@@ -1113,7 +1136,7 @@ export default function SitePage() {
                     <summary className="cursor-pointer select-none px-4 py-2.5 text-xs text-muted-foreground hover:text-foreground">Manual webhook values</summary>
                     <div className="space-y-3 border-t border-border p-4">
                       {([['url', 'Payload URL', webhookUrl], ['secret', 'Secret', webhookSecret || '••••••••••••••••']] as const).map(([key, label, value]) => (
-                        <label key={key} className="field-label">{label}<div className="flex gap-2"><code className="flex-1 truncate rounded-md border border-border bg-black px-3 py-2 text-xs">{value}</code><Button size="icon" variant="outline" className="h-9 w-9 shrink-0" onClick={() => void handleCopyWebhook(key)} aria-label={`Copy ${label}`}>{webhookCopied === key ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}</Button></div></label>
+                        <label key={key} className="field-label">{label}<div className="flex gap-2"><code className="flex-1 truncate rounded-md border border-border bg-well px-3 py-2 text-xs">{value}</code><Button size="icon" variant="outline" className="h-9 w-9 shrink-0" onClick={() => void handleCopyWebhook(key)} aria-label={`Copy ${label}`}>{webhookCopied === key ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}</Button></div></label>
                       ))}
                     </div>
                   </details>
@@ -1126,7 +1149,7 @@ export default function SitePage() {
             footer={<><span>Commands run from the app directory and stop at the first failure. <code className="font-mono text-xs">$BRANCH</code> is the deployed branch.</span><Button size="sm" onClick={() => void handleSaveProject()} disabled={savingProject || !canWrite}>{savingProject ? 'Saving…' : 'Save'}</Button></>}>
             <div className="space-y-4">
               <label className="field-label">Deployment script <span className="font-normal text-muted-foreground">Replaces install and build when set</span>
-                <textarea rows={10} className="control-textarea min-h-56 bg-black font-mono" value={projectForm.deployScript} onChange={e => setProjectForm({ ...projectForm, deployScript: e.target.value })} placeholder={'composer install --no-interaction --prefer-dist --optimize-autoloader\nphp artisan migrate --force\nnpm ci\nnpm run build'} spellCheck={false} />
+                <textarea rows={10} className="control-textarea min-h-56 bg-well font-mono" value={projectForm.deployScript} onChange={e => setProjectForm({ ...projectForm, deployScript: e.target.value })} placeholder={'composer install --no-interaction --prefer-dist --optimize-autoloader\nphp artisan migrate --force\nnpm ci\nnpm run build'} spellCheck={false} />
               </label>
               <label className="field-label">Start command<input className={cn(inputClass, 'font-mono')} value={projectForm.startCmd} onChange={e => setProjectForm({ ...projectForm, startCmd: e.target.value })} placeholder={projectTypeDefaults[projectForm.projectType].startCmd ?? 'Synergy static server'} /></label>
               {visibleToolchains.length > 0 && <>

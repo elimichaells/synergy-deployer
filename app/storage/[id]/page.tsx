@@ -200,7 +200,7 @@ export default function DatabasePage() {
               <div><dt>Password</dt><dd className="font-mono text-xs">••••••••••••</dd></div>
             </dl>
             {revealed && (
-              <div className="mt-4 flex items-center gap-2 rounded-lg border border-border bg-black p-3">
+              <div className="mt-4 flex items-center gap-2 rounded-lg border border-border bg-well p-3">
                 <code className="min-w-0 flex-1 break-all text-xs">{revealed}</code>
                 <Button size="icon" variant="outline" className="h-8 w-8 shrink-0" aria-label="Copy connection string" onClick={async () => { await navigator.clipboard.writeText(revealed); setCopied(true); setTimeout(() => setCopied(false), 1500) }}>{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}</Button>
               </div>
@@ -219,7 +219,7 @@ export default function DatabasePage() {
                 <div className="rounded-lg border border-border p-4">
                   <p className="font-medium">Recommended: connect through a tunnel</p>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">Keep the database private and reach it from your computer through an encrypted tunnel instead of opening its port. With OpenSSH Server enabled on this machine:</p>
-                  <code className="mt-2 block rounded-md border border-border bg-black px-3 py-2 text-xs">ssh -L 15432:127.0.0.1:{database.port} Administrator@your-server</code>
+                  <code className="mt-2 block rounded-md border border-border bg-well px-3 py-2 text-xs">ssh -L 15432:127.0.0.1:{database.port} Administrator@your-server</code>
                   <p className="mt-2 text-xs text-muted-foreground">Then connect your database tool to <span className="font-mono text-foreground">127.0.0.1:15432</span>. A private network such as Tailscale or WireGuard works the same way. Server-wide network settings are in <Link href="/storage?tab=servers" className="text-foreground underline-offset-4 hover:underline">Storage &gt; Servers</Link>.</p>
                 </div>
               </div>

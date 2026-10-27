@@ -35,7 +35,7 @@ export function SqlTab({ serviceId, database }: { serviceId: string; database: s
           {allowWrites ? <Unlock className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}{allowWrites ? 'Writes enabled' : 'Read-only'}
         </button>
       </div>
-      <textarea aria-label="SQL" className="h-40 w-full resize-y rounded-lg border border-white/10 bg-black/40 p-3 font-mono text-xs focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/60" value={sql} onChange={event => setSql(event.target.value)} placeholder="select * from users limit 10;" spellCheck={false}
+      <textarea aria-label="SQL" className="h-40 w-full resize-y rounded-lg border border-white/10 bg-well/40 p-3 font-mono text-xs focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/60" value={sql} onChange={event => setSql(event.target.value)} placeholder="select * from users limit 10;" spellCheck={false}
         onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void run() } }} />
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs text-muted-foreground">{result && <><span className="font-semibold text-emerald-400">{result.command}</span> · {result.rowCount.toLocaleString()} rows · {result.durationMs}ms{result.truncated && <span className="text-amber-400"> · showing the first 1,000</span>}</>}</p>

@@ -13,5 +13,5 @@ export const providerMeta: Record<Provider, { label: string; short: string; colo
 
 export function ProviderLogo({ provider, size = 'md' }: { provider: Provider; size?: 'sm' | 'md' }) {
   const meta = providerMeta[provider] || { short: 'DB', color: 'bg-neutral-700' }
-  return <span className={cn('flex shrink-0 items-center justify-center rounded-md font-mono font-semibold text-white', meta.color, size === 'sm' ? 'h-6 w-6 text-[10px]' : 'h-9 w-9 text-xs')}>{meta.short}</span>
+  return <span className={cn('flex shrink-0 items-center justify-center rounded-md font-mono font-semibold text-[#fff]', meta.color, size === 'sm' ? 'h-6 w-6 text-[10px]' : 'h-9 w-9 text-xs')}>{meta.short}</span>
 }

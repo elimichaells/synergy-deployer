@@ -28,7 +28,7 @@ function MoveLog({ move }: { move: Move }) {
         {statusText[move.status] || move.status}
       </p>
       {move.error && <p className="text-xs text-red-300">{move.error}</p>}
-      <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-black p-3 font-mono text-[11px] leading-5 text-white/80">{move.log || 'Starting…'}</pre>
+      <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-well p-3 font-mono text-[11px] leading-5 text-white/80">{move.log || 'Starting…'}</pre>
     </div>
   )
 }

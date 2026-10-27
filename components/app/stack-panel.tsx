@@ -153,7 +153,7 @@ export function StackPanel({ projectId, environment, compact = false }: { projec
               {index > 0 && <div className="flex justify-center text-muted-foreground lg:px-1"><ArrowRight className="h-4 w-4 rotate-90 lg:rotate-0" /></div>}
               <Link href={`/sites/${member.id}`} aria-current={current ? 'page' : undefined}
                 className={cn('flex min-w-0 flex-1 items-center gap-3 rounded-lg border p-3 transition-colors', current ? 'border-foreground/50 bg-white/[0.04]' : 'border-border hover:border-white/25')}>
-                <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-black"><FrameworkLogo type={member.project_type} className="h-5 w-5" />
+                <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-well"><FrameworkLogo type={member.project_type} className="h-5 w-5" />
                   <span className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border border-border bg-card"><Icon className="h-2.5 w-2.5" /></span></span>
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5 truncate text-sm font-medium">{member.name}{current && <span className="text-[10px] font-normal text-muted-foreground">(this app)</span>}</span>

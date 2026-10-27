@@ -14,7 +14,7 @@ export function FrameworkAvatar({ type, size = 'md' }: { type?: FrameworkType | 
   const box = size === 'lg' ? 'h-12 w-12' : size === 'sm' ? 'h-7 w-7' : 'h-9 w-9'
   const logo = size === 'lg' ? 'h-7 w-7' : size === 'sm' ? 'h-4 w-4' : 'h-5 w-5'
   return (
-    <span className={`flex ${box} shrink-0 items-center justify-center rounded-full border border-border bg-black`}>
+    <span className={`flex ${box} shrink-0 items-center justify-center rounded-full border border-border bg-well`}>
       <FrameworkLogo type={type} className={logo} />
     </span>
   )
