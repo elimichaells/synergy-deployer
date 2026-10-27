@@ -34,7 +34,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       const link = event.target instanceof Element ? event.target.closest('a[href]') : null
       if (!(link instanceof HTMLAnchorElement) || link.target === '_blank' || link.hasAttribute('download')) return
       const destination = new URL(link.href)
-      if (destination.origin !== location.origin || (destination.pathname === location.pathname && destination.search === location.search)) return
+      const samePage = destination.pathname === location.pathname && destination.search === location.search
+      const remotePage = /^\/infrastructure\/servers\/[^/]+$/.test(location.pathname)
+      if (destination.origin !== location.origin || (samePage && (destination.hash === location.hash || destination.hash === '#workspace-content' || !remotePage))) return
       event.preventDefault(); event.stopPropagation()
       navigate(() => router.push(destination.pathname + destination.search + destination.hash))
     }

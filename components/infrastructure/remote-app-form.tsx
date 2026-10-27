@@ -1,20 +1,23 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import type { RemoteApp } from '@/lib/managed-server-types'
 
 const inputClass = 'mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm'
 type Connection = { id: string; name: string }
 
-export function RemoteAppForm({ serverId, platform, app, onSaved, onCancel }: {
-  serverId: string; platform: string; app?: RemoteApp; onSaved: () => void; onCancel: () => void
+export function RemoteAppForm({ serverId, platform, app, onSaved, onCancel, onDirtyChange }: {
+  serverId: string; platform: string; app?: RemoteApp; onSaved: () => void; onCancel: () => void; onDirtyChange?: (dirty: boolean) => void
 }) {
   const [form, setForm] = useState({ name: app?.name || '', repo_url: app?.repo_url || '', branch: app?.branch || 'main',
     install_cmd: app?.install_cmd ?? 'npm ci --include=dev', build_cmd: app?.build_cmd ?? 'npm run build', start_cmd: app?.start_cmd || 'npm start -- --hostname 127.0.0.1',
     port: String(app?.port || 3000), health_path: app?.health_path || '/', access_mode: app?.access_mode || 'lan', hostname: app?.hostname || '',
     ip_address: app?.ip_address || '', ip_port: String(app?.ip_port || 8443), git_connection_id: app?.git_connection_id || '' })
   const [environment, setEnvironment] = useState('')
+  const initial = useRef(JSON.stringify(form))
+  useEffect(() => { onDirtyChange?.(JSON.stringify(form) !== initial.current || environment !== '') }, [form, environment, onDirtyChange])
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange])
   const [connections, setConnections] = useState<Connection[]>([])
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)

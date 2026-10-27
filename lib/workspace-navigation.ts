@@ -23,7 +23,7 @@ export function workspaceHref(value: string): string | null {
     const search = new URLSearchParams()
     for (const key of ['tab', 'view', 'section']) {
       const item = url.searchParams.get(key)
-      if (item && /^[a-z][a-z0-9-]{0,40}$/.test(item)) search.set(key, item)
+      if (item && (/^[a-z][a-z0-9-]{0,40}$/.test(item) || (key === 'view' && remote.test(url.pathname) && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(item)))) search.set(key, item)
     }
     const hash = remote.test(url.pathname) && /^#(?:applications|deployments|server-access|app-[a-f0-9-]{36})$/i.test(url.hash) ? url.hash : ''
     return `${url.pathname}${search.size ? `?${search}` : ''}${hash}`

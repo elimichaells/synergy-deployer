@@ -75,22 +75,24 @@ export function WorkspaceBar({ title, context, onNew, onHashChange }: { title: s
 
   return <div className="workspace-chrome">
     <div className="workspace-strip mx-auto flex max-w-[1240px] items-end px-2 sm:px-4">
-      <div ref={strip} aria-label="Open workspace pages" className="scrollbar-none flex min-w-0 flex-1 gap-1 overflow-x-auto pt-2" role="navigation">
+      <div ref={strip} aria-label="Open workspace pages" className="scrollbar-none flex min-w-0 flex-1 gap-0.5 overflow-x-auto pt-1" role="navigation">
         {tabs.map((tab, index) => {
           const active = tab.id === activeId
           const Icon = tab.server === 'fleet' ? LayoutGrid : /^\/(sites|projects)\//.test(tab.id) || tab.id.includes('#app-') ? Boxes : Server
           return <div key={tab.id} className={`workspace-page-tab group ${active ? 'is-active' : ''}`}>
-            <Link data-workspace-link href={tab.href} aria-current={active ? 'page' : undefined} onKeyDown={event => onKey(event, index)} className="flex h-12 min-w-0 flex-1 items-center gap-2 pl-3 pr-1" title={`${serverLabel(tab.server)}${tab.project ? ` / ${tab.project}` : ''} / ${tab.title}`}>
-              <span className={`workspace-tab-icon ${tab.server === 'fleet' ? 'is-fleet' : tab.server === 'local' ? 'is-local' : 'is-remote'}`}><Icon className="h-3.5 w-3.5" /></span>
-              <span className="min-w-0"><span className="flex items-center gap-1.5 text-[12px] font-medium"><span className="truncate">{tab.title}</span>{active && unsaved && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-status-building" title="Unsaved changes" aria-label="Unsaved changes" />}</span><span className="block truncate text-[10px] text-muted-foreground">{serverLabel(tab.server)}{tab.environment && ` · ${tab.environment === 'production' ? 'Production' : 'Staging'}`}</span></span>
+            <Link data-workspace-link href={tab.href} aria-current={active ? 'page' : undefined} aria-label={`${tab.title} · ${serverLabel(tab.server)}${tab.environment ? ` · ${tab.environment}` : ''}`} onKeyDown={event => onKey(event, index)} className="flex h-8 min-w-0 flex-1 items-center gap-1.5 pl-2 pr-1" title={`${serverLabel(tab.server)}${tab.project ? ` / ${tab.project}` : ''} / ${tab.title}${tab.environment ? ` / ${tab.environment}` : ''}`}>
+              <span className={`workspace-tab-icon ${tab.server === 'fleet' ? 'is-fleet' : tab.server === 'local' ? 'is-local' : 'is-remote'}`}><Icon className="h-3 w-3" /></span>
+              <span className="truncate text-[11px] font-medium">{tab.title === 'Overview' && !['fleet', 'local'].includes(tab.server) ? serverLabel(tab.server) : tab.title}</span>
+              {tab.environment && <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${tab.environment === 'production' ? 'bg-status-ready' : 'bg-status-building'}`} title={tab.environment} />}
+              {active && unsaved && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-status-building" title="Unsaved changes" aria-label="Unsaved changes" />}
             </Link>
-            {tab.id !== '/' && <button type="button" aria-label={`Close ${tab.title}`} onClick={() => remove(tab)} className="mx-1 grid h-7 w-7 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"><X className="h-3 w-3" /></button>}
+            {tab.id !== '/' && <button type="button" aria-label={`Close ${tab.title}`} title={`Close ${tab.title} · ${serverLabel(tab.server)}`} onClick={() => remove(tab)} className="mr-0.5 grid h-6 w-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"><X className="h-3 w-3" /></button>}
           </div>
         })}
-        {!tabs.length && <span className="px-3 py-3 text-xs text-muted-foreground">Your workspace</span>}
+        {!tabs.length && <span className="px-2 py-2 text-[11px] text-muted-foreground">Your workspace</span>}
       </div>
-      <button type="button" aria-label="Open another workspace page" title="Open another page · Ctrl K" onClick={onNew} className="mx-1 mb-2 grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-primary"><Plus className="h-4 w-4" /></button>
-      <DropdownMenu.Root><DropdownMenu.Trigger asChild><button type="button" aria-label="List open workspace pages" className="mb-2 flex h-8 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground hover:bg-accent"><span>{tabs.length}</span><ChevronDown className="h-3 w-3" /></button></DropdownMenu.Trigger>
+      <button type="button" aria-label="Open another workspace page" title="Open another page · Ctrl K" onClick={onNew} className="mx-0.5 mb-0.5 grid h-7 w-7 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-primary"><Plus className="h-3.5 w-3.5" /></button>
+      <DropdownMenu.Root><DropdownMenu.Trigger asChild><button type="button" aria-label="List open workspace pages" className="mb-0.5 flex h-7 items-center gap-1 rounded px-1.5 text-[11px] text-muted-foreground hover:bg-accent"><span>{tabs.length}</span><ChevronDown className="h-3 w-3" /></button></DropdownMenu.Trigger>
         <DropdownMenu.Portal><DropdownMenu.Content align="end" sideOffset={8} className="z-50 w-80 max-w-[calc(100vw-24px)] rounded-xl border border-border bg-popover p-1.5 shadow-xl">
           <DropdownMenu.Label className="px-2 py-2 text-xs text-muted-foreground">Open pages · {tabs.length} of 20</DropdownMenu.Label>
           <div className="max-h-72 overflow-y-auto">{tabs.map(tab => <DropdownMenu.Item key={tab.id} asChild><Link href={tab.href} className="flex items-center gap-2 rounded-md px-2 py-2 text-sm outline-none data-[highlighted]:bg-accent"><span className="min-w-0 flex-1"><span className="block truncate">{tab.title}</span><span className="block truncate text-xs text-muted-foreground">{serverLabel(tab.server)}{tab.project && ` · ${tab.project}`}</span></span>{tab.id === activeId && <Check className="h-4 w-4 text-primary" />}</Link></DropdownMenu.Item>)}</div>
@@ -100,7 +102,7 @@ export function WorkspaceBar({ title, context, onNew, onHashChange }: { title: s
       </DropdownMenu.Root>
     </div>
     <div className="workspace-context">
-      <div className="mx-auto flex min-h-10 max-w-[1240px] items-center gap-3 px-4 py-2 sm:px-6">
+      <div className="mx-auto flex min-h-8 max-w-[1240px] items-center gap-3 px-4 py-1.5 sm:px-6">
         <nav aria-label="Workspace location" className="min-w-0 flex-1"><ol className="flex items-center gap-1.5 overflow-hidden text-[11px] sm:gap-2 sm:text-xs">
           <li className="shrink-0"><Link href="/" className="text-muted-foreground hover:text-primary" aria-label="All servers"><LayoutGrid className="h-3.5 w-3.5" /></Link></li>
           <li aria-hidden="true" className="shrink-0"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li>

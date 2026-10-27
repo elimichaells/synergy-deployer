@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { ReactNode, Suspense, useEffect, useState } from 'react'
+import { ReactNode, Suspense, useCallback, useEffect, useState } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { ChevronLeft, LogOut, Plus, Search, Server } from 'lucide-react'
 import { SynergyMark } from '@/components/synergy/brand'
@@ -36,13 +36,14 @@ type AppShellProps = {
   area?: 'infrastructure'
   workspace?: WorkspaceContextInfo
   unsavedChanges?: boolean
+  onWorkspaceHashChange?: (hash: string) => void
 }
 
 export function AppShell(props: AppShellProps) {
   return <ServerDirectoryProvider><WorkspaceShell {...props} /></ServerDirectoryProvider>
 }
 
-function WorkspaceShell({ children, title, subtitle, user, actions, back, headerExtra, tabs, area, workspace, unsavedChanges = false }: AppShellProps) {
+function WorkspaceShell({ children, title, subtitle, user, actions, back, headerExtra, tabs, area, workspace, unsavedChanges = false, onWorkspaceHashChange }: AppShellProps) {
   const pathname = usePathname()
   const scope = serverScope(pathname)
   const router = useRouter()
@@ -50,6 +51,7 @@ function WorkspaceShell({ children, title, subtitle, user, actions, back, header
   useEffect(() => { setUnsaved(unsavedChanges); return () => setUnsaved(false) }, [unsavedChanges, setUnsaved])
   const [commandOpen, setCommandOpen] = useState(false)
   const [hash, setHash] = useState('')
+  const changeHash = useCallback((value: string) => { setHash(value); onWorkspaceHashChange?.(value) }, [onWorkspaceHashChange])
   const [sessionUser, setSessionUser] = useState<{ name?: string; role?: string; email?: string } | null>(null)
   const account = user?.name ? user : sessionUser
 
@@ -84,7 +86,7 @@ function WorkspaceShell({ children, title, subtitle, user, actions, back, header
 
   return (
     <div className="manager-shell min-h-dvh bg-background text-foreground">
-      <a href="#workspace-content" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-md focus:bg-primary focus:px-4 focus:py-2 focus:text-primary-foreground">Skip to content</a>
+      <a href="#workspace-content" onClick={event => { event.preventDefault(); const content = document.getElementById('workspace-content'); content?.focus(); content?.scrollIntoView({ block: 'start' }) }} className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-md focus:bg-primary focus:px-4 focus:py-2 focus:text-primary-foreground">Skip to content</a>
       <header className="manager-header sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur-xl">
         <div className="spectrum-line" aria-hidden="true" />
         <div className="mx-auto flex h-14 max-w-[1240px] items-center gap-1.5 px-3 sm:gap-2 sm:px-6">
@@ -136,7 +138,7 @@ function WorkspaceShell({ children, title, subtitle, user, actions, back, header
               const activeSection = hash.startsWith('#app-') ? '#applications' : hash
               const active = section ? activeSection === section : isNavActive(pathname, item.matches) && !(scope.kind === 'remote' && ['#applications', '#deployments', '#server-access'].includes(activeSection))
               return (
-                <Link key={item.href} href={item.href} onClick={() => setHash(section)} aria-current={active ? 'page' : undefined}
+                <Link key={item.href} href={item.href} onClick={event => { if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) changeHash(section) }} aria-current={active ? 'page' : undefined}
                   className={`group relative shrink-0 px-1 pb-2.5 pt-1 text-[13px] transition-colors ${active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
                   <span className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 transition-colors group-hover:bg-accent ${active ? 'bg-primary/[0.07] text-primary' : ''}`}><item.icon className="hidden h-3.5 w-3.5 sm:block" />{item.label}</span>
                   {active && <span className="absolute inset-x-2 bottom-0 h-[2px] rounded-full bg-primary" aria-hidden="true" />}
@@ -145,7 +147,7 @@ function WorkspaceShell({ children, title, subtitle, user, actions, back, header
             })}
           </div>
         </nav>
-        <Suspense fallback={<div className="h-[94px] border-t border-border" />}><WorkspaceBar title={title} context={workspace} onNew={() => setCommandOpen(true)} onHashChange={setHash} /></Suspense>
+        <Suspense fallback={<div className="h-[70px] border-t border-border" />}><WorkspaceBar title={title} context={workspace} onNew={() => setCommandOpen(true)} onHashChange={changeHash} /></Suspense>
       </header>
 
       <section className="manager-page-header relative overflow-hidden border-b border-border">

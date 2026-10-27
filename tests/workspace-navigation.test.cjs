@@ -11,6 +11,9 @@ test('saved URLs contain only known navigation and never secrets or automatic ac
   assert.equal(workspaceHref('/settings?section=updates&secret=private'), '/settings?section=updates');
   for (const input of ['https://example.com', '//example.com', '/api/sites', '/login', '/unknown', '/sites/%2f..', '/sites\\evil', 'javascript:alert(1)', '/infrastructure/servers/deleted']) assert.equal(workspaceHref(input), null, input);
   assert.equal(workspaceHref(`${remote}#applications`), `${remote}#applications`);
+  const release = '55555555-5555-4555-8555-555555555555';
+  assert.equal(workspaceHref(`${remote}?view=${release}&token=secret#deployments`), `${remote}?view=${release}#deployments`);
+  assert.equal(workspaceHref(`/overview?view=${release}`), '/overview');
 });
 
 test('restore validates scope from each URL and ignores forged metadata and unavailable servers', () => {
