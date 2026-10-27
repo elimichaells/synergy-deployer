@@ -1,11 +1,13 @@
+import { deploymentDuration, formatSeconds, relativeTime, stagesFromPhase } from '@/lib/deployment-stages'
+import { GitBranch, GitCommitHorizontal, ShieldAlert, ShieldCheck } from 'lucide-react'
 import Link from 'next/link'
 import type { ReactNode } from 'react'
-import { GitBranch, GitCommitHorizontal, ShieldCheck, ShieldAlert } from 'lucide-react'
-import { deploymentDuration, formatSeconds, relativeTime, stagesFromPhase } from '@/lib/deployment-stages'
 import { PipelineMini } from './pipeline'
 import { StatusLabel, type DeployStatus } from './status'
 
 export interface DeploymentSummary {
+  href?: string
+  stages?: import('@/lib/deployment-stages').PipelineStage[]
   id: string
   project_id: string
   project_name?: string
@@ -36,11 +38,11 @@ export function DeploymentRow({ deployment, now, showProject = true, compact = f
 }) {
   const live = deployment.status === 'running' || deployment.status === 'queued'
   const duration = deploymentDuration(deployment.started_at, deployment.finished_at, now)
-  const stages = live ? stagesFromPhase(deployment.status, deployment.phase, deployment.log) : null
+  const stages = live ? deployment.stages || stagesFromPhase(deployment.status, deployment.phase, deployment.log) : null
   const activeStage = stages?.find(stage => stage.state === 'active')
   if (compact) return (
     <div className="relative flex items-center gap-4 px-4 py-3 transition-colors hover:bg-white/[0.025]">
-      <Link href={`/deployments/${deployment.id}`} className="absolute inset-0 z-0 focus-visible:outline-offset-[-2px]" aria-label={`Open deployment ${deployment.id.slice(0, 8)}${deployment.project_name ? ` of ${deployment.project_name}` : ''}`} />
+      <Link href={deployment.href || `/deployments/${deployment.id}`} className="absolute inset-0 z-0 focus-visible:outline-offset-[-2px]" aria-label={`Open deployment ${deployment.id.slice(0, 8)}${deployment.project_name ? ` of ${deployment.project_name}` : ''}`} />
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <StatusLabel status={deployment.status} label={activeStage && deployment.status === 'running' ? activeStage.label : undefined} className="shrink-0" />
@@ -61,7 +63,7 @@ export function DeploymentRow({ deployment, now, showProject = true, compact = f
   )
   return (
     <div className="group relative grid gap-x-6 gap-y-3 px-4 py-3.5 transition-colors hover:bg-white/[0.025] md:grid-cols-[minmax(150px,1fr)_minmax(150px,1fr)_minmax(0,2fr)_minmax(130px,auto)] md:items-center">
-      <Link href={`/deployments/${deployment.id}`} className="absolute inset-0 z-0 focus-visible:outline-offset-[-2px]" aria-label={`Open deployment ${deployment.id.slice(0, 8)}${deployment.project_name ? ` of ${deployment.project_name}` : ''}`} />
+      <Link href={deployment.href || `/deployments/${deployment.id}`} className="absolute inset-0 z-0 focus-visible:outline-offset-[-2px]" aria-label={`Open deployment ${deployment.id.slice(0, 8)}${deployment.project_name ? ` of ${deployment.project_name}` : ''}`} />
 
       <div className="min-w-0">
         <p className="truncate font-mono text-[13px] font-medium text-foreground">{deployment.id.slice(0, 8)}</p>

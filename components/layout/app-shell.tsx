@@ -1,19 +1,19 @@
 'use client'
 
+import { ServerDirectoryProvider } from '@/components/infrastructure/server-directory'
+import { ServerSwitcher } from '@/components/infrastructure/server-switcher'
+import { ServerHealthBanner } from '@/components/server-health'
+import { SynergyMark } from '@/components/synergy/brand'
+import { CommandMenu } from '@/components/synergy/command-menu'
+import { isNavActive, workspaceInfrastructureItems, workspaceNavItems } from '@/components/synergy/nav'
+import { serverScope } from '@/lib/server-navigation'
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
+import { ChevronLeft, LogOut, Plus, Search, Server } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { ReactNode, Suspense, useCallback, useEffect, useState } from 'react'
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { ChevronLeft, LogOut, Plus, Search, Server } from 'lucide-react'
-import { SynergyMark } from '@/components/synergy/brand'
-import { CommandMenu } from '@/components/synergy/command-menu'
-import { infrastructureItems, isNavActive, workspaceNavItems } from '@/components/synergy/nav'
-import { ServerHealthBanner } from '@/components/server-health'
-import { ServerDirectoryProvider } from '@/components/infrastructure/server-directory'
-import { ServerSwitcher } from '@/components/infrastructure/server-switcher'
-import { serverScope } from '@/lib/server-navigation'
-import { WorkspaceBar, type WorkspaceContextInfo } from './workspace-bar'
 import { ThemeSwitcher } from './theme-switcher'
+import { WorkspaceBar, type WorkspaceContextInfo } from './workspace-bar'
 import { useWorkspace } from './workspace-provider'
 
 function initials(name?: string) {
@@ -34,6 +34,7 @@ type AppShellProps = {
   tabs?: ReactNode
   /** Adds the side menu for a multi-page area. */
   area?: 'infrastructure'
+  infrastructureSection?: string | null
   workspace?: WorkspaceContextInfo
   unsavedChanges?: boolean
   onWorkspaceHashChange?: (hash: string) => void
@@ -43,8 +44,10 @@ export function AppShell(props: AppShellProps) {
   return <ServerDirectoryProvider><WorkspaceShell {...props} /></ServerDirectoryProvider>
 }
 
-function WorkspaceShell({ children, title, subtitle, user, actions, back, headerExtra, tabs, area, workspace, unsavedChanges = false, onWorkspaceHashChange }: AppShellProps) {
+function WorkspaceShell({ children, title, subtitle, user, actions, back, headerExtra, tabs, area, infrastructureSection, workspace, unsavedChanges = false, onWorkspaceHashChange }: AppShellProps) {
   const pathname = usePathname()
+  const infrastructureItems = workspaceInfrastructureItems(pathname)
+  const infrastructureOverview = serverScope(pathname).kind === 'remote' ? `${pathname}#server-access` : '/infrastructure'
   const scope = serverScope(pathname)
   const router = useRouter()
   const { clear, setUnsaved } = useWorkspace()
@@ -105,7 +108,7 @@ function WorkspaceShell({ children, title, subtitle, user, actions, back, header
               <span className="hidden flex-1 text-left sm:inline">Search…</span>
               <span className="kbd hidden sm:inline-flex">Ctrl K</span>
             </button>
-            {scope.kind === 'local' && account?.role === 'admin' && <Link href="/sites/new" className="hidden h-8 items-center gap-1.5 rounded-md bg-foreground px-3 text-[13px] font-medium text-background transition-opacity hover:opacity-90 md:flex">
+            {scope.kind !== 'fleet' && account?.role === 'admin' && <Link href={scope.kind === 'remote' ? `/infrastructure/servers/${scope.id}#new` : '/sites/new'} className="hidden h-8 items-center gap-1.5 rounded-md bg-foreground px-3 text-[13px] font-medium text-background transition-opacity hover:opacity-90 md:flex">
               <Plus className="h-3.5 w-3.5" /> New
             </Link>}
             <DropdownMenu.Root>
@@ -135,10 +138,10 @@ function WorkspaceShell({ children, title, subtitle, user, actions, back, header
           <div className="scrollbar-none flex overflow-x-auto">
             {workspaceNavItems(pathname).map(item => {
               const section = item.href.includes('#') ? '#' + item.href.split('#')[1] : ''
-              const activeSection = hash.startsWith('#app-') ? '#applications' : hash
-              const active = section ? activeSection === section : isNavActive(pathname, item.matches) && !(scope.kind === 'remote' && ['#applications', '#deployments', '#server-access'].includes(activeSection))
+              const activeSection = hash.startsWith('#app-') || hash === '#new' ? '#applications' : hash === '#domains' ? '#server-access' : hash
+              const active = section ? activeSection === section : isNavActive(pathname, item.matches) && !(scope.kind === 'remote' && ['#applications', '#deployments', '#server-access', '#storage'].includes(activeSection))
               return (
-                <Link key={item.href} href={item.href} onClick={event => { if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) changeHash(section) }} aria-current={active ? 'page' : undefined}
+                <Link key={item.href} href={item.href} aria-current={active ? 'page' : undefined}
                   className={`group relative shrink-0 px-1 pb-2.5 pt-1 text-[13px] transition-colors ${active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
                   <span className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 transition-colors group-hover:bg-accent ${active ? 'bg-primary/[0.07] text-primary' : ''}`}><item.icon className="hidden h-3.5 w-3.5 sm:block" />{item.label}</span>
                   {active && <span className="absolute inset-x-2 bottom-0 h-[2px] rounded-full bg-primary" aria-hidden="true" />}
@@ -167,16 +170,17 @@ function WorkspaceShell({ children, title, subtitle, user, actions, back, header
       <main id="workspace-content" tabIndex={-1} className="min-w-0 outline-none">
         <div className="mx-auto max-w-[1240px] px-4 py-6 sm:px-6 sm:py-8">
           {scope.kind === 'local' && <ServerHealthBanner />}
-          {area === 'infrastructure' && scope.kind === 'local' ? (
+          {area === 'infrastructure' ? (
             <div className="grid min-w-0 gap-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-10">
               <aside className="min-w-0 lg:sticky lg:top-56 lg:max-h-[calc(100vh-15rem)] lg:self-start lg:overflow-y-auto">
                 <nav aria-label="Infrastructure" className="scrollbar-none -mx-1 flex gap-1 overflow-x-auto px-1 lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0">
-                  <Link href="/infrastructure" aria-current={pathname === '/infrastructure' ? 'page' : undefined}
-                    className={`flex shrink-0 items-center gap-2.5 rounded-md px-3 py-2 text-[13px] transition-colors ${pathname === '/infrastructure' ? 'bg-white/[0.07] text-foreground' : 'text-muted-foreground hover:bg-white/[0.04] hover:text-foreground'}`}>
+                  <Link href={infrastructureOverview} aria-current={(scope.kind === 'remote' ? hash === '#server-access' && !infrastructureSection : pathname === '/infrastructure') ? 'page' : undefined}
+                    className={`flex shrink-0 items-center gap-2.5 rounded-md px-3 py-2 text-[13px] transition-colors ${(scope.kind === 'remote' ? hash === '#server-access' && !infrastructureSection : pathname === '/infrastructure') ? 'bg-white/[0.07] text-foreground' : 'text-muted-foreground hover:bg-white/[0.04] hover:text-foreground'}`}>
                     <Server className="h-4 w-4" />Overview
                   </Link>
                   {infrastructureItems.map(item => {
-                    const active = pathname === item.href || pathname.startsWith(`${item.href}/`)
+                    const target = new URL(item.href, 'https://workspace.invalid')
+                    const active = scope.kind === 'remote' ? target.hash === hash && target.searchParams.get('section') === (infrastructureSection || null) : pathname === item.href || pathname.startsWith(`${item.href}/`)
                     return (
                       <Link key={item.href} href={item.href} aria-current={active ? 'page' : undefined}
                         className={`flex shrink-0 items-center gap-2.5 rounded-md px-3 py-2 text-[13px] transition-colors ${active ? 'bg-white/[0.07] text-foreground' : 'text-muted-foreground hover:bg-white/[0.04] hover:text-foreground'}`}>
@@ -185,7 +189,7 @@ function WorkspaceShell({ children, title, subtitle, user, actions, back, header
                     )
                   })}
                 </nav>
-                <p className="mt-6 hidden rounded-lg border border-border p-3 text-xs leading-5 text-muted-foreground lg:block">Server-wide settings for administrators. To give an app a database or a domain, open its <Link href="/projects" className="text-foreground underline-offset-4 hover:underline">project</Link>.</p>
+                <p className="mt-6 hidden rounded-lg border border-border p-3 text-xs leading-5 text-muted-foreground lg:block">Server-wide settings for administrators. To give an app a database or a domain, open its <Link href={scope.kind === 'remote' ? `${pathname}#applications` : '/projects'} className="text-foreground underline-offset-4 hover:underline">project</Link>.</p>
               </aside>
               <div className="min-w-0">{children}</div>
             </div>

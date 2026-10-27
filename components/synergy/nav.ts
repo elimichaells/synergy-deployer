@@ -1,5 +1,5 @@
-import { Boxes, Cpu, Database, Gauge, Globe2, HardDrive, MemoryStick, Rocket, Server, Settings, ShieldCheck, Workflow, Wrench } from 'lucide-react'
 import { serverOverview, serverScope } from '@/lib/server-navigation'
+import { Boxes, Cpu, Database, Gauge, Globe2, HardDrive, MemoryStick, Rocket, Server, Settings, ShieldCheck, Workflow, Wrench } from 'lucide-react'
 
 /** Top-level navigation. `matches` lists every route prefix a tab owns. */
 export const navItems = [
@@ -19,9 +19,10 @@ export function workspaceNavItems(pathname: string) {
   const href = serverOverview(scope.id)
   return [navItems[0],
     { href, label: 'Overview', icon: Gauge, description: 'This server’s health and activity', matches: [href] },
-    { href: `${href}#applications`, label: 'Applications', icon: Boxes, description: 'Applications on this server', matches: [] },
+    { href: `${href}#applications`, label: 'Projects', icon: Boxes, description: 'Applications on this server', matches: [] },
+    { href: `${href}#storage`, label: 'Storage', icon: Database, description: 'Application databases on this server', matches: [] },
     { href: `${href}#deployments`, label: 'Deployments', icon: Rocket, description: 'Deployments on this server', matches: [] },
-    { href: `${href}#server-access`, label: 'Server access', icon: ShieldCheck, description: 'Agent access and connection', matches: [] },
+    { href: `${href}#server-access`, label: 'Infrastructure', icon: Server, description: 'Agent access and connection', matches: [] },
     navItems[navItems.length - 1],
   ]
 }
@@ -41,4 +42,18 @@ export const infrastructureItems = [
 
 export function isNavActive(pathname: string, matches: string[]) {
   return matches.some(prefix => prefix === '/' ? pathname === '/' : pathname === prefix || pathname.startsWith(`${prefix}/`))
+}
+
+/** The infrastructure layout is shared; links always retain the server URL. */
+export function workspaceInfrastructureItems(pathname: string) {
+  const scope = serverScope(pathname)
+  if (scope.kind !== 'remote') return infrastructureItems
+  const root = serverOverview(scope.id)
+  return [
+    { href: `${root}?section=health#server-access`, label: 'Health & alerts', icon: Gauge, description: 'Reported CPU, memory, disk and connection health' },
+    { href: `${root}#domains`, label: 'Domains & DNS', icon: Globe2, description: 'Application hostnames, IP access and Caddy HTTPS' },
+    { href: `${root}?section=processes#server-access`, label: 'Processes', icon: Cpu, description: 'Application processes reported by this server' },
+    { href: `${root}?section=runtimes#server-access`, label: 'Runtimes & tools', icon: Wrench, description: 'Installed tools reported by the agent' },
+    { href: `${root}?section=agent#server-access`, label: 'Agent access & updates', icon: ShieldCheck, description: 'Connection, safe agent updates and enrollment' },
+  ]
 }

@@ -39,6 +39,7 @@ echo '[setup] Installing private PM2 tools'
 npm install --prefix "$root/tools" --omit=dev --no-audit --no-fund "pm2@$PM2_VERSION"
 if ! id manager-agent >/dev/null 2>&1; then useradd --system --home-dir "$root" --shell /usr/sbin/nologin manager-agent; fi
 install -m 600 "$stage/manager-agent.cjs" "$root/manager-agent.cjs"
+install -m 600 "$stage/manager-agent-supervisor.cjs" "$root/manager-agent-supervisor.cjs"
 install -m 600 "$stage/enrollment.json" "$root/enrollment.json"
 if [ -f "$stage/manager-ca.crt" ]; then install -m 600 "$stage/manager-ca.crt" "$root/manager-ca.crt"; fi
 chown -R manager-agent:manager-agent "$root"
@@ -61,7 +62,7 @@ WorkingDirectory=/var/lib/manager-agent
 Environment=PATH=/var/lib/manager-agent/tools/node/bin:/var/lib/manager-agent/tools/caddy:/usr/local/bin:/usr/bin:/bin
 Environment=MANAGER_AGENT_CADDY=/var/lib/manager-agent/tools/caddy/caddy
 Environment=NODE_EXTRA_CA_CERTS=/var/lib/manager-agent/manager-ca.crt
-ExecStart=/var/lib/manager-agent/tools/node/bin/node /var/lib/manager-agent/manager-agent.cjs run --root /var/lib/manager-agent
+ExecStart=/var/lib/manager-agent/tools/node/bin/node /var/lib/manager-agent/manager-agent-supervisor.cjs --root /var/lib/manager-agent
 Restart=on-failure
 RestartSec=10
 AmbientCapabilities=CAP_NET_BIND_SERVICE

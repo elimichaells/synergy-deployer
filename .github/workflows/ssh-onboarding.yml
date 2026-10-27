@@ -11,6 +11,7 @@ on:
       - 'lib/managed-servers.ts'
       - 'scripts/bootstrap-remote-agent.*'
       - 'scripts/manager-agent.cjs'
+      - 'scripts/manager-agent-supervisor.cjs'
 
 permissions:
   contents: read

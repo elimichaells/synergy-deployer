@@ -52,6 +52,7 @@ export interface RemoteApp {
   production_id?: string | null
   project_type?: 'next' | 'angular' | 'go' | 'laravel' | 'node' | null
   guided_setup?: boolean
+  database_config?: { status: string; provider: string; host: string; port: number; database: string; username: string; tls: boolean } | null
   setup_step?: string
   setup_completed_at?: string | null
 }

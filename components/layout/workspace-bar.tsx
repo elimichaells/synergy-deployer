@@ -1,17 +1,17 @@
 'use client'
 
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import Link from 'next/link'
-import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { Boxes, Check, ChevronDown, ChevronRight, Circle, Cloud, LayoutGrid, Plus, Server, X } from 'lucide-react'
 import { useServerDirectory } from '@/components/infrastructure/server-directory'
 import { serverOverview } from '@/lib/server-navigation'
 import { workspaceHref, workspaceKey, workspaceServer, workspaceTabId, type WorkspaceTab } from '@/lib/workspace-navigation'
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
+import { Boxes, Check, ChevronDown, ChevronRight, Circle, Cloud, LayoutGrid, Plus, Server, X } from 'lucide-react'
+import Link from 'next/link'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useWorkspace } from './workspace-provider'
 
-export type WorkspaceContextInfo = { project?: { name: string; href: string }; environment?: 'production' | 'staging'; page?: string; destinations?: Record<string, string> }
-const sectionNames: Record<string, string> = { overview: 'Overview', env: 'Environment', environment: 'Environment', setup: 'Setup', settings: 'Settings', logs: 'Logs', console: 'Console', deployments: 'Deployments', domains: 'Domains', storage: 'Storage', stack: 'Stack', health: 'Health', apps: 'Applications', databases: 'Databases', team: 'Team', general: 'General', updates: 'Updates', applications: 'Applications', 'server-access': 'Server access' }
+export type WorkspaceContextInfo = { href?: string; project?: { name: string; href: string }; environment?: 'production' | 'staging'; page?: string; destinations?: Record<string, string> }
+const sectionNames: Record<string, string> = { overview: 'Overview', env: 'Environment', environment: 'Environment', setup: 'Setup', settings: 'Settings', logs: 'Logs', console: 'Console', deployments: 'Deployments', domains: 'Domains', storage: 'Storage', stack: 'Stack', health: 'Health', apps: 'Applications', databases: 'Databases', team: 'Team', general: 'General', updates: 'Updates', applications: 'Projects', new: 'New app', 'server-access': 'Infrastructure' }
 const pageNames: Record<string, string> = { '/': 'Servers', '/overview': 'Overview', '/projects': 'Projects', '/sites': 'Applications', '/sites/new': 'New application', '/settings': 'Settings', '/storage': 'Storage', '/deployments': 'Deployments', '/infrastructure': 'Infrastructure', '/infrastructure/servers': 'Server connections' }
 
 export function WorkspaceBar({ title, context, onNew, onHashChange }: { title: string; context?: WorkspaceContextInfo; onNew: () => void; onHashChange: (hash: string) => void }) {
@@ -39,18 +39,19 @@ export function WorkspaceBar({ title, context, onNew, onHashChange }: { title: s
   const key = data ? workspaceKey(data.userId, data.role) : ''
   const userId = data?.userId, role = data?.role
   const tabs = state.key === key ? state.tabs : []
-  const section = params.get('tab') || params.get('section') || hash.slice(1)
+  const section = params.get('tab') || params.get('section') || (hash.startsWith('#app-') ? 'overview' : hash.slice(1))
   const sectionTitle = sectionNames[section] || (section ? section.replaceAll('-', ' ').replace(/^./, c => c.toUpperCase()) : '')
-  const detail = /^\/(sites|projects|storage|deployments)\/[^/]+$/.test(pathname) && !pathname.endsWith('/new')
+  const detail = hash.startsWith('#app-') || /^\/(sites|projects|storage|deployments)\/[^/]+$/.test(pathname) && !pathname.endsWith('/new')
   const isRemote = !['fleet', 'local'].includes(serverId)
-  const label = hash.startsWith('#app-') ? context?.destinations?.[hash] || 'Application' : isRemote ? sectionTitle || 'Overview' : context?.page || pageNames[pathname] || title
+  const label = hash.startsWith('#app-') ? context?.destinations?.[hash] || 'Application' : isRemote ? context?.page || sectionTitle || 'Overview' : context?.page || pageNames[pathname] || title
   useEffect(() => {
     // Next can publish the query before the hash listener catches up. Never save
     // that intermediate location as another page's remembered tab.
     if (window.location.pathname !== pathname || window.location.hash !== hash || new URLSearchParams(window.location.search).toString() !== params.toString()) return
+    if (context?.href && workspaceHref(context.href) !== href) return
     if (!userId || !role || !href || error || /^(Loading|Opening)\b/.test(title) || /not found|unavailable/i.test(title)) return
     register(userId, role, allowedServers.split(',').filter(Boolean), { id: activeId, href, title: label, server: serverId, project: context?.project?.name, environment: context?.environment })
-  }, [userId, role, href, activeId, title, label, serverId, allowedServers, error, context?.project?.name, context?.environment, register, pathname, hash, params])
+  }, [userId, role, href, activeId, title, label, serverId, allowedServers, error, context?.project?.name, context?.environment, context?.href, register, pathname, hash, params])
   useEffect(() => {
     const container = strip.current, active = container?.querySelector<HTMLElement>('[aria-current="page"]')?.parentElement
     if (!container || !active) return
@@ -111,8 +112,8 @@ export function WorkspaceBar({ title, context, onNew, onHashChange }: { title: s
           <li aria-hidden="true" className="shrink-0"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li>
           <li className="max-w-40 shrink-0 truncate"><Link href={serverId === 'fleet' ? '/' : serverOverview(serverId)} className="font-medium text-primary">{serverTitle}</Link></li>
           {context?.project && <><li aria-hidden="true" className="hidden shrink-0 sm:block"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li><li className="hidden min-w-0 truncate sm:block"><Link href={context.project.href} className="text-muted-foreground hover:text-primary">{context.project.name}</Link></li></>}
-          <li aria-hidden="true" className="shrink-0"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li><li className="min-w-0 truncate font-medium" aria-current={isRemote || !sectionTitle ? 'page' : undefined}>{label}</li>
-          {sectionTitle && !isRemote && <><li aria-hidden="true" className="shrink-0"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li><li className="shrink-0 text-muted-foreground" aria-current="page">{sectionTitle}</li></>}
+          <li aria-hidden="true" className="shrink-0"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li><li className="min-w-0 truncate font-medium" aria-current={(isRemote && !hash.startsWith('#app-')) || !sectionTitle ? 'page' : undefined}>{label}</li>
+          {sectionTitle && (!isRemote || hash.startsWith('#app-')) && <><li aria-hidden="true" className="shrink-0"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li><li className="shrink-0 text-muted-foreground" aria-current="page">{sectionTitle}</li></>}
           {detail && context?.environment && <li className={`environment-chip ml-1 hidden sm:inline-flex ${context.environment}`}>{context.environment}</li>}
         </ol></nav>
         <span className="hidden shrink-0 items-center gap-1.5 text-[10px] text-muted-foreground lg:flex" title={state.saved ? 'Navigation is saved in this browser for your account. Form contents are not saved.' : 'Browser storage is unavailable'}>{server && <><Circle className={`h-1.5 w-1.5 fill-current ${!error && server.status === 'online' ? 'text-status-ready' : 'text-status-building'}`} />{error ? 'Status unavailable' : server.status}<span className="mx-1 text-border">|</span></>}<Cloud className="h-3 w-3" />{state.saved ? 'Workspace remembered' : 'This visit only'}</span>

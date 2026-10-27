@@ -1,8 +1,9 @@
-import { cn } from '@/lib/utils'
+import { cn } from '@/lib/utils';
 
-export type DeployStatus = 'queued' | 'running' | 'success' | 'failed'
+export type DeployStatus = 'queued' | 'running' | 'success' | 'failed' | 'cancelled'
 
 export const statusMeta: Record<DeployStatus, { label: string; dot: string; text: string }> = {
+  cancelled: { label: 'Cancelled', dot: 'bg-muted-foreground', text: 'text-muted-foreground' },
   success: { label: 'Ready', dot: 'bg-status-ready', text: 'text-status-ready' },
   running: { label: 'Building', dot: 'bg-status-building', text: 'text-status-building' },
   failed: { label: 'Error', dot: 'bg-status-failed', text: 'text-status-failed' },

@@ -13,7 +13,7 @@ for (const entry of entries) {
   fs.mkdirSync(path.dirname(dest), { recursive: true })
   fs.cpSync(path.join(source, entry), dest, { recursive: true })
 }
-for (const entry of ['app/infrastructure/servers', 'app/infrastructure/disk', 'lib/managed-server-types.ts']) {
+for (const entry of ['app/infrastructure/servers', 'app/infrastructure/disk', 'lib/managed-server-types.ts', 'lib/remote-server-overview.ts', 'lib/remote-setup-policy.ts', 'lib/remote-workspace.ts', 'lib/environment-text.ts']) {
   const dest = path.join(root, entry)
   fs.mkdirSync(path.dirname(dest), { recursive: true })
   fs.cpSync(path.join(source, entry), dest, { recursive: true })

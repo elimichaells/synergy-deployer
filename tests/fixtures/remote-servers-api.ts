@@ -15,12 +15,22 @@ const initial = { role: 'admin', servers: [
 const state = (globalThis as unknown as { __remoteFixture?: typeof initial }).__remoteFixture ??= initial
 const variables = (globalThis as unknown as { __remoteEnvFixture?: Record<string,Record<string,string>> }).__remoteEnvFixture ??= {}
 const setupJobs = (globalThis as unknown as { __remoteSetupJobsFixture?: Record<string,any>[] }).__remoteSetupJobsFixture ??= []
+const updateFixture = (globalThis as unknown as { __agentUpdateFixture?: Record<string,any> }).__agentUpdateFixture ??= {}
 
 // Synthetic UI fixture only. No database, filesystem mutation or network agents.
 export async function remoteServersFixture(request: Request) {
   const pathname = new URL(request.url).pathname
   if (!pathname.startsWith('/api/servers')) return null
   const parts = pathname.slice('/api/servers'.length).split('/').filter(Boolean)
+  if (parts.length===2 && parts[1]==='agent-update') {
+    const server = state.servers.find(item=>item.id===parts[0])
+    if(!server)return NextResponse.json({error:'Server not found'},{status:404})
+    if(request.method==='GET')return NextResponse.json({installed:server.metrics?.version,available:'1.2.0',supported:!!server.enrolled_at,updateAvailable:server.metrics?.version!=='1.2.0',latest:updateFixture[server.id] || null})
+    const body=await request.json()
+    if(body.action==='cancel'){if(updateFixture[server.id])updateFixture[server.id].status='cancelled';return NextResponse.json({ok:true})}
+    updateFixture[server.id]={id:crypto.randomUUID(),from_version:server.metrics?.version,target_version:'1.2.0',status:'queued',message:'Preview only: waiting for the agent to become idle. No server will be updated.',updated_at:new Date().toISOString()}
+    return NextResponse.json({id:updateFixture[server.id].id},{status:202})
+  }
   if (request.method === 'GET') {
     if(parts[1]==='apps' && ['setup','environment'].includes(parts[3])) {
       const target=state.apps.find(item=>item.id===parts[2] && item.server_id===parts[0])
