@@ -12,8 +12,9 @@ const { randomBytes, X509Certificate } = require('node:crypto');
 const { rootCertificates } = require('node:tls');
 const { createInterface } = require('node:readline/promises');
 const PROTOCOL_VERSION = 1;
-const AGENT_VERSION = '1.1.0';
+const AGENT_VERSION = '1.2.0';
 const SETUP_CAPABILITY = 'guided-setup-v1';
+const UPDATE_CAPABILITY = 'agent-update-v1';
 const ID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -84,7 +85,7 @@ function sanitizeMetrics(raw) {
     apps: (Array.isArray(raw.apps) ? raw.apps : []).slice(0, 200).filter(x => ID.test(x.id)).map(x => ({ id: x.id,
       status: ['online','stopped','errored','launching','stopping','missing'].includes(x.status) ? x.status : 'unknown', cpu: number(x.cpu, 10000), memory: number(x.memory) })),
     proxyError: raw.proxyError ? str(raw.proxyError, 500) : null,
-    capabilities: Array.isArray(raw.capabilities) && raw.capabilities.includes(SETUP_CAPABILITY) ? [SETUP_CAPABILITY] : [] };
+    capabilities: [SETUP_CAPABILITY,UPDATE_CAPABILITY].filter(value => Array.isArray(raw.capabilities) && raw.capabilities.includes(value)) };
   if (result.memoryFree > result.memoryTotal || (result.diskFree !== null && result.diskTotal !== null && result.diskFree > result.diskTotal)) throw new Error('Invalid capacity');
   return result;
 }
@@ -460,11 +461,18 @@ async function runAgent(root) {
     if(alive)throw new Error('An agent is already running in this directory');
     await fs.unlink(lock);await fs.writeFile(lock,String(process.pid),{flag:'wx',mode:0o600});
   }
+  // Updating the agent must not resurrect stopped apps or restart an existing PM2 daemon.
+  const pm2Pid=Number(await fs.readFile(path.join(root,'pm2','pm2.pid'),'utf8').catch(()=>''));
+  let pm2Alive=false;try{if(Number.isSafeInteger(pm2Pid)&&pm2Pid>0){process.kill(pm2Pid,0);pm2Alive=true;}}catch{}
   const tools=await findTools(root);
-  if(await fs.stat(path.join(root,'pm2','dump.pm2')).catch(()=>null))await tools.pm(['resurrect']);
+  if(!pm2Alive&&await fs.stat(path.join(root,'pm2','dump.pm2')).catch(()=>null))await tools.pm(['resurrect']);
   const journalFile=path.join(root,'current-job.json');
   let journal=await readJson(journalFile), prior=cpuSnapshot(), stopped=false;
+  const supervised=process.env.MANAGER_AGENT_SUPERVISOR==='1'&&typeof process.send==='function';
+  const send=message=>{if(supervised&&process.connected)process.send(message,()=>{});};
   const onStop=()=>{stopped=true;};process.on('SIGINT',onStop);process.on('SIGTERM',onStop);
+  const onMessage=message=>{if(message?.type==='stop')onStop();};
+  if(supervised){process.on('message',onMessage);process.on('disconnect',onStop);}
   // Persist reports independently of network connectivity. Manager never retries a running deployment.
   let logSecrets=[];
   const log=text=>{if(journal)journal.log=(journal.log+redact(text,logSecrets)).slice(-120000);};
@@ -493,7 +501,7 @@ async function runAgent(root) {
   let heartbeatBusy=false;
   const pulse=async()=>{
     if(heartbeatBusy)return;heartbeatBusy=true;
-    try{const data=await sample(root,tools,prior);prior=data.cpu;data.metrics.capabilities=[SETUP_CAPABILITY];await request(config,'heartbeat',{protocol:PROTOCOL_VERSION,metrics:data.metrics,caPem:data.caPem});}
+    try{const data=await sample(root,tools,prior);prior=data.cpu;data.metrics.capabilities=[SETUP_CAPABILITY,...(supervised?[UPDATE_CAPABILITY]:[])];await request(config,'heartbeat',{protocol:PROTOCOL_VERSION,metrics:data.metrics,caPem:data.caPem});send({type:'heartbeat',version:AGENT_VERSION,metrics:data.metrics});}
     finally{heartbeatBusy=false;}
   };
   const describe=error=>console.error(`[agent] ${redact(error.message,[config.agentToken])}`);
@@ -503,10 +511,13 @@ async function runAgent(root) {
     while(!stopped){
       try{
         await pulse();
-        if(journal){await report();await wait(5000);continue;}
+        if(journal){send({type:'idle',idle:false});await report();await wait(5000);continue;}
+        if(stopped)break;
+        send({type:'idle',idle:true});
         const {job,protocol}=await request(config,'claim',{});
         if(protocol!==PROTOCOL_VERSION)throw new Error('Agent upgrade required');
         if(!job){await wait(5000);continue;}
+        send({type:'idle',idle:false});
         logSecrets=[...jobSecrets(job.payload),config.agentToken];
         journal={id:job.id,appId:job.payload.id,claimToken:job.claimToken,status:'running',sequence:0,log:'',commitSha:null};
         await persist();
@@ -525,6 +536,7 @@ async function runAgent(root) {
   }finally{
     clearInterval(timer);while(reportBusy||heartbeatBusy)await wait(100);
     await fs.unlink(lock).catch(()=>{});process.off('SIGINT',onStop);process.off('SIGTERM',onStop);
+    if(supervised){process.off('message',onMessage);process.off('disconnect',onStop);if(process.connected)process.disconnect();}
   }
 }
 
@@ -722,6 +734,7 @@ async function validateSetup(root, job, tools, dependencies = {}) {
 
 async function main(){
   if(Number(process.versions.node.split('.')[0])<22)throw new Error('Install Node.js 22 or later');
+  if(process.argv.length===3&&process.argv[2]==='version'){console.log(JSON.stringify({version:AGENT_VERSION,protocol:PROTOCOL_VERSION,supervisorProtocol:1}));return;}
   const [action,...args]=process.argv.slice(2),options={};
   for(let i=0;i<args.length;i+=2){if(!['--root','--manager','--server','--enrollment-file'].includes(args[i])||!args[i+1])throw new Error('Use --root, --manager, --server and --enrollment-file options');options[args[i].slice(2)]=args[i+1];}
   if(!['enroll','run'].includes(action)||!options.root)throw new Error('Usage: node manager-agent.cjs enroll|run --root <dedicated absolute folder> [--manager https://manager.example.edu --server <id>]');
@@ -737,5 +750,5 @@ async function main(){
   if(action==='enroll')await enrollCli(root,options);else await runAgent(root);
 }
 
-module.exports={PROTOCOL_VERSION,AGENT_VERSION,SETUP_CAPABILITY,validateApp,sanitizeMetrics,redact,streamRedactor,caddyConfig,managerAddress,contained,run,request,deploy,restoreActivation,healthy,atomicJson,readJson,enrollCli,detectFramework,inspectRepository,validateDatabase,databaseEnvironment,setupDatabase,validateSetup,jobSecrets,findStaticRoot,serveStatic};
+module.exports={PROTOCOL_VERSION,AGENT_VERSION,SETUP_CAPABILITY,UPDATE_CAPABILITY,validateApp,sanitizeMetrics,redact,streamRedactor,caddyConfig,managerAddress,contained,run,request,deploy,restoreActivation,healthy,atomicJson,readJson,enrollCli,detectFramework,inspectRepository,validateDatabase,databaseEnvironment,setupDatabase,validateSetup,jobSecrets,findStaticRoot,serveStatic};
 if(require.main===module)main().catch(error=>{console.error(error.message);process.exitCode=1;});

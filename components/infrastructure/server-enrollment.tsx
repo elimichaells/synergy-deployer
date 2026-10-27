@@ -14,10 +14,10 @@ export function ServerEnrollment({ id, token, platform, onDismiss }: { id: strin
     {!validOrigin && <p className="text-xs text-amber-200">Use the Manager HTTPS hostname reachable from the target network. A browser-local address such as localhost cannot connect a different server.</p>}
     <ol className="list-decimal space-y-3 pl-5 text-sm">
       <li>On the target server, install Node.js 22 or later, Git, PM2 and Caddy. Use a dedicated account and data folder for the agent.</li>
-      <li><a href="/api/servers/agent" download="manager-agent.cjs" className="underline">Download manager-agent.cjs</a> and copy it to that server. The server must be able to reach <span className="break-all font-mono">{origin}</span> over HTTPS.</li>
+      <li><a href="/api/servers/agent" download="manager-agent.cjs" className="underline">Download the agent</a> and <a href="/api/servers/agent-supervisor" download="manager-agent-supervisor.cjs" className="underline">its supervisor</a>. Copy both into <span className="font-mono">{root}</span> on that server. The server must be able to reach <span className="break-all font-mono">{origin}</span> over HTTPS.</li>
       <li>Run this command in the folder containing the downloaded file:<pre className="mt-2 overflow-x-auto rounded-lg bg-well/40 p-3 text-xs">{command}</pre></li>
       <li>Paste this one-time token when prompted. It expires in one hour:<pre className="mt-2 overflow-x-auto rounded-lg bg-well/40 p-3 text-xs">{token}</pre></li>
-      <li>Start the agent:<pre className="mt-2 overflow-x-auto rounded-lg bg-well/40 p-3 text-xs">{`node manager-agent.cjs run --root "${root}"`}</pre></li>
+      <li>Start the agent through its update supervisor:<pre className="mt-2 overflow-x-auto rounded-lg bg-well/40 p-3 text-xs">{`node manager-agent-supervisor.cjs --root "${root}"`}</pre></li>
     </ol>
     <p className="text-xs leading-5 text-muted-foreground">Configure the agent to start at boot using Windows Task Scheduler or a Linux systemd service. Keep the same account and data directory. The agent uses a separate PM2 home and manages its own Caddy configuration; ports 80, 443 and 2029 must be available. Existing Caddy installations need a planned migration before enrollment for deployments.</p>
     <p className="text-xs leading-5 text-muted-foreground">For an institution-issued Manager certificate, trust its CA on the target server and set NODE_EXTRA_CA_CERTS to the public CA file before starting Node. Do not disable TLS verification. This connection needs outbound HTTPS only.</p>

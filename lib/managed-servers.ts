@@ -30,6 +30,7 @@ export function ensureManagedServers() {
       await client.query("select pg_advisory_xact_lock(hashtext('manager-managed-servers-schema'))")
       await client.query(sql)
       await client.query(await readFile(path.join(process.cwd(), 'db/migrations/026_remote_app_setup.sql'), 'utf8'))
+      await client.query(await readFile(path.join(process.cwd(), 'db/migrations/027_remote_agent_updates.sql'), 'utf8'))
       await client.query('commit')
     } catch (error) { await client.query('rollback'); throw error } finally { client.release() }
   })().catch(error => { schema = null; throw error })
@@ -98,6 +99,7 @@ export async function changeServer(id: string, action: unknown, userId: string) 
     await client.query(`update remote_jobs set status='cancelled',payload_ciphertext=null,finished_at=now(),updated_at=now(),
       log=log||E'\n[revoked] Server access revoked. A running operation may still finish on the server; inspect it locally.\n'
       where server_id=$1 and status in ('queued','running')`, [id])
+    await client.query("update remote_agent_updates set status='cancelled',source=null,finished_at=now(),updated_at=now(),message='Server access revoked; inspect any installation in progress locally' where server_id=$1 and status in ('queued','installing','recovery_required')", [id])
     await client.query('commit')
   } catch (error) { await client.query('rollback'); throw error } finally { client.release() }
   await audit(userId, 'server.revoke', id)
@@ -236,6 +238,9 @@ export async function claimJob(serverId: string) {
     if (!server.rowCount) throw new ApiError('Server revoked', 401)
     // One job per server. A disconnected claim remains assigned, NEVER automatically re-executed.
     let job = (await client.query("select * from remote_jobs where server_id=$1 and status='running'", [serverId])).rows[0]
+    if (!job && (await client.query("select id from remote_agent_updates where server_id=$1 and status in ('queued','installing','recovery_required')", [serverId])).rowCount) {
+      await client.query('commit'); return { job:null, protocol:PROTOCOL_VERSION }
+    }
     if (!job) job = (await client.query(`update remote_jobs set status='running',claim_token=$2,started_at=now(),updated_at=now()
       where id=(select id from remote_jobs where server_id=$1 and status='queued' and (kind='deploy' or $3) order by created_at limit 1)
       returning *`, [serverId, token(), server.rows[0].metrics?.capabilities?.includes(REMOTE_SETUP_CAPABILITY) === true])).rows[0]

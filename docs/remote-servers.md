@@ -88,15 +88,15 @@ use. Firewall rules, DNS, client trust and databases are separate configuration 
 
    On Windows use `npm install --prefix C:\ManagerAgent\tools pm2`.
 
-3. In Manager, add a server, select its actual OS and download `manager-agent.cjs`.
-   Copy the file to the target and run the enrollment command shown in the UI.
+3. In Manager, add a server, select its actual OS and download `manager-agent.cjs`
+   and `manager-agent-supervisor.cjs`. Copy both into the target data root and run the enrollment command shown in the UI.
    Paste the token at the prompt; do not put it in shell history or a service file.
-4. Start the agent with the same absolute `--root` directory. Its first heartbeat
+4. Start the supervisor with the same absolute `--root` directory. Its first heartbeat
    shows hostname, IP addresses, CPU, available memory, disk capacity and tools.
 5. Configure startup at boot. Keep the same account, data folder and environment.
 
 Example Linux systemd unit (create the account and directories first; put the
-downloaded script at `/opt/manager-agent/manager-agent.cjs`):
+downloaded scripts in `/var/lib/manager-agent`):
 
 ```ini
 [Unit]
@@ -110,7 +110,7 @@ User=manager-agent
 Group=manager-agent
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 WorkingDirectory=/var/lib/manager-agent
-ExecStart=/usr/bin/node /opt/manager-agent/manager-agent.cjs run --root /var/lib/manager-agent
+ExecStart=/usr/bin/node /var/lib/manager-agent/manager-agent-supervisor.cjs --root /var/lib/manager-agent
 Restart=on-failure
 RestartSec=10
 AmbientCapabilities=CAP_NET_BIND_SERVICE
@@ -130,7 +130,7 @@ also stops processes in its systemd group; PM2 resurrects saved apps when it res
 On Windows, use Task Scheduler with an **At startup** trigger, the dedicated agent
 account, **Run whether user is logged on or not**, and **Do not start a new instance**.
 The program is the absolute path to `node.exe`; arguments are the absolute script
-path followed by `run --root C:\ManagerAgent`. Use the same account that enrolled
+path to `manager-agent-supervisor.cjs` followed by `--root C:\ManagerAgent`. Use the same account that enrolled
 and installed tools. Configure restart on failure and remove any execution time
 limit. The agent removes inherited ACLs from its new data folder and grants its
 account, SYSTEM and Administrators access. If using a private CA or a custom Caddy
@@ -138,7 +138,8 @@ path, supply those environment settings through the service account or a launche
 Verify both app availability and heartbeat after a reboot.
 
 The agent uses its own PM2 home under the data folder. It restores its saved apps and
-Caddy when starting. It does not adopt existing apps or overwrite an existing Caddy
+Caddy when the PM2 daemon is not already running. Agent updates leave a running daemon
+and intentionally stopped apps alone. It does not adopt existing apps or overwrite an existing Caddy
 installation. Ports 80/443 must be available. Its Caddy admin endpoint is loopback
 only on 2029, and it refuses to reload a different installation on that port.
 
@@ -256,12 +257,11 @@ variables, setup progress and releases. Use the environment link above the wizar
 to switch. Nothing deploys until that environment passes review and server checks.
 
 Agent **1.1.0** or later is required. Existing agent 1.0 deployments keep working,
-but older agents cannot receive setup jobs. Download the current script from
-**Server access**. With no job running, stop only the agent's scheduled task/service,
-replace its installed `manager-agent.cjs`, then restart it. Preserve `agent.json`,
-the data folder, service identity, PATH and CA settings; do not enroll again. The
-next heartbeat advertises guided-setup support. SSH enrollment uses the current
-script automatically for new servers.
+but older agents cannot receive setup jobs. Agent **1.2.0** adds supervised updates
+through **Server access → Agent updates**. Older installations need the
+[one-time supervisor upgrade](agent-updates.md); preserve the existing enrollment,
+data folder and service identity. SSH enrollment installs both current scripts
+automatically for new servers.
 
 Repository inspection runs on the selected server and reads manifests without
 installing dependencies or executing app scripts. It detects Next.js, Angular,

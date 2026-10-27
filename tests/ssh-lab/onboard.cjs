@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const https = require('node:https');
 const { execFileSync } = require('node:child_process');
-const { randomBytes, randomUUID } = require('node:crypto');
+const { randomBytes, randomUUID, createHash } = require('node:crypto');
 const root = path.resolve(__dirname, '../..');
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -137,6 +137,31 @@ async function main() {
     }
     assert.ok(new Date(refreshed.last_seen_at).getTime() > restarted, 'Heartbeat did not resume after service restart');
     check('Dedicated service identity and startup registration verified; monitoring resumes after a real service restart');
+    assert.ok(refreshed.metrics.capabilities.includes('agent-update-v1'), 'Supervisor capability not advertised');
+    const readAgentFile = name => process.platform === 'win32' ? fs.readFileSync(path.join(agentRoot,name),'utf8').trim() : run('sudo',['cat',path.join(agentRoot,name)]).trim();
+    const pm2Pid = readAgentFile('pm2/pm2.pid');
+    const supervisorPid = readAgentFile('.agent-updates/supervisor.lock');
+    const installedSource = fs.readFileSync(path.join(root,'scripts/manager-agent.cjs'),'utf8');
+    const installedVersion = require('../../scripts/manager-agent.cjs').AGENT_VERSION;
+    const nextVersion = installedVersion.replace(/(\d+)$/,n=>String(Number(n)+1));
+    const candidate = installedSource.replace(`const AGENT_VERSION = '${installedVersion}';`,`const AGENT_VERSION = '${nextVersion}';`);
+    assert.notEqual(candidate,installedSource);
+    // An isolated lab-only future version exercises the real authenticated agent
+    // transport and supervisor. The admin queue endpoint is tested separately.
+    const updateId = (await db.query(`insert into remote_agent_updates(server_id,user_id,from_version,target_version,sha256,source)
+      values($1,$2,$3,$4,$5,$6) returning id`,[server.id,userId,installedVersion,nextVersion,createHash('sha256').update(candidate).digest('hex'),candidate])).rows[0].id;
+    let updateState;
+    for(let n=0;n<90;n++) {
+      updateState=(await db.query('select status from remote_agent_updates where id=$1',[updateId])).rows[0].status;
+      if(['success','failed','rolled_back','recovery_required'].includes(updateState))break;
+      await wait(2000);
+    }
+    assert.equal(updateState,'success','Supervised update did not complete');
+    assert.equal((await managed.serverDetail(server.id)).server.metrics.version,nextVersion);
+    assert.equal(readAgentFile('agent.json'),configuration.trim(),'Enrollment was modified by update');
+    assert.equal(readAgentFile('pm2/pm2.pid'),pm2Pid,'Update restarted PM2');
+    assert.equal(readAgentFile('.agent-updates/supervisor.lock'),supervisorPid,'Update restarted the service supervisor');
+    check('Real service performed a verified agent update, confirmed heartbeats and preserved enrollment, PM2 and supervisor PIDs');
     const audit = JSON.stringify((await db.query('select action,details from audit_logs')).rows);
     for (const secret of secrets) assert.ok(!audit.includes(secret), 'Audit record leaked a credential');
     assert.ok(audit.includes('server.ssh.setup.finish'));

@@ -45,6 +45,7 @@ Write-Output '[setup] Installing private PM2 tools'
 & $nodeExe (Join-Path $nodeRoot 'node_modules\npm\bin\npm-cli.js') install --prefix $toolsRoot --omit=dev --no-audit --no-fund ('pm2@' + $downloads.pm2Version)
 if ($LASTEXITCODE -ne 0) { throw 'PM2 installation failed' }
 Copy-Item -LiteralPath (Join-Path $stage 'manager-agent.cjs') -Destination (Join-Path $agentRoot 'manager-agent.cjs') -Force
+Copy-Item -LiteralPath (Join-Path $stage 'manager-agent-supervisor.cjs') -Destination (Join-Path $agentRoot 'manager-agent-supervisor.cjs') -Force
 $enrollmentFile = Join-Path $agentRoot 'enrollment.json'
 Copy-Item -LiteralPath (Join-Path $stage 'enrollment.json') -Destination $enrollmentFile -Force
 if (Test-Path -LiteralPath (Join-Path $stage 'manager-ca.crt')) {
@@ -62,7 +63,7 @@ $agentRoot = $PSScriptRoot
 $env:Path = (Join-Path $agentRoot 'tools\node') + ';' + (Join-Path $agentRoot 'tools\git\cmd') + ';' + (Join-Path $agentRoot 'tools\caddy') + ';' + $env:Path
 $env:MANAGER_AGENT_CADDY = Join-Path $agentRoot 'tools\caddy\caddy.exe'
 if (Test-Path -LiteralPath (Join-Path $agentRoot 'manager-ca.crt')) { $env:NODE_EXTRA_CA_CERTS = Join-Path $agentRoot 'manager-ca.crt' }
-& (Join-Path $agentRoot 'tools\node\node.exe') (Join-Path $agentRoot 'manager-agent.cjs') run --root $agentRoot
+& (Join-Path $agentRoot 'tools\node\node.exe') (Join-Path $agentRoot 'manager-agent-supervisor.cjs') --root $agentRoot
 exit $LASTEXITCODE
 '@
 $launcherPath = Join-Path $agentRoot 'start-agent.ps1'
