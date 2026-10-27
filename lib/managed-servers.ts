@@ -1,14 +1,14 @@
+import { ApiError } from '@/lib/api'
+import { audit } from '@/lib/audit'
+import { db, query } from '@/lib/db'
+import { repositoryPath } from '@/lib/git-provider-policy'
+import { getGitConnection, getGitHubConnectionToken } from '@/lib/github-connections'
+import { cleanInspection, REMOTE_SETUP_CAPABILITY } from '@/lib/remote-setup-policy'
+import { decryptSecret, encryptSecret } from '@/lib/secret-crypto'
+import { databaseEnvironment, jobSecrets, PROTOCOL_VERSION, redact, sanitizeMetrics, validateApp } from '@/scripts/manager-agent.cjs'
 import { createHash, randomBytes, X509Certificate } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { db, query } from '@/lib/db'
-import { ApiError } from '@/lib/api'
-import { audit } from '@/lib/audit'
-import { decryptSecret, encryptSecret } from '@/lib/secret-crypto'
-import { getGitConnection, getGitHubConnectionToken } from '@/lib/github-connections'
-import { repositoryPath } from '@/lib/git-provider-policy'
-import { validateApp, sanitizeMetrics, redact, PROTOCOL_VERSION, databaseEnvironment, jobSecrets } from '@/scripts/manager-agent.cjs'
-import { cleanInspection, REMOTE_SETUP_CAPABILITY } from '@/lib/remote-setup-policy'
 import type { ManagedServer, RemoteApp } from './managed-server-types'
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex')
@@ -18,7 +18,7 @@ const serverColumns = `s.id,s.name,s.location,s.platform,s.enabled,s.enrolled_at
   (select count(*)::int from remote_apps a where a.server_id=s.id) as app_count`
 const appColumns = `id,server_id,name,repo_url,branch,install_cmd,build_cmd,start_cmd,port,health_path,
   access_mode,hostname,ip_address,ip_port,git_connection_id,env_names,live_commit,deployed_at,
-  environment_name,production_id,project_type,guided_setup,setup_step,setup_completed_at`
+  environment_name,production_id,project_type,guided_setup,setup_step,setup_completed_at,database_config`
 let schema: Promise<void> | null = null
 
 export function ensureManagedServers() {

@@ -1,7 +1,7 @@
 // Turns the deploy engine's log markers ("[stage] build", "[timing] build: 12s")
 // into the pipeline shown by the Synergy deployment views. Pure: safe in the browser.
 
-export type DeploymentStatus = 'queued' | 'running' | 'success' | 'failed'
+export type DeploymentStatus = 'queued' | 'running' | 'success' | 'failed' | 'cancelled'
 export type StageState = 'done' | 'active' | 'failed' | 'pending' | 'skipped'
 
 export const PIPELINE = [
@@ -21,6 +21,7 @@ const PHASE_TO_STAGE: Record<string, PipelineKey> = {
   prepare: 'initialize',
   checkout: 'checkout',
   dependencies: 'install',
+  install: 'install',
   'pre-deploy': 'install',
   script: 'build',
   build: 'build',
@@ -35,6 +36,8 @@ const PHASE_LABELS: Record<string, string> = {
   prepare: 'Initialize release',
   checkout: 'Checkout source',
   dependencies: 'Install dependencies',
+  install: 'Install dependencies',
+  caddy: 'Configure HTTPS',
   'pre-deploy': 'Pre-deploy command',
   script: 'Deployment script',
   build: 'Build',
@@ -57,7 +60,7 @@ export interface LogSection {
 }
 
 export interface PipelineStage {
-  key: PipelineKey
+  key: PipelineKey | 'routing'
   label: string
   state: StageState
   durationSec: number | null
@@ -126,7 +129,7 @@ export function parseDeploymentLog(log: string | null | undefined, status: Deplo
 
   let current = open('prepare')
   let errorMessage: string | null = null
-  let cancelled = false
+  let cancelled = status === 'cancelled'
   const text = cleanLog(log || '')
   for (const raw of text.split(/\r?\n/)) {
     const stage = /^\[stage\] ([\w-]+)\s*$/.exec(raw)
@@ -156,6 +159,7 @@ export function parseDeploymentLog(log: string | null | undefined, status: Deplo
   const last = sections[sections.length - 1]
   if (status === 'running') last.state = 'active'
   if (status === 'queued') last.state = 'pending'
+  if (status === 'cancelled') last.state = 'skipped'
   if (status === 'failed') {
     const failing = [...sections].reverse().find(section => section.lines.some(line => line.startsWith('[error] ') || line.startsWith('[cancelled] '))) || last
     failing.state = 'failed'
@@ -190,6 +194,7 @@ export function parseDeploymentLog(log: string | null | undefined, status: Deplo
   const progress = status === 'success' ? 1 : status === 'queued' ? 0 : settled / stages.length
   const active = stages.find(stage => stage.state === 'active' || stage.state === 'failed')
   const currentLabel = status === 'success' ? 'Ready'
+    : status === 'cancelled' ? 'Cancelled'
     : status === 'queued' ? 'Queued'
     : status === 'failed' ? `${cancelled ? 'Cancelled' : 'Failed'}${active ? ` at ${active.label.toLowerCase()}` : ''}`
     : phase === 'waiting_cron' ? 'Waiting for cron job'
@@ -214,6 +219,7 @@ export function parseDeploymentLog(log: string | null | undefined, status: Deplo
  */
 export function stagesFromPhase(status: DeploymentStatus, phase?: string | null, logHead?: string | null): PipelineStage[] {
   const order = PIPELINE.map(stage => stage.key)
+  if (status === 'cancelled') return PIPELINE.map(stage => ({ ...stage, state: 'skipped', durationSec: null }))
   if (status === 'success') return PIPELINE.map(stage => ({ ...stage, state: 'done', durationSec: null }))
   const current = stageForPhase(phase)
   if (status === 'queued' || !current) {

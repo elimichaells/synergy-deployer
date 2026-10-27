@@ -114,6 +114,7 @@ export function EnvEditor({ value, onChange, placeholder, className = '', disabl
 
       {/* Input layer (transparent text, visible caret) */}
       <textarea
+        aria-label="Environment variables"
         ref={textareaRef}
         value={value}
         onChange={(e) => onChange(e.target.value)}

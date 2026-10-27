@@ -1,38 +1,42 @@
 'use client'
 import { ApplicationHealth } from '@/components/app/health-settings'
 import { useServerHealth } from '@/components/server-health'
-import { applicationState, applicationHealthLabels } from '@/lib/application-health'
+import { ApplicationRelease } from '@/components/workspace/application-release'
+import { ApplicationTabs } from '@/components/workspace/application-tabs'
+import { applicationHealthLabels, applicationState } from '@/lib/application-health'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import Link from 'next/link'
-import { useParams, useRouter, useSearchParams } from 'next/navigation'
-import {
-  Activity, ArrowRight, ArrowUpRight, Check, Copy, Database, GitBranch, GitCommitHorizontal, Globe2, Layers,
-  Loader2, Play, RefreshCw, Rocket, RotateCw, Square, Terminal, Trash2, Workflow, Zap,
-} from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/switch'
 import { AppToolGrid } from '@/components/app/app-tools'
-import { PromoteSheet } from '@/components/app/promote-sheet'
-import { SecurityGateBanner, SecurityGateSetting, useSecurityGate } from '@/components/app/security-gate'
+import { DomainsPanel } from '@/components/app/domains-panel'
 import { MemorySetting } from '@/components/app/memory-setting'
+import { PromoteSheet } from '@/components/app/promote-sheet'
+import { Section, StatusLine, roleLabels } from '@/components/app/section'
+import { SecurityGateBanner, SecurityGateSetting, useSecurityGate } from '@/components/app/security-gate'
+import { StackPanel } from '@/components/app/stack-panel'
 import { StagingAsleepBanner, StagingSleepSetting } from '@/components/app/staging-sleep'
-import { AppShell } from '@/components/layout/app-shell'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { StoragePanel, providerMeta } from '@/components/app/storage-panel'
 import { EnvEditor } from '@/components/env-editor'
+import { AppShell } from '@/components/layout/app-shell'
+import { useWorkspace } from '@/components/layout/workspace-provider'
 import { ProjectSetup } from '@/components/project-setup'
 import { RuntimeManager } from '@/components/runtime-manager'
 import { DeploymentRow } from '@/components/synergy/deployment-row'
 import { FrameworkAvatar } from '@/components/synergy/framework-logo'
-import { EnvironmentBadge, StatusLabel, type DeployStatus } from '@/components/synergy/status'
-import { Section, StatusLine, roleLabels } from '@/components/app/section'
-import { StoragePanel, providerMeta } from '@/components/app/storage-panel'
-import { DomainsPanel } from '@/components/app/domains-panel'
-import { StackPanel } from '@/components/app/stack-panel'
-import { PROJECT_TYPES as projectTypeDefaults, getProjectCommandOverrides, type ProjectType } from '@/lib/project-types'
-import { deploymentDuration, formatSeconds, relativeTime } from '@/lib/deployment-stages'
+import { EnvironmentBadge, type DeployStatus } from '@/components/synergy/status'
+import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
+import { Tabs, TabsContent } from '@/components/ui/tabs'
+import { relativeTime } from '@/lib/deployment-stages'
+import { getProjectCommandOverrides, PROJECT_TYPES as projectTypeDefaults, type ProjectType } from '@/lib/project-types'
 import { cn } from '@/lib/utils'
-import { useWorkspace } from '@/components/layout/workspace-provider'
+import {
+Activity,ArrowRight,ArrowUpRight,Check,Copy,Database,GitBranch,
+Globe2,Layers,
+Play,RefreshCw,Rocket,RotateCw,Square,Terminal,Trash2,
+Zap
+} from 'lucide-react'
+import Link from 'next/link'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 interface Project {
   setup_required?: boolean
@@ -776,19 +780,7 @@ function ApplicationWorkspace({ siteId }: { siteId: string }) {
     </div>
   )
 
-  const tabs = (
-    <TabsList className="scrollbar-none h-auto min-h-0 w-full justify-start gap-0 overflow-x-auto border-0 bg-transparent p-0">
-      {(showSetupTab ? ['setup'] : []).concat(['overview', 'deployments', 'environment', 'logs', 'storage', 'domains', 'settings']).map(value => (
-        <TabsTrigger key={value} value={value === 'logs' && activeTab === 'console' ? 'console' : value} title={{ setup: 'Finish connecting your repository, database and domain', overview: 'Is the app running, and what can I do with it?', deployments: 'Every release and its build output', environment: 'The settings and secrets in the .env file', logs: 'What the app prints, and a terminal for running commands', storage: 'Where the app keeps its data', domains: 'The web addresses that open the app', settings: 'Name, repository, build commands, restart and remove' }[value]} className="group relative min-h-0 rounded-none border-0 px-1 pb-3 pt-1 text-[13px] font-normal text-muted-foreground data-[state=active]:text-foreground">
-          <span className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 transition-colors group-hover:bg-white/[0.06]">
-            {value === 'setup' && <span className="h-1.5 w-1.5 rounded-full spectrum-bar" />}
-            {{ setup: 'Setup', overview: 'Overview', deployments: 'Deployments', storage: 'Databases', domains: 'Domains', environment: 'Environment', logs: 'Logs & console', settings: 'Settings' }[value]}
-          </span>
-          <span className="absolute inset-x-2 bottom-0 hidden h-[2px] rounded-full bg-foreground group-data-[state=active]:block" aria-hidden="true" />
-        </TabsTrigger>
-      ))}
-    </TabsList>
-  )
+  const tabs = <ApplicationTabs showSetupTab={!!showSetupTab} activeTab={activeTab} />
 
   return (
     <Tabs value={activeTab} onValueChange={changeTab}>
@@ -850,48 +842,9 @@ function ApplicationWorkspace({ siteId }: { siteId: string }) {
               </div>
             </div>
           ) : (
-            <section className="grid overflow-hidden rounded-xl border border-border bg-card lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-              <div className="relative flex min-h-[240px] flex-col justify-between overflow-hidden border-b border-border bg-well p-6 lg:border-b-0 lg:border-r">
-                <div className="syn-canvas pointer-events-none absolute inset-0 opacity-70" aria-hidden="true" />
-                {hasRunningDeploy && <div className="pointer-events-none absolute -left-24 -top-24 h-72 w-72 rounded-full bg-syn-violet/20 blur-3xl" aria-hidden="true" />}
-                <div className="relative flex items-center gap-3">
-                  <FrameworkAvatar type={project.project_type} size="lg" />
-                  <div className="min-w-0">
-                    <p className="text-xs text-muted-foreground">{projectTypeDefaults[project.project_type]?.label || project.project_type}</p>
-                    {address ? (primaryUrl ? <a href={primaryUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 truncate text-lg font-semibold tracking-tight hover:underline">{address}<ArrowUpRight className="h-4 w-4 shrink-0" /></a> : <p className="truncate font-mono text-lg font-semibold">{address}</p>) : <p className="text-lg font-semibold">No address yet</p>}
-                  </div>
-                </div>
-                <div className="relative mt-8">
-                  <p className={cn('text-3xl font-semibold tracking-[-0.03em]', hasRunningDeploy && 'spectrum-text')}>
-                    {hasRunningDeploy ? 'Deploying…' : !live ? 'Not deployed yet' : applicationHealthLabels[readiness]}
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {hasRunningDeploy ? 'The current release keeps serving until the new one passes its checks.'
-                      : !live ? 'Deploy to put the first release live.'
-                      : readiness === 'ready' ? `Local readiness passed. Released ${relativeTime(live.finished_at, clock)}.`
-                      : readiness === 'degraded' ? 'The process is running, but its readiness check is failing.'
-                      : readiness === 'unknown' ? 'A fresh readiness result is unavailable. Inspect Health & alerts.'
-                      : 'The latest process observation is ' + readiness + '.'}
-                  </p>
-                </div>
-              </div>
-              <dl className="grid content-start gap-x-6 gap-y-5 p-6 text-sm sm:grid-cols-2">
-                <div className="sm:col-span-2"><dt className="eyebrow">Live deployment</dt><dd>{live ? <Link href={`/deployments/${live.id}`} className="flex items-center gap-2 hover:underline"><StatusLabel status={live.status} /><span className="font-mono text-xs text-muted-foreground">{live.id.slice(0, 8)}</span></Link> : <span className="text-muted-foreground">None yet</span>}</dd></div>
-                <div><dt className="eyebrow">Released</dt><dd>{live ? <>{relativeTime(live.finished_at, clock)}{live.user_name && <span className="text-muted-foreground"> by {live.user_name}</span>}</> : '—'}</dd></div>
-                <div><dt className="eyebrow">Build time</dt><dd className="font-mono">{live ? formatSeconds(deploymentDuration(live.started_at, live.finished_at)) : '—'}</dd></div>
-                <div className="sm:col-span-2"><dt className="eyebrow">Source</dt><dd className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                  <span className="flex items-center gap-1.5"><GitBranch className="h-4 w-4 text-muted-foreground" />{live?.branch || project.default_branch}</span>
-                  {live?.commit_sha && (commitUrl(project.repo_url, live.commit_sha)
-                    ? <a href={commitUrl(project.repo_url, live.commit_sha)!} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 font-mono hover:underline"><GitCommitHorizontal className="h-4 w-4 text-muted-foreground" />{live.commit_sha.slice(0, 7)}</a>
-                    : <span className="flex items-center gap-1.5 font-mono"><GitCommitHorizontal className="h-4 w-4 text-muted-foreground" />{live.commit_sha.slice(0, 7)}</span>)}
-                </dd></div>
-                <div className="flex flex-wrap gap-2 sm:col-span-2">
-                  {live && <Button asChild variant="outline" size="sm"><Link href={`/deployments/${live.id}`}>Build logs</Link></Button>}
-                  <Button variant="outline" size="sm" onClick={() => changeTab('logs')}>Runtime logs</Button>
-                  <Button variant="outline" size="sm" onClick={() => changeTab('deployments')}>All deployments</Button>
-                </div>
-              </dl>
-            </section>
+            <ApplicationRelease project={project} live={live || null} primaryUrl={primaryUrl} address={address} hasRunningDeploy={hasRunningDeploy} clock={clock} changeTab={changeTab}
+              statusLabel={hasRunningDeploy ? 'Deploying…' : !live ? 'Not deployed yet' : applicationHealthLabels[readiness]}
+              statusHint={hasRunningDeploy ? 'The current release keeps serving until the new one passes its checks.' : !live ? 'Deploy to put the first release live.' : readiness === 'ready' ? `Local readiness passed. Released ${relativeTime(live.finished_at, clock)}.` : readiness === 'degraded' ? 'The process is running, but its readiness check is failing.' : readiness === 'unknown' ? 'A fresh readiness result is unavailable. Inspect Health & alerts.' : 'The latest process observation is ' + readiness + '.'} />
           )}
 
           <Section title="At a glance" description="How this application is running, in plain language.">
