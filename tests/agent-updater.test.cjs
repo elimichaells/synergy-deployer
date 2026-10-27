@@ -70,7 +70,6 @@ async function harness(t,behavior,options={}) {
     else {res.statusCode=404;res.end('{}');}
   });
   await new Promise(resolve=>control.listen(0,'127.0.0.1',resolve));
-  t.after(()=>new Promise(resolve=>control.close(resolve)));
   await fs.writeFile(runner,`require(${JSON.stringify(path.resolve(__dirname,'../scripts/manager-agent-supervisor.cjs'))}).supervise(${JSON.stringify(root)},{pollMs:80,healthMs:1400,stableMs:150,request:async(_c,a,b)=>{const r=await fetch('http://127.0.0.1:${control.address().port}/'+a,{method:'POST',body:JSON.stringify(b)});if(!r.ok)throw new Error('Control plane temporarily offline');return r.json();}}).catch(e=>{console.error(e);process.exitCode=1;});`);
   const child=spawn(process.execPath,[runner],{windowsHide:true,stdio:['ignore','pipe','pipe']});
   let output='';child.stdout.on('data',chunk=>{output+=chunk;});child.stderr.on('data',chunk=>{output+=chunk;});
@@ -80,6 +79,7 @@ async function harness(t,behavior,options={}) {
     child.kill();await until(()=>child.exitCode!==null||child.signalCode!==null,5000).catch(()=>{});
     await until(async()=>!await fs.stat(path.join(root,'agent.lock')).catch(()=>null),5000).catch(()=>{});
     const app=await supervisor.readJson(path.join(root,'application-runtime.json'));if(app){try{process.kill(app.pid);}catch{}}
+    control.closeAllConnections();await new Promise(resolve=>control.close(resolve));
     await fs.rm(root,{recursive:true,force:true});
   });
   await until(()=>acked,15000).catch(error=>{throw new Error(error.message+'\n'+output);});
