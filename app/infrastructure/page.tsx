@@ -48,7 +48,7 @@ export default function InfrastructurePage() {
       <div className="grid gap-4 sm:grid-cols-2">
         {infrastructureItems.map(item => (
           <Link key={item.href} href={item.href} className="syn-tile flex items-start gap-4 p-5">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-black"><item.icon className="h-5 w-5" /></span>
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-well"><item.icon className="h-5 w-5" /></span>
             <span className="min-w-0 flex-1">
               <span className="block text-sm font-semibold">{item.label}</span>
               <span className="mt-1 block text-xs leading-5 text-muted-foreground">{item.description}</span>

@@ -9,12 +9,14 @@ import { infrastructureItems, workspaceNavItems } from './nav'
 import { isApplicationRoot } from '@/lib/application-environments'
 import { serverOverview, serverScope } from '@/lib/server-navigation'
 import { useServerDirectory } from '@/components/infrastructure/server-directory'
+import { useWorkspace } from '@/components/layout/workspace-provider'
 
 interface Entry { id: string; label: string; hint: string; href: string; icon: React.ReactNode; group: string }
 interface ProjectSummary { id: string; name: string; project_type?: string; environment?: string }
 
 export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const router = useRouter()
+  const { navigate, resume, state: workspace } = useWorkspace()
   const pathname = usePathname()
   const scope = serverScope(pathname)
   const remoteId = scope.kind === 'remote' ? scope.id : null
@@ -55,10 +57,11 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
     const actions = directory?.role === 'admin' ? [{ id: 'add-server', label: 'Add server', hint: 'Connect Windows or Linux', href: '/infrastructure/servers?add=1', icon: <Plus className="h-4 w-4" />, group: 'Actions' }, ...(scope.kind === 'local' ? [{ id: 'new-app', label: 'New app', hint: 'Import a repository on Manager host', href: '/sites/new', icon: <Plus className="h-4 w-4" />, group: 'Actions' }] : [])] : []
     const groups = (scope.kind === 'local' && loadedScope === 'local' ? stacks || [] : []).map(project => ({ id: `project-${project.id}`, label: project.name, hint: `${project.apps.filter(isApplicationRoot).length} apps`, href: `/projects/${project.id}`, icon: <Layers className="h-4 w-4" />, group: 'Projects' }))
     const apps = remoteId && loadedScope === remoteId ? remoteApps.map(app => ({ id: `app-${app.id}`, label: app.name, hint: app.hostname, href: `${serverOverview(remoteId)}#app-${app.id}`, icon: <Layers className="h-4 w-4" />, group: 'Applications' })) : (scope.kind === 'local' && loadedScope === 'local' ? projects || [] : []).map(project => ({ id: `app-${project.id}`, label: project.name, hint: project.environment || 'application', href: `/sites/${project.id}`, icon: <FrameworkLogo type={project.project_type} className="h-4 w-4" />, group: 'Applications' }))
-    const servers = [{ id: 'server-local', label: 'Manager host', hint: 'Local server', href: '/overview', icon: <Server className="h-4 w-4" />, group: 'Switch server' }, ...(directory?.servers || []).filter(server => server.enabled).map(server => ({ id: `server-${server.id}`, label: server.name, hint: server.location || (server.platform === 'win32' ? 'Windows' : 'Linux'), href: serverOverview(server.id), icon: <Server className="h-4 w-4" />, group: 'Switch server' }))]
+    const destination = (id: string) => workspace.key ? resume(id, directory?.userId, directory?.role) : serverOverview(id)
+    const servers = [{ id: 'server-local', label: 'Manager host', hint: 'Local server', href: destination('local'), icon: <Server className="h-4 w-4" />, group: 'Switch server' }, ...(directory?.servers || []).filter(server => server.enabled).map(server => ({ id: `server-${server.id}`, label: server.name, hint: server.location || (server.platform === 'win32' ? 'Windows' : 'Linux'), href: server.status === 'revoked' ? serverOverview(server.id) : destination(server.id), icon: <Server className="h-4 w-4" />, group: 'Switch server' }))]
     const q = query.trim().toLowerCase()
     return [...actions, ...pages, ...servers, ...groups, ...apps].filter(entry => !q || entry.label.toLowerCase().includes(q) || entry.hint.toLowerCase().includes(q))
-  }, [projects, stacks, query, directory, pathname, scope.kind, remoteId, remoteApps, loadedScope])
+  }, [projects, stacks, query, directory, pathname, scope.kind, remoteId, remoteApps, loadedScope, resume, workspace])
 
   useEffect(() => { setActive(0) }, [query])
   useEffect(() => { setActive(index => Math.min(index, Math.max(0, entries.length - 1))) }, [entries.length])
@@ -69,7 +72,7 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
   const go = (entry?: Entry) => {
     if (!entry) return
     onOpenChange(false)
-    router.push(entry.href)
+    navigate(() => router.push(entry.href))
   }
 
   const onKeyDown = (event: React.KeyboardEvent) => {

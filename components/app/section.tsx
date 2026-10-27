@@ -41,7 +41,7 @@ export function ChoiceCard({ selected, disabled, onSelect, icon, title, descript
     <button type="button" role="radio" aria-checked={selected} disabled={disabled} onClick={onSelect}
       className={cn('relative flex w-full items-start gap-3 rounded-lg border p-4 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-45',
         selected ? 'border-foreground/70 bg-white/[0.05]' : 'border-border hover:border-white/25 hover:bg-white/[0.02]')}>
-      {icon && <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-black">{icon}</span>}
+      {icon && <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-well">{icon}</span>}
       <span className="min-w-0 flex-1">
         <span className="flex flex-wrap items-center gap-2 text-sm font-medium">{title}{badge}</span>
         {description && <span className="mt-1 block text-xs leading-5 text-muted-foreground">{description}</span>}

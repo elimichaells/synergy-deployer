@@ -298,7 +298,7 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
             ].map(option => (
               <button key={option.mode} type="button" disabled={option.disabled || !isAdmin} onClick={() => openAdd(option.mode)}
                 className="flex flex-col items-start gap-3 rounded-lg border border-border p-4 text-left transition-colors hover:border-white/25 hover:bg-white/[0.02] disabled:cursor-not-allowed disabled:opacity-45">
-                <span className="flex h-9 w-9 items-center justify-center rounded-md border border-border bg-black">{option.icon}</span>
+                <span className="flex h-9 w-9 items-center justify-center rounded-md border border-border bg-well">{option.icon}</span>
                 <span><span className="block text-sm font-medium">{option.title}</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">{option.text}</span></span>
               </button>
             ))}

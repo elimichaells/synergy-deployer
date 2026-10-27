@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { ReactNode, useEffect, useState } from 'react'
+import { ReactNode, Suspense, useEffect, useState } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { ChevronLeft, LogOut, Plus, Search, Server } from 'lucide-react'
 import { SynergyMark } from '@/components/synergy/brand'
@@ -12,6 +12,9 @@ import { ServerHealthBanner } from '@/components/server-health'
 import { ServerDirectoryProvider } from '@/components/infrastructure/server-directory'
 import { ServerSwitcher } from '@/components/infrastructure/server-switcher'
 import { serverScope } from '@/lib/server-navigation'
+import { WorkspaceBar, type WorkspaceContextInfo } from './workspace-bar'
+import { ThemeSwitcher } from './theme-switcher'
+import { useWorkspace } from './workspace-provider'
 
 function initials(name?: string) {
   return (name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]?.toUpperCase()).join('') || '?'
@@ -31,26 +34,24 @@ type AppShellProps = {
   tabs?: ReactNode
   /** Adds the side menu for a multi-page area. */
   area?: 'infrastructure'
+  workspace?: WorkspaceContextInfo
+  unsavedChanges?: boolean
 }
 
 export function AppShell(props: AppShellProps) {
   return <ServerDirectoryProvider><WorkspaceShell {...props} /></ServerDirectoryProvider>
 }
 
-function WorkspaceShell({ children, title, subtitle, user, actions, back, headerExtra, tabs, area }: AppShellProps) {
+function WorkspaceShell({ children, title, subtitle, user, actions, back, headerExtra, tabs, area, workspace, unsavedChanges = false }: AppShellProps) {
   const pathname = usePathname()
   const scope = serverScope(pathname)
   const router = useRouter()
+  const { clear, setUnsaved } = useWorkspace()
+  useEffect(() => { setUnsaved(unsavedChanges); return () => setUnsaved(false) }, [unsavedChanges, setUnsaved])
   const [commandOpen, setCommandOpen] = useState(false)
   const [hash, setHash] = useState('')
   const [sessionUser, setSessionUser] = useState<{ name?: string; role?: string; email?: string } | null>(null)
   const account = user?.name ? user : sessionUser
-
-  useEffect(() => {
-    const sync = () => setHash(window.location.hash)
-    sync(); window.addEventListener('hashchange', sync)
-    return () => window.removeEventListener('hashchange', sync)
-  }, [pathname])
 
   // Pages that do not load the session themselves still get a populated account menu.
   useEffect(() => {
@@ -76,23 +77,27 @@ function WorkspaceShell({ children, title, subtitle, user, actions, back, header
     try {
       await fetch('/api/auth/logout', { method: 'POST' })
     } finally {
+      clear()
       router.push('/login')
     }
   }
 
   return (
-    <div className="min-h-dvh bg-background text-foreground">
-      <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur-xl supports-[backdrop-filter]:bg-background/70">
+    <div className="manager-shell min-h-dvh bg-background text-foreground">
+      <a href="#workspace-content" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-md focus:bg-primary focus:px-4 focus:py-2 focus:text-primary-foreground">Skip to content</a>
+      <header className="manager-header sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur-xl">
         <div className="spectrum-line" aria-hidden="true" />
-        <div className="mx-auto flex h-14 max-w-[1240px] items-center gap-2 px-4 sm:px-6">
+        <div className="mx-auto flex h-14 max-w-[1240px] items-center gap-1.5 px-3 sm:gap-2 sm:px-6">
           <Link href="/" className="flex shrink-0 items-center gap-2 rounded-md py-1 pr-1" aria-label="Synergy home">
             <SynergyMark className="h-6 w-6 text-foreground" />
             <span className="hidden text-[15px] font-semibold tracking-[-0.02em] sm:inline">Synergy</span>
           </Link>
-          <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0 text-white/15" aria-hidden="true"><path d="M16.88 3.549L7.12 20.451" stroke="currentColor" strokeWidth="1.5" /></svg>
+          <svg viewBox="0 0 24 24" className="hidden h-5 w-5 shrink-0 text-white/15 sm:block" aria-hidden="true"><path d="M16.88 3.549L7.12 20.451" stroke="currentColor" strokeWidth="1.5" /></svg>
           <ServerSwitcher scope={scope} />
+          {process.env.NEXT_PUBLIC_WORKSPACE_PREVIEW === '1' && <span className="hidden rounded border border-amber-400/20 bg-amber-400/5 px-1.5 py-0.5 text-[10px] font-medium text-amber-400 md:block">Preview</span>}
 
           <div className="ml-auto flex items-center gap-2">
+            <ThemeSwitcher />
             <button type="button" onClick={() => setCommandOpen(true)} className="flex h-8 items-center gap-2 rounded-md border border-border bg-white/[0.02] px-2.5 text-[13px] text-muted-foreground transition-colors hover:border-white/20 hover:text-foreground sm:w-56" aria-label="Open command menu">
               <Search className="h-3.5 w-3.5" />
               <span className="hidden flex-1 text-left sm:inline">Search…</span>
@@ -128,25 +133,27 @@ function WorkspaceShell({ children, title, subtitle, user, actions, back, header
           <div className="scrollbar-none flex overflow-x-auto">
             {workspaceNavItems(pathname).map(item => {
               const section = item.href.includes('#') ? '#' + item.href.split('#')[1] : ''
-              const active = section ? hash === section : isNavActive(pathname, item.matches) && !(scope.kind === 'remote' && ['#applications', '#deployments', '#server-access'].includes(hash))
+              const activeSection = hash.startsWith('#app-') ? '#applications' : hash
+              const active = section ? activeSection === section : isNavActive(pathname, item.matches) && !(scope.kind === 'remote' && ['#applications', '#deployments', '#server-access'].includes(activeSection))
               return (
                 <Link key={item.href} href={item.href} onClick={() => setHash(section)} aria-current={active ? 'page' : undefined}
                   className={`group relative shrink-0 px-1 pb-2.5 pt-1 text-[13px] transition-colors ${active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
-                  <span className="block rounded-md px-2.5 py-1.5 transition-colors group-hover:bg-white/[0.06]">{item.label}</span>
-                  {active && <span className="absolute inset-x-2 bottom-0 h-[2px] rounded-full bg-foreground" aria-hidden="true" />}
+                  <span className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 transition-colors group-hover:bg-accent ${active ? 'bg-primary/[0.07] text-primary' : ''}`}><item.icon className="hidden h-3.5 w-3.5 sm:block" />{item.label}</span>
+                  {active && <span className="absolute inset-x-2 bottom-0 h-[2px] rounded-full bg-primary" aria-hidden="true" />}
                 </Link>
               )
             })}
           </div>
         </nav>
+        <Suspense fallback={<div className="h-[94px] border-t border-border" />}><WorkspaceBar title={title} context={workspace} onNew={() => setCommandOpen(true)} onHashChange={setHash} /></Suspense>
       </header>
 
-      <section className="relative overflow-hidden border-b border-border">
+      <section className="manager-page-header relative overflow-hidden border-b border-border">
         <div className="syn-canvas pointer-events-none absolute inset-0" aria-hidden="true" />
         <div className={`relative mx-auto flex max-w-[1240px] flex-wrap items-end gap-x-6 gap-y-4 px-4 pt-7 sm:px-6 sm:pt-9 ${tabs ? 'pb-0' : 'pb-7 sm:pb-9'}`}>
-          <div className="w-full min-w-0 sm:w-auto sm:flex-1">
+          <div className="w-full min-w-0 sm:w-auto sm:min-w-[260px] sm:flex-1">
             {back && <Link href={back.href} className="mb-3 inline-flex items-center gap-1 text-[13px] text-muted-foreground transition-colors hover:text-foreground"><ChevronLeft className="h-3.5 w-3.5" />{back.label}</Link>}
-            <h1 className="truncate text-[26px] font-semibold leading-tight tracking-[-0.03em] sm:text-[32px]">{title}</h1>
+            <h1 title={title} className="truncate text-[26px] font-semibold leading-tight tracking-[-0.03em] sm:text-[32px]">{title}</h1>
             {subtitle && <div className="mt-1.5 truncate text-sm text-muted-foreground">{subtitle}</div>}
           </div>
           {actions && <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">{actions}</div>}
@@ -155,12 +162,12 @@ function WorkspaceShell({ children, title, subtitle, user, actions, back, header
         </div>
       </section>
 
-      <main className="min-w-0">
+      <main id="workspace-content" tabIndex={-1} className="min-w-0 outline-none">
         <div className="mx-auto max-w-[1240px] px-4 py-6 sm:px-6 sm:py-8">
           {scope.kind === 'local' && <ServerHealthBanner />}
           {area === 'infrastructure' && scope.kind === 'local' ? (
             <div className="grid min-w-0 gap-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-10">
-              <aside className="min-w-0 lg:sticky lg:top-32 lg:max-h-[calc(100vh-9rem)] lg:self-start lg:overflow-y-auto">
+              <aside className="min-w-0 lg:sticky lg:top-56 lg:max-h-[calc(100vh-15rem)] lg:self-start lg:overflow-y-auto">
                 <nav aria-label="Infrastructure" className="scrollbar-none -mx-1 flex gap-1 overflow-x-auto px-1 lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0">
                   <Link href="/infrastructure" aria-current={pathname === '/infrastructure' ? 'page' : undefined}
                     className={`flex shrink-0 items-center gap-2.5 rounded-md px-3 py-2 text-[13px] transition-colors ${pathname === '/infrastructure' ? 'bg-white/[0.07] text-foreground' : 'text-muted-foreground hover:bg-white/[0.04] hover:text-foreground'}`}>

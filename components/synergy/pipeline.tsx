@@ -21,7 +21,7 @@ export function PipelineMini({ stages, className }: { stages: PipelineStage[]; c
 
 function StageNode({ state }: { state: StageState }) {
   if (state === 'done') return <span className="flex h-6 w-6 items-center justify-center rounded-full bg-foreground text-background"><Check className="h-3.5 w-3.5" strokeWidth={3} /></span>
-  if (state === 'failed') return <span className="flex h-6 w-6 items-center justify-center rounded-full bg-status-failed text-white"><X className="h-3.5 w-3.5" strokeWidth={3} /></span>
+  if (state === 'failed') return <span className="flex h-6 w-6 items-center justify-center rounded-full bg-status-failed text-[#fff]"><X className="h-3.5 w-3.5" strokeWidth={3} /></span>
   if (state === 'active') return (
     <span className="relative flex h-6 w-6 items-center justify-center">
       <span className="absolute inset-0 animate-spin rounded-full p-[2px] [background:conic-gradient(from_0deg,hsl(var(--syn-violet)),hsl(var(--syn-cyan)),hsl(var(--syn-mint)),transparent_75%)] [mask:radial-gradient(farthest-side,transparent_calc(100%-2px),#000_calc(100%-2px))]" style={{ animationDuration: '1.1s' }} />

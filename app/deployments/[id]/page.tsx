@@ -50,12 +50,12 @@ interface Project {
 interface SessionUser { name: string; role: 'admin' | 'operator' | 'viewer' }
 
 const toneClass: Record<LineTone, string> = {
-  error: 'text-[#ff8a8a]',
-  warning: 'text-[#f5c26b]',
-  success: 'text-[#5fe0a6]',
-  info: 'text-[#8fb8ff]',
-  muted: 'text-white/35',
-  default: 'text-[#d6d6d6]',
+  error: 'text-red-300',
+  warning: 'text-amber-300',
+  success: 'text-emerald-300',
+  info: 'text-blue-300',
+  muted: 'text-muted-foreground',
+  default: 'text-foreground/85',
 }
 
 function commitUrl(repo: string | null | undefined, sha: string | null) {
@@ -65,7 +65,7 @@ function commitUrl(repo: string | null | undefined, sha: string | null) {
 }
 
 function SectionIcon({ state }: { state: LogSection['state'] }) {
-  if (state === 'failed') return <span className="flex h-4 w-4 items-center justify-center rounded-full bg-status-failed text-white"><X className="h-2.5 w-2.5" strokeWidth={3.5} /></span>
+  if (state === 'failed') return <span className="flex h-4 w-4 items-center justify-center rounded-full bg-status-failed text-[#fff]"><X className="h-2.5 w-2.5" strokeWidth={3.5} /></span>
   if (state === 'active') return <RefreshCw className="h-4 w-4 animate-spin text-syn-cyan" />
   if (state === 'pending' || state === 'skipped') return <span className="flex h-4 w-4 items-center justify-center rounded-full border border-white/20 text-muted-foreground"><Minus className="h-2.5 w-2.5" /></span>
   return <span className="flex h-4 w-4 items-center justify-center rounded-full bg-foreground text-background"><Check className="h-2.5 w-2.5" strokeWidth={3.5} /></span>
@@ -205,6 +205,7 @@ export default function DeploymentPage() {
   return (
     <AppShell
       title={deployment.project_name}
+      workspace={{ project: { name: deployment.project_name, href: `/sites/${deployment.project_id}` }, environment: project?.environment, page: `Release ${deployment.id.slice(0, 8)}` }}
       back={{ href: '/deployments', label: 'Deployments' }}
       user={user || undefined}
       subtitle={<span className="flex items-center gap-2"><span className="font-mono text-[13px]">{deployment.id.slice(0, 8)}</span><EnvironmentBadge environment={project?.environment} current={deployment.is_active} /></span>}
@@ -220,7 +221,7 @@ export default function DeploymentPage() {
 
       {/* Release capsule + facts */}
       <section className="grid overflow-hidden rounded-xl border border-border bg-card lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
-        <div className="relative flex min-h-[260px] flex-col justify-between overflow-hidden border-b border-border bg-black p-6 lg:border-b-0 lg:border-r">
+        <div className="relative flex min-h-[260px] flex-col justify-between overflow-hidden border-b border-border bg-well p-6 lg:border-b-0 lg:border-r">
           <div className="syn-canvas pointer-events-none absolute inset-0 opacity-70" aria-hidden="true" />
           {live && <div className="pointer-events-none absolute -left-24 -top-24 h-72 w-72 rounded-full bg-syn-violet/20 blur-3xl" aria-hidden="true" />}
           {live && <div className="pointer-events-none absolute -bottom-24 -right-16 h-72 w-72 rounded-full bg-syn-cyan/15 blur-3xl" aria-hidden="true" />}
@@ -360,11 +361,11 @@ export default function DeploymentPage() {
                 </button>
                 {expanded && (
                   <div ref={section.state === 'active' && follow ? element => { if (element) element.scrollTop = element.scrollHeight } : undefined}
-                    className="max-h-[480px] overflow-auto border-t border-border bg-black py-2 font-mono text-[12px] leading-[20px]">
+                    className="max-h-[480px] overflow-auto border-t border-border bg-well py-2 font-mono text-[12px] leading-[20px]">
                     {lines.length === 0 && section.state !== 'active' && <p className="px-4 text-white/35">No output</p>}
                     {lines.map(line => (
                       <div key={line.number} className={cn('flex hover:bg-white/[0.04]', line.tone === 'error' && 'bg-status-failed/[0.08]')}>
-                        <span className="sticky left-0 w-14 shrink-0 select-none bg-black pr-4 text-right text-white/25">{line.number}</span>
+                        <span className="sticky left-0 w-14 shrink-0 select-none bg-well pr-4 text-right text-white/25">{line.number}</span>
                         <span className={cn('whitespace-pre-wrap break-all pr-4', toneClass[line.tone])}>{line.text || ' '}</span>
                       </div>
                     ))}

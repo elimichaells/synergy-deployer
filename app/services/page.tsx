@@ -316,7 +316,7 @@ export default function ServicesPage() {
                           <button
                             onClick={() => handleServiceAction(svc.id, 'start')}
                             disabled={!!actionBusy}
-                            className="h-7 w-7 flex items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-all disabled:opacity-50"
+                            className="h-7 w-7 flex items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-[#fff] transition-all disabled:opacity-50"
                             title="Start"
                           >
                             <PlayCircle className="h-4 w-4" />
@@ -334,7 +334,7 @@ export default function ServicesPage() {
                             <button
                               onClick={() => handleServiceAction(svc.id, 'stop')}
                               disabled={!!actionBusy}
-                              className="h-7 w-7 flex items-center justify-center rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white transition-all disabled:opacity-50"
+                              className="h-7 w-7 flex items-center justify-center rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-[#fff] transition-all disabled:opacity-50"
                               title="Stop"
                             >
                               <Power className="h-4 w-4" />
@@ -383,7 +383,7 @@ export default function ServicesPage() {
                     <button
                       onClick={() => handleCaddyAction('start')}
                       disabled={caddyBusy}
-                      className="h-7 w-7 flex items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-all disabled:opacity-50"
+                      className="h-7 w-7 flex items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-[#fff] transition-all disabled:opacity-50"
                       title="Start"
                     >
                       <PlayCircle className="h-4 w-4" />
@@ -409,7 +409,7 @@ export default function ServicesPage() {
                       <button
                         onClick={() => handleCaddyAction('stop')}
                         disabled={caddyBusy}
-                        className="h-7 w-7 flex items-center justify-center rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white transition-all disabled:opacity-50"
+                        className="h-7 w-7 flex items-center justify-center rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-[#fff] transition-all disabled:opacity-50"
                         title="Stop"
                       >
                         <Power className="h-4 w-4" />
