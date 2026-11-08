@@ -23,7 +23,7 @@ export async function GET(request:Request,context:Context){try{
 export async function POST(request:Request,context:Context){try{
   const user=await getSessionFromCookie();const {id,path=[]}=await context.params
   requireRole(user,path[0]==='services'?['admin','operator']:['admin']);requireSameOrigin(request)
-  const body=await readBody(request,2000)
+  const body=path[0]==='caddy'?await readBody(request,2000):{}
   if(path[0]==='services'&&!['start','stop','restart'].includes(path[2]))throw new ApiError('Unknown process action',400)
   if(!['services','caddy'].includes(path[0]))throw new ApiError('Not found',404)
   return NextResponse.json(await updateProtected('Remote infrastructure admission',()=>queueInfrastructure(id,path[0]==='services'?path[1]:null,path[0]==='services'?path[2]:body.action,user!.id)),{status:202})

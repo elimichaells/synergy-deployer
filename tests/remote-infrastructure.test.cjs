@@ -8,6 +8,27 @@ const {randomUUID}=require('node:crypto');
 const agent=require('../scripts/manager-agent.cjs');
 const load=require('./server-module.cjs');
 class ApiError extends Error{constructor(message,status){super(message);this.status=status}}
+test('shared process buttons accept bodyless POSTs while retaining origin and role checks',async()=>{
+  const calls=[],serverId=randomUUID(),appId=randomUUID();let role='operator';
+  const api={ApiError,jsonError:error=>Response.json({error:error.message},{status:error.status||500})};
+  const route=load('app/api/servers/[id]/infrastructure/[[...path]]/route.ts',{
+    'next/server':{NextResponse:Response},'@/lib/api':api,
+    '@/lib/auth':{getSessionFromCookie:async()=>({id:'fixture-user',role})},
+    '@/lib/rbac':{requireRole:(user,roles)=>{if(!roles.includes(user.role))throw new ApiError('Forbidden',403)}},
+    '@/lib/request-body':load('lib/request-body.ts',{'@/lib/api':api}),
+    '@/lib/managed-servers':{},'@/lib/remote-health':{},
+    '@/lib/remote-infrastructure':{queueInfrastructure:async(...args)=>{calls.push(args);return{jobId:randomUUID()}}},
+    '@/lib/update-maintenance':{updateProtected:(_name,operation)=>operation()},
+  });
+  const request=(origin='https://manager.test')=>new Request('https://manager.test/api/servers/'+serverId+'/infrastructure/services/'+appId+'/stop',{method:'POST',headers:{host:'manager.test',origin}});
+  for(const action of ['start','stop','restart']){
+    const response=await route.POST(request(),{params:Promise.resolve({id:serverId,path:['services',appId,action]})});
+    assert.equal(response.status,202,await response.text());assert.deepEqual(calls.at(-1),[serverId,appId,action,'fixture-user']);
+  }
+  const context={params:Promise.resolve({id:serverId,path:['services',appId,'stop']})};
+  assert.equal((await route.POST(request('https://foreign.test'),context)).status,403);
+  role='viewer';assert.equal((await route.POST(request(),context)).status,403);assert.equal(calls.length,3);
+});
 async function fixture(t){const root=await fs.mkdtemp(path.join(os.tmpdir(),'manager-infrastructure-test-'));t.after(async()=>{assert.ok(path.resolve(root).startsWith(path.resolve(os.tmpdir())+path.sep+'manager-infrastructure-test-'));await fs.rm(root,{recursive:true,force:true})});return root}
 
 test('process controls use only registered private PM2 names and persist stops',async t=>{
