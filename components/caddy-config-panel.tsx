@@ -1,5 +1,6 @@
 'use client'
 
+import { infrastructureResponse } from '@/lib/infrastructure-client'
 import { useState } from 'react'
 import { Check, Clipboard, FileCode2, Loader2, RefreshCw, ShieldCheck, X } from 'lucide-react'
 
@@ -7,9 +8,11 @@ interface CaddyConfigResponse {
   config: string
   configSize: number
   configModifiedAt: string
+  configReadAt?: string
+  configPath?: string
 }
 
-export function CaddyConfigPanel({ canView, configPath }: { canView: boolean; configPath?: string }) {
+export function CaddyConfigPanel({ canView, configPath,endpoint='/api/system/caddy',jobEndpoint }: { canView: boolean; configPath?: string;endpoint?:string;jobEndpoint?:string }) {
   const [config, setConfig] = useState<CaddyConfigResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [validating, setValidating] = useState(false)
@@ -21,8 +24,8 @@ export function CaddyConfigPanel({ canView, configPath }: { canView: boolean; co
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch('/api/system/caddy?includeConfig=1', { cache: 'no-store' })
-      const data = await res.json().catch(() => ({}))
+      const res = await fetch(jobEndpoint?endpoint:endpoint+'?includeConfig=1',jobEndpoint?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'read-config'})}:{cache:'no-store'})
+      const data = await infrastructureResponse(res,jobEndpoint)
       if (!res.ok) throw new Error(data.error || 'Failed to load Caddyfile')
       setConfig(data)
     } catch (err) {
@@ -36,12 +39,12 @@ export function CaddyConfigPanel({ canView, configPath }: { canView: boolean; co
     setValidating(true)
     setValidation(null)
     try {
-      const res = await fetch('/api/system/caddy', {
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'validate' }),
       })
-      const data = await res.json().catch(() => ({}))
+      const data = await infrastructureResponse(res,jobEndpoint)
       setValidation({
         valid: res.ok && data.valid !== false,
         message: data.output || (res.ok ? 'Valid configuration' : data.error || 'Validation failed'),
@@ -75,7 +78,7 @@ export function CaddyConfigPanel({ canView, configPath }: { canView: boolean; co
         <div className="flex min-w-0 items-center gap-3">
           <FileCode2 className="h-5 w-5 shrink-0 text-cyan-300" />
           <div className="min-w-0">
-            <p className="text-sm font-medium">Active Caddyfile</p>
+            <p className="text-sm font-medium">Active proxy configuration</p>
             <p className="truncate font-mono text-[11px] text-muted-foreground">{configPath || 'Configuration path unavailable'}</p>
           </div>
         </div>
@@ -93,9 +96,9 @@ export function CaddyConfigPanel({ canView, configPath }: { canView: boolean; co
       <div className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-3">
         <FileCode2 className="h-4 w-4 text-cyan-300" />
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium">Active Caddyfile</p>
+          <p className="text-sm font-medium">Active proxy configuration</p>
           <p className="truncate font-mono text-[10px] text-muted-foreground">
-            {configPath} · {(config.configSize / 1024).toFixed(1)} KB · updated {new Date(config.configModifiedAt).toLocaleString()}
+            {config.configPath || configPath} · {(config.configSize / 1024).toFixed(1)} KB · {config.configReadAt ? 'read' : 'updated'} {new Date(config.configReadAt || config.configModifiedAt).toLocaleString()}
           </p>
         </div>
         <button onClick={() => void validateConfig()} disabled={validating} title="Validate configuration" className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-2.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50">

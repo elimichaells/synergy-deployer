@@ -1,5 +1,6 @@
 'use client'
 
+import { UpdateVersionCard } from '@/components/settings/update-version-card'
 import { useCallback, useEffect, useState } from 'react'
 import { ArrowUpCircle, CheckCircle2, Download, RefreshCw, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -38,11 +39,9 @@ export function AgentUpdates({ server, admin, onChanged }: { server: ManagedServ
   }
   const latest = data?.latest
   const active = !!latest && activeStates.includes(latest.status)
-  return <section aria-label="Agent updates" className="rounded-xl border border-border bg-card p-5">
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div><h2 className="flex items-center gap-2 text-sm font-semibold"><ShieldCheck className="h-4 w-4 text-primary" />Agent updates</h2><p className="mt-1 text-xs leading-5 text-muted-foreground">Verified updates from this Manager · Windows & Linux</p></div>
-      <Button size="sm" variant="outline" disabled={checking || busy} onClick={() => void load()}><RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${checking ? 'animate-spin' : ''}`} />Check version</Button>
-    </div>
+  return <section aria-label="Agent updates" className="space-y-5">
+    <UpdateVersionCard version={data?.installed} description={`Agent on ${server.name} · verified releases bundled with Manager`} disabled={checking||busy} checking={checking} onCheck={()=>void load()}/>
+
     {error && <p role="alert" className="notice-error mt-3">{error}</p>}
     {!data && !error && <p role="status" className="mt-3 text-xs text-muted-foreground">Checking agent version…</p>}
     {data && <>

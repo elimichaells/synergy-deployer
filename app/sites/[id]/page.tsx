@@ -1,4 +1,5 @@
 'use client'
+import { ConsoleTerminal } from '@/components/console-terminal'
 import { ApplicationHealth } from '@/components/app/health-settings'
 import { useServerHealth } from '@/components/server-health'
 import { ApplicationRelease } from '@/components/workspace/application-release'
@@ -986,47 +987,8 @@ function ApplicationWorkspace({ siteId }: { siteId: string }) {
                 {Object.entries(npmScripts).map(([name, script]) => <Button key={name} variant="secondary" size="sm" className="font-mono text-xs" disabled={npmRunning || !canWrite} title={script} onClick={() => { setNpmCommand(`npm run ${name}`); void runNpmCommand(`npm run ${name}`) }}><Play className="mr-1.5 h-3 w-3" />{name}</Button>)}
               </div>
             )}
-            <div className="overflow-hidden rounded-lg border border-border bg-well">
-              <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
-                <span className="flex min-w-0 items-center gap-2 truncate font-mono text-xs text-muted-foreground"><Terminal className="h-3.5 w-3.5" />PowerShell · {project.name}</span>
-                <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-                  <span className="flex items-center gap-1.5"><span className={cn('h-1.5 w-1.5 rounded-full', npmRunning ? 'animate-pulse bg-status-building' : 'bg-status-ready')} />{npmRunning ? 'running' : 'ready'}</span>
-                  {npmOutput && <button onClick={async () => { await navigator.clipboard.writeText(npmOutput); setConsoleCopied(true); setTimeout(() => setConsoleCopied(false), 1200) }} className="flex items-center gap-1 hover:text-foreground">{consoleCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}{consoleCopied ? 'Copied' : 'Copy'}</button>}
-                  {npmOutput && !npmRunning && <button onClick={() => { setNpmOutput(''); requestAnimationFrame(() => terminalInputRef.current?.focus()) }} className="hover:text-foreground">Clear</button>}
-                </div>
-              </div>
-              <div ref={npmOutputRef} className="h-[480px] cursor-text overflow-y-auto whitespace-pre-wrap break-words p-4 font-mono text-xs leading-5 text-foreground/85" onClick={() => terminalInputRef.current?.focus()}>
-                {npmOutput && renderLogLines(npmOutput)}
-                <div className="mt-1 flex min-h-7 items-start gap-2 text-[13px] leading-7">
-                  <span className="shrink-0 font-semibold text-white">PS</span>
-                  <span className="shrink-0 text-syn-cyan">{consoleCwd || project.root_path}</span>
-                  <span className="shrink-0 font-semibold text-white">&gt;</span>
-                  <input
-                    ref={terminalInputRef}
-                    className="min-w-0 flex-1 border-0 bg-transparent p-0 font-mono text-[13px] leading-7 text-white caret-white outline-none"
-                    value={npmCommand}
-                    onChange={e => setNpmCommand(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.ctrlKey && e.key.toLowerCase() === 'c' && npmRunning) { e.preventDefault(); stopNpmCommand(); return }
-                      if (e.ctrlKey && e.key.toLowerCase() === 'l') { e.preventDefault(); setNpmOutput(''); return }
-                      if (e.ctrlKey && e.key.toLowerCase() === 'u') { e.preventDefault(); setNpmCommand(''); return }
-                      if (e.key === 'Escape') { e.preventDefault(); setNpmCommand(''); setConsoleHistoryIndex(-1); return }
-                      if (e.key === 'Tab' && !npmRunning) { e.preventDefault(); void completeConsoleCommand(); return }
-                      if (e.key === 'ArrowUp') { e.preventDefault(); const index = Math.min(consoleHistory.length - 1, consoleHistoryIndex + 1); if (index >= 0) { setConsoleHistoryIndex(index); setNpmCommand(consoleHistory[consoleHistory.length - 1 - index]) } return }
-                      if (e.key === 'ArrowDown') { e.preventDefault(); const index = consoleHistoryIndex - 1; setConsoleHistoryIndex(index); setNpmCommand(index >= 0 ? consoleHistory[consoleHistory.length - 1 - index] : ''); return }
-                      if (e.key === 'Enter' && !npmRunning) void runNpmCommand(npmCommand)
-                    }}
-                    aria-label="Console command"
-                    readOnly={npmRunning || !canWrite}
-                    placeholder={!canWrite ? 'Viewers cannot run commands' : npmRunning ? 'Command is running…' : ''}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                  {npmRunning && <button onClick={e => { e.stopPropagation(); stopNpmCommand() }} className="mt-0.5 flex shrink-0 items-center gap-1.5 rounded-md bg-red-500/15 px-2.5 py-1 text-xs leading-5 text-red-300 hover:bg-red-500/25"><Square className="h-3 w-3" />Stop</button>}
-                </div>
-              </div>
-              <p className="border-t border-border px-4 py-2 font-mono text-[10px] text-muted-foreground">Tab completes · ↑↓ history · Ctrl+C stops · Ctrl+L clears</p>
-            </div>
+            <ConsoleTerminal title={`PowerShell · ${project.name}`} cwd={consoleCwd || project.root_path} command={npmCommand} onCommand={setNpmCommand} output={npmOutput ? renderLogLines(npmOutput) : null} outputText={npmOutput} running={npmRunning} disabled={!canWrite} onRun={()=>void runNpmCommand(npmCommand)} onStop={stopNpmCommand} onClear={()=>setNpmOutput('')} onComplete={()=>void completeConsoleCommand()} inputRef={terminalInputRef} outputRef={npmOutputRef} onHistory={direction=>{const index=direction==='up'?Math.min(consoleHistory.length-1,consoleHistoryIndex+1):Math.max(-1,consoleHistoryIndex-1);setConsoleHistoryIndex(index);setNpmCommand(index>=0?consoleHistory[consoleHistory.length-1-index]:'')}}/>
+
           </Section>
         </TabsContent>
 

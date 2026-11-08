@@ -23,3 +23,5 @@ export interface AgentDatabase {
 export function validateDatabase(input: unknown): AgentDatabase
 export function databaseEnvironment(input: AgentDatabase): Record<string, string>
 export function jobSecrets(input: Record<string, unknown>): string[]
+
+export const INFRASTRUCTURE_CAPABILITY: string

@@ -9,7 +9,7 @@ import { databaseEnvironment, CONSOLE_CAPABILITY } from '@/scripts/manager-agent
 export async function remoteConsoleHistory(serverId: string, appId: string | null) {
   await ensureManagedServers(); uuid(serverId); if (appId) uuid(appId)
   return { jobs: (await query(`select id,kind,status,log,created_at,finished_at,cancel_requested,result from remote_jobs
-    where server_id=$1 and app_id is not distinct from $2::uuid and kind in ('console','logs') order by created_at desc limit 10`, [serverId, appId])).rows }
+    where server_id=$1 and app_id is not distinct from $2::uuid and operation_type is null and kind in ('console','logs') order by created_at desc limit 10`, [serverId, appId])).rows }
 }
 
 export async function queueRemoteConsole(serverId: string, appId: string | null, body: Record<string, unknown>, userId: string) {
@@ -50,7 +50,7 @@ export async function cancelRemoteConsole(serverId: string, id: unknown, userId:
     status=case when status='queued' then 'cancelled' else status end,
     payload_ciphertext=case when status='queued' then null else payload_ciphertext end,
     finished_at=case when status='queued' then now() else finished_at end
-    where server_id=$1 and id=$2 and kind in ('console','logs') and status in ('queued','running') returning id`,[serverId,id])
+    where server_id=$1 and id=$2 and operation_type is null and kind in ('console','logs') and status in ('queued','running') returning id`,[serverId,id])
   if(!result.rowCount)throw new ApiError('This console operation has already finished',409)
   await audit(userId,'remote.console.cancel',String(id),{serverId});return {ok:true}
 }

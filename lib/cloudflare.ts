@@ -1,3 +1,4 @@
+import { ensureManagedServers } from '@/lib/managed-servers'
 import { ApiError } from '@/lib/api'
 import { query } from '@/lib/db'
 import { decryptSecret, encryptSecret } from '@/lib/secret-crypto'
@@ -57,7 +58,7 @@ let schemaPromise: Promise<void> | null = null
 
 export function ensureCloudflareSchema() {
   if (!schemaPromise) {
-    schemaPromise = query(`
+    schemaPromise = ensureManagedServers().then(()=>query(`
       create table if not exists cloudflare_connections (
         id uuid primary key default gen_random_uuid(), name text unique not null,
         token_ciphertext text not null, token_last_four text not null,
@@ -79,17 +80,26 @@ export function ensureCloudflareSchema() {
       );
       create index if not exists project_domains_project_idx on project_domains (project_id);
       create index if not exists project_domains_cloudflare_idx on project_domains (cloudflare_connection_id);
-      create unique index if not exists project_domains_one_primary_idx on project_domains (project_id) where is_primary=true
-    `).then(() => undefined).catch((error) => { schemaPromise = null; throw error })
+      create unique index if not exists project_domains_one_primary_idx on project_domains (project_id) where is_primary=true;
+      create table if not exists remote_domains (
+        id uuid primary key default gen_random_uuid(),server_id uuid not null references managed_servers(id),project_id uuid not null references remote_apps(id),hostname text unique not null,
+        cloudflare_connection_id uuid references cloudflare_connections(id) on delete restrict,cloudflare_zone_id text,cloudflare_record_id text,
+        record_type text not null,record_content text not null,proxied boolean not null default false,is_primary boolean not null default false,previous_hostname text,previous_access_mode text,
+        ssl_mode text,dns_status text not null default 'pending',ssl_status text not null default 'pending',last_error text,
+        job_id uuid references remote_jobs(id),deleting boolean not null default false,created_at timestamptz not null default now()
+      );
+      create table if not exists remote_domain_operations (server_id uuid primary key references managed_servers(id),owner uuid not null,expires_at timestamptz not null)
+    `)).then(() => undefined).catch((error) => { schemaPromise = null; throw error })
   }
   return schemaPromise
 }
 
-async function cfRequest<T>(token: string, path: string, init?: RequestInit): Promise<T> {
+export async function cfRequest<T>(token: string, path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(init?.headers || {}) },
     cache: 'no-store',
+    signal: init?.signal || AbortSignal.timeout(15000),
   })
   const body = await response.json().catch(() => ({})) as { success?: boolean; result?: T; errors?: Array<{ message?: string }> }
   if (!response.ok || body.success === false) {
@@ -98,10 +108,10 @@ async function cfRequest<T>(token: string, path: string, init?: RequestInit): Pr
   return body.result as T
 }
 
-async function secretConnection(id: string) {
+export async function secretConnection(id: string) {
   await ensureCloudflareSchema()
   const { rows } = await query<SecretCloudflareConnection & { domain_count: number }>(
-    `select cc.*,count(pd.id)::int as domain_count from cloudflare_connections cc
+    `select cc.*,(count(pd.id)+(select count(*) from remote_domains rd where rd.cloudflare_connection_id=cc.id))::int as domain_count from cloudflare_connections cc
      left join project_domains pd on pd.cloudflare_connection_id=cc.id where cc.id=$1 group by cc.id`, [id]
   )
   if (!rows[0]) throw new ApiError('Cloudflare connection not found', 404)
@@ -112,7 +122,7 @@ export async function listCloudflareConnections() {
   await ensureCloudflareSchema()
   const { rows } = await query<CloudflareConnection>(
     `select cc.id,cc.name,cc.token_last_four,cc.token_status,cc.last_error,cc.last_validated_at,
-            cc.created_at,cc.updated_at,count(pd.id)::int as domain_count
+            cc.created_at,cc.updated_at,(count(pd.id)+(select count(*) from remote_domains rd where rd.cloudflare_connection_id=cc.id))::int as domain_count
        from cloudflare_connections cc left join project_domains pd on pd.cloudflare_connection_id=cc.id
       group by cc.id order by cc.name`
   )
@@ -171,7 +181,7 @@ export async function listCloudflareZones(connectionId?: string) {
   return zones.sort((a, b) => a.name.localeCompare(b.name))
 }
 
-async function getZone(connection: SecretCloudflareConnection, hostname: string) {
+export async function getZone(connection: SecretCloudflareConnection, hostname: string) {
   const token = decryptSecret(connection.token_ciphertext)
   const zones = await cfRequest<Array<{ id: string; name: string; status: string; paused: boolean }>>(token, '/zones?per_page=50')
   const zone = zones.filter((item) => hostname === item.name || hostname.endsWith(`.${item.name}`)).sort((a, b) => b.name.length - a.name.length)[0]
@@ -179,13 +189,13 @@ async function getZone(connection: SecretCloudflareConnection, hostname: string)
   return { zone, token }
 }
 
-function hostname(value: unknown) {
+export function hostname(value: unknown) {
   const name = typeof value === 'string' ? value.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0].replace(/\.$/, '') : ''
   if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(name)) throw new ApiError('Enter a valid public hostname', 400)
   return name
 }
 
-async function zoneSsl(token: string, zoneId: string) {
+export async function zoneSsl(token: string, zoneId: string) {
   const setting = await cfRequest<{ id: string; value: 'off' | 'flexible' | 'full' | 'strict'; editable: boolean }>(token, `/zones/${zoneId}/settings/ssl`)
   return setting.value
 }

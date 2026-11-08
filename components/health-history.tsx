@@ -8,7 +8,7 @@ const millis = (value: number | null) => value === null ? '—' : `${Math.round(
 const timestamp = (value: number) => new Date(value).toLocaleString()
 const colors = { gap: '#334155', failed: '#f87171', unknown: '#fbbf24', healthy: '#34d399', paused: '#64748b', partial: '#a78bfa' }
 
-export function HealthHistoryPanel() {
+export function HealthHistoryPanel({endpoint='/api/server/health/history'}:{endpoint?:string}) {
   const [range, setRange] = useState('24h'), [service, setService] = useState('')
   const [data, setData] = useState<HealthHistory | null>(null), [error, setError] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -20,7 +20,7 @@ export function HealthHistoryPanel() {
       inFlight = true
       try {
         const parameters = new URLSearchParams({ range }); if (service) parameters.set('service', service)
-        const response = await fetch(`/api/server/health/history?${parameters}`, { cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]) })
+        const response = await fetch(`${endpoint}?${parameters}`, { cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]) })
         if (!response.ok) throw new Error('History unavailable')
         const next = await response.json()
         if (active) { setData(next); setError(false) }
@@ -29,7 +29,7 @@ export function HealthHistoryPanel() {
     }
     void refresh(); const timer = setInterval(() => void refresh(), 60_000)
     return () => { active = false; controller.abort(); clearInterval(timer) }
-  }, [range, service])
+  }, [range, service, endpoint])
   const maxMs = Math.max(1, ...((data?.points || []).map(p => p.averageMs || 0)))
   return <section aria-label="Health history" className="rounded-xl border border-border bg-card p-5">
     <div className="flex flex-wrap items-start justify-between gap-4">
@@ -39,7 +39,7 @@ export function HealthHistoryPanel() {
         <div className="flex rounded-md border border-border p-1" role="group" aria-label="History period">{[['1h', '1 hour'], ['24h', '24 hours'], ['7d', '7 days']].map(([value, label]) => <button key={value} type="button" aria-pressed={range === value} onClick={() => setRange(value)} className={`rounded px-3 py-1.5 text-xs ${range === value ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent'}`}>{label}</button>)}</div>
       </div>
     </div>
-    {loading ? <p className="mt-5 text-sm text-muted-foreground" role="status">Loading history…</p> : error || data?.unavailable ? <p className="mt-5 text-sm text-amber-200" role="status">Health history is unavailable. Check the independent monitor task; missing observations are not counted as healthy.</p> : data && <>
+    {loading ? <p className="mt-5 text-sm text-muted-foreground" role="status">Loading history…</p> : error || data?.unavailable ? <p className="mt-5 text-sm text-amber-200" role="status">Health history is unavailable. {endpoint.startsWith('/api/servers/')?'Check the agent connection and version;':'Check the independent monitor task;'} missing observations are not counted as healthy.</p> : data && <>
       {data.stale && <p role="status" className="mt-4 text-sm text-amber-200">History collection is overdue. These are the last recorded observations.</p>}
       <div className="my-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <div><p className="text-xs text-muted-foreground">Successful checks</p><p className="mt-1 text-2xl font-semibold tabular-nums">{percent(data.summary.successPercent)}</p><p className="text-xs text-muted-foreground">{data.summary.passed.toLocaleString()} of {(data.summary.passed + data.summary.failed).toLocaleString()} completed</p></div>

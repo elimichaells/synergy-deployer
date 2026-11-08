@@ -5,7 +5,7 @@ import { repositoryPath } from '@/lib/git-provider-policy'
 import { getGitConnection, getGitHubConnectionToken } from '@/lib/github-connections'
 import { cleanInspection, REMOTE_SETUP_CAPABILITY } from '@/lib/remote-setup-policy'
 import { decryptSecret, encryptSecret } from '@/lib/secret-crypto'
-import { databaseEnvironment, jobSecrets, PROTOCOL_VERSION, CONSOLE_CAPABILITY, RUNTIME_CAPABILITY, validateRuntimeSelection, redact, sanitizeMetrics, validateApp } from '@/scripts/manager-agent.cjs'
+import { databaseEnvironment, jobSecrets, INFRASTRUCTURE_CAPABILITY, PROTOCOL_VERSION, CONSOLE_CAPABILITY, RUNTIME_CAPABILITY, validateRuntimeSelection, redact, sanitizeMetrics, validateApp } from '@/scripts/manager-agent.cjs'
 import { createHash, randomBytes, X509Certificate } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -32,6 +32,7 @@ export function ensureManagedServers() {
       await client.query(await readFile(path.join(process.cwd(), 'db/migrations/026_remote_app_setup.sql'), 'utf8'))
       await client.query(await readFile(path.join(process.cwd(), 'db/migrations/027_remote_agent_updates.sql'), 'utf8'))
       await client.query(await readFile(path.join(process.cwd(), 'db/migrations/028_remote_operations.sql'), 'utf8'))
+      await client.query(await readFile(path.join(process.cwd(), 'db/migrations/029_remote_infrastructure.sql'), 'utf8'))
       await client.query('commit')
     } catch (error) { await client.query('rollback'); throw error } finally { client.release() }
   })().catch(error => { schema = null; throw error })
@@ -147,6 +148,7 @@ export async function heartbeat(server: { id: string; platform: string }, body: 
     } catch { throw new ApiError('Invalid public CA certificate', 400) }
   }
   await query('update managed_servers set last_seen_at=now(),metrics=$2::jsonb,ca_pem=coalesce($3,ca_pem) where id=$1 and enabled=true', [server.id, JSON.stringify(metrics), certificate])
+  if(metrics.capabilities?.includes(INFRASTRUCTURE_CAPABILITY))await (await import('@/lib/remote-health')).recordRemoteHealth(server.id,metrics)
   return { ok: true }
 }
 
@@ -253,7 +255,7 @@ export async function claimJob(serverId: string) {
     // An older agent must never execute a setup payload as a deployment, including after a downgrade.
     const payload = job ? JSON.parse(decryptSecret(job.payload_ciphertext)) : null
     const capable = !job || (job.kind === 'deploy' && !payload.requiredCapability) || server.rows[0].metrics?.capabilities?.includes(payload.requiredCapability || REMOTE_SETUP_CAPABILITY) === true
-    const result = job && capable ? { id: job.id, kind: job.kind, claimToken: job.claim_token, payload } : null
+    const result = job && capable ? { id: job.id, kind: job.operation_type==='infrastructure'?'infrastructure':job.kind, claimToken: job.claim_token, payload } : null
     await client.query('commit')
     return { job: result, protocol: PROTOCOL_VERSION }
   } catch (error) { await client.query('rollback'); throw error } finally { client.release() }
@@ -273,7 +275,7 @@ export async function reportJob(serverId: string, body: Record<string, unknown>)
     const secrets = jobSecrets(payload)
     const log = redact(body.log, secrets)
     const finished = body.status !== 'running'
-    const kind = job.kind || 'deploy'
+    const kind = job.operation_type==='infrastructure'?'infrastructure':job.kind || 'deploy'
     if (body.status === 'success' && ['deploy','inspect'].includes(kind) && !body.commitSha) throw new ApiError('Successful deployment or inspection must identify its commit', 400)
     let result: object | null = null
     if (body.status === 'success' && kind === 'inspect') {
@@ -282,6 +284,9 @@ export async function reportJob(serverId: string, body: Record<string, unknown>)
     } else if (body.status === 'success' && ['database','validate'].includes(kind)) {
       if ((body.result as { ok?: boolean } | undefined)?.ok !== true) throw new ApiError('Setup job must report a successful check',400)
       result = { ok: true }
+    }
+    if(body.status==='success' && kind==='infrastructure') {
+      const value=body.result as Record<string,unknown>; if(value?.ok!==true || JSON.stringify(value).length>300000)throw new ApiError('Invalid infrastructure result',400); result=value
     }
     if(body.status==='success' && ['console','logs'].includes(kind)) {
       const value=body.result as {ok?:boolean;cwd?:unknown}
