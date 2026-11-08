@@ -83,9 +83,24 @@ async function main() {
     await assert.rejects(ssh.connectSsh(target, 'wrong-password', observed.fingerprint), /SSH connection failed/);
     check('Wrong host identity and wrong password rejected');
 
+    const setupRequest = { ...target, password: process.env.SSH_LAB_PASSWORD,
+      manager, caPem, fingerprint: observed.fingerprint, acceptFingerprint: true };
+    await assert.rejects(ssh.setupServerSsh(server.id, setupRequest, userId), /Inspect this server/);
+    const { inventory } = await ssh.inspectServerSsh(server.id, setupRequest, userId);
+    assert.equal(inventory.platform, process.platform);
+    assert.equal(inventory.portsKnown, true, 'Discovery must verify occupied ports');
+    assert.ok(!inventory.ports.some(port => [80,443,2029].includes(port)), 'Lab web ports must be free');
+    const { SERVER_TOOLS } = require('../../lib/server-tool-catalog.ts');
+    const tools = Object.fromEntries(SERVER_TOOLS.map(tool => {
+      const existing = inventory.tools[tool.id].find(candidate => candidate.compatible);
+      return [tool.id, { mode: existing ? 'reuse' : tool.required ? 'install' : 'skip', path: existing?.path || '' }];
+    }));
+    await assert.rejects(ssh.setupServerSsh(server.id, { ...setupRequest, tools, reviewed: false }, userId), /Review the detected services/);
+    assert.equal((await managed.serverDetail(server.id)).server.enrolled_at, null);
+    check('Read-only SSH discovery produced a verified reuse/install plan; unreviewed setup was rejected before enrollment');
+
     console.log('[setup] Running the production SSH installer; official downloads may take several minutes.');
-    const installed = await ssh.setupServerSsh(server.id, { ...target, password: process.env.SSH_LAB_PASSWORD,
-      manager, caPem, fingerprint: observed.fingerprint, acceptFingerprint: true }, userId);
+    const installed = await ssh.setupServerSsh(server.id, { ...setupRequest, tools, reviewed: true }, userId);
     fs.writeFileSync(path.join(root, 'ssh-lab-setup.log'), redact(installed.log, secrets));
     assert.equal(installed.online, true, installed.message);
     const detail = await managed.serverDetail(server.id);
