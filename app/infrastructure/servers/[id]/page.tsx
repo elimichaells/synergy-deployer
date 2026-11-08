@@ -1,5 +1,6 @@
 'use client'
 import { DomainsWorkspace } from '@/components/infrastructure/domains-workspace'
+import { RemoveServerDialog } from '@/components/infrastructure/remove-server-dialog'
 
 
 import { AgentUpdates } from '@/components/infrastructure/agent-updates'
@@ -111,6 +112,7 @@ function ManagedServerWorkspace({ id }: { id: string }) {
     back={parentProject ? { href: remoteProjectHref(id, parentProject.id, 'overview', selected?.environment_name), label: parentProject.name } : projectId ? { href: `${root}#applications`, label: 'Projects' } : view === 'app' || view === 'new' ? { href: `${root}#applications`, label: 'Projects' } : openedJob ? { href: `${root}#deployments`, label: 'Deployments' } : undefined}
     tabs={project ? <ProjectTabs unavailable={server.metrics?.capabilities?.includes('remote-console-v1')?{}:{ logs: remoteRuntimeToolsUnavailable }} /> : selected ? <ApplicationTabs unavailable={server.metrics?.capabilities?.includes('remote-console-v1')?{}:{ logs: remoteRuntimeToolsUnavailable }} activeTab={appTab} showSetupTab={!!selected.guided_setup && (!selected.setup_completed_at || appTab === 'setup')} /> : undefined}
     actions={<>
+      {admin && !selected && !projectId && (view === 'overview' || (view === 'server-access' && infraSection === 'agent')) && <RemoveServerDialog serverId={id} serverName={server.name} leaveWorkspace disabled={sshBusy} />}
       {selected && !selected.hostname.endsWith('.invalid') && <Button asChild variant="outline" size="sm"><a href={`https://${selected.hostname}`} target="_blank" rel="noreferrer">Visit<ArrowUpRight className="ml-1.5 h-3.5 w-3.5" /></a></Button>}
       <Button variant="outline" size="sm" onClick={() => void load()}><RefreshCw className="mr-1.5 h-3.5 w-3.5" />Refresh</Button>
       {selected && deployer && <Button size="sm" disabled={busy || !server.enabled || !server.enrolled_at || summary.active.some(job => job.app_id === selected.id) || (!!selected.guided_setup && !selected.setup_completed_at)} onClick={() => void action(`/apps/${selected.id}/deploy`)}><Rocket className="mr-1.5 h-3.5 w-3.5" />Deploy</Button>}
