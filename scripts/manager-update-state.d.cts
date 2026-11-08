@@ -1,4 +1,4 @@
-export interface UpdateConfig { managerRoot: string; stateRoot: string; nodeExe: string; pm2Home: string; pm2PackageRoot: string; pgDump: string; port: number }
+export interface UpdateConfig { managerRoot: string; stateRoot: string; nodeExe: string; pm2Home: string; pm2PackageRoot: string; pgDump: string; port: number; recoveryTask?: string }
 export interface UpdateState { id: string; source: string; userId: string; phase: string; fromVersion: string; version: string; createdAt: string; updatedAt: string; commit?: string; manualRollback?: boolean; recoveryStarted?: boolean; events: { at: string; message: string }[] }
 export const TERMINAL: string[]
 export function config(root?: string): UpdateConfig
