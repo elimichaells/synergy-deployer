@@ -11,3 +11,4 @@ export interface HealthHistory {
   unavailable: boolean; stale: boolean
 }
 export function summarizeHistory(history: unknown, range: string, service?: string, now?: number): Omit<HealthHistory, 'unavailable' | 'stale'>
+export function recordHistory(previous: unknown, sample: unknown): unknown

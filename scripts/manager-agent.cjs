@@ -12,7 +12,8 @@ const { randomBytes, X509Certificate, createHash } = require('node:crypto');
 const { rootCertificates } = require('node:tls');
 const { createInterface } = require('node:readline/promises');
 const PROTOCOL_VERSION = 1;
-const AGENT_VERSION = '1.5.1';
+const AGENT_VERSION = '1.6.0';
+const INFRASTRUCTURE_CAPABILITY = 'remote-infrastructure-v1';
 const CONSOLE_CAPABILITY = 'remote-console-v1';
 const RUNTIME_CAPABILITY = 'runtime-versions-v1';
 const SETUP_CAPABILITY = 'guided-setup-v1';
@@ -171,9 +172,13 @@ function sanitizeMetrics(raw) {
     addresses: (Array.isArray(raw.addresses) ? raw.addresses : []).filter(x => typeof x === 'string' && net.isIP(x)).slice(0, 30),
     tools: Object.fromEntries(['node','git','pm2','caddy','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer'].filter(key => ['node','git','pm2','caddy'].includes(key) || Object.hasOwn(raw.tools || {},key)).map(key => [key, str(raw.tools?.[key]) || null])),
     apps: (Array.isArray(raw.apps) ? raw.apps : []).slice(0, 200).filter(x => ID.test(x.id)).map(x => ({ id: x.id,
-      status: ['online','stopped','errored','launching','stopping','missing'].includes(x.status) ? x.status : 'unknown', cpu: number(x.cpu, 10000), memory: number(x.memory) })),
+      status: ['online','stopped','errored','launching','stopping','missing'].includes(x.status) ? x.status : 'unknown', cpu: number(x.cpu, 10000), memory: number(x.memory),
+      uptime:optional(x.uptime),restarts:number(x.restarts??0),pid:optional(x.pid),logBytes:number(x.logBytes??0),
+      check:x.check?{ok:x.check.ok===true,status:optional(x.check.status),ms:number(x.check.ms,60000),reason:str(x.check.reason,500)}:null })),
+    pm2Error:raw.pm2Error===true,
+    caddy:raw.caddy?{mode:raw.caddy.mode==='shared'?'shared':'pm2',status:['running','stopped','unknown'].includes(raw.caddy.status)?raw.caddy.status:'unknown',configPath:str(raw.caddy.configPath,1024),version:str(raw.caddy.version)}:null,
     proxyError: raw.proxyError ? str(raw.proxyError, 500) : null,
-    capabilities: [SETUP_CAPABILITY,UPDATE_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY].filter(value => Array.isArray(raw.capabilities) && raw.capabilities.includes(value)) };
+    capabilities: [SETUP_CAPABILITY,UPDATE_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,INFRASTRUCTURE_CAPABILITY].filter(value => Array.isArray(raw.capabilities) && raw.capabilities.includes(value)) };
   if (result.memoryFree > result.memoryTotal || (result.diskFree !== null && result.diskTotal !== null && result.diskFree > result.diskTotal)) throw new Error('Invalid capacity');
   return result;
 }
@@ -430,6 +435,12 @@ async function sharedProxyConfig(root,text,tools,settings) {
   } finally {await fs.unlink(candidate).catch(error=>{if(error.code!=='ENOENT')throw error;});}
 }
 
+async function managedCaddyConfig(root,apps,domains) {
+  domains=domains||await readJson(path.join(root,'domains.json'),{});
+  const aliases=Object.values(domains).flatMap(domain=>{const app=apps.find(a=>a.id===domain.appId);return app&&app.hostname!==domain.hostname?[{...app,hostname:domain.hostname,access_mode:'wan',ip_address:'',ip_port:null}]:[]});
+  return caddyConfig([...apps,...aliases],path.join(root,'caddy-storage'));
+}
+
 async function proxyConfig(root, text, tools) {
   if (!tools.tools.caddy) throw new Error('Install Caddy and put it on the agent account PATH');
   const shared=await sharedProxySettings(root);
@@ -494,7 +505,7 @@ async function restoreActivation(root, journal, tools, log, dependencies = {}) {
     await tools.pm(['start',activation.previous.ecosystem]);
     await (dependencies.healthy || healthy)(activation.previous.app);
   }
-  await (dependencies.proxyConfig || proxyConfig)(root,caddyConfig(Object.values(activation.previousApps).map(x=>x.app),path.join(root,'caddy-storage')),tools);
+  await (dependencies.proxyConfig || proxyConfig)(root,await managedCaddyConfig(root,Object.values(activation.previousApps).map(x=>x.app)),tools);
   await atomicJson(path.join(root,'apps.json'),activation.previousApps);
   await tools.pm(['save','--force']);
   log(activation.previous ? '[rollback] Previous release is healthy\n' : '[rollback] Failed first release stopped\n');
@@ -580,7 +591,7 @@ child.on('error',e=>{console.error(e.message);process.exit(1)});child.on('exit',
     log('[stage] caddy\n');
     const savedApp={...app,environment:{}}; // Environment values stay in protected per-release files, never telemetry.
     applications[app.id]={app:savedApp,ecosystem,commit};
-    await configureProxy(root,caddyConfig(Object.values(applications).map(x=>x.app),path.join(root,'caddy-storage')),tools);
+    await configureProxy(root,await managedCaddyConfig(root,Object.values(applications).map(x=>x.app)),tools);
     await atomicJson(path.join(root,'apps.json'),applications);
     await tools.pm(['save','--force']);
     log(`[success] ${commit}\nApplication healthy; Caddy routes loaded. DNS and client certificate trust must be configured.\n`);
@@ -593,12 +604,78 @@ child.on('error',e=>{console.error(e.message);process.exit(1)});child.on('exit',
 }
 
 function cpuSnapshot(){return os.cpus().reduce((v,c)=>({idle:v.idle+c.times.idle,total:v.total+Object.values(c.times).reduce((a,b)=>a+b,0)}),{idle:0,total:0});}
+async function sampleApplications(saved,list,pm2Error) {
+  const result=[];const ids=Object.keys(saved).slice(0,200);
+  // Bounded concurrency prevents a large fleet of unhealthy apps delaying heartbeats.
+  for(let offset=0;offset<ids.length;offset+=20)await Promise.all(ids.slice(offset,offset+20).map(async id=>{
+    const p=list.find(p=>p.name===`manager-remote-${id}`),app=saved[id].app;
+    let check=null,logBytes=0;
+    if(!pm2Error&&!['stopped','stopping'].includes(p?.pm2_env?.status)){
+      const at=Date.now();try{
+        const response=await fetch(`http://127.0.0.1:${port(app.port,'port')}${app.health_path}`,{redirect:'manual',signal:AbortSignal.timeout(2000)});
+        await response.body?.cancel();check={ok:response.status>=200&&response.status<300,status:response.status,ms:Date.now()-at,reason:response.ok?'':'Readiness must return HTTP 2xx'};
+      }catch{check={ok:false,status:null,ms:Date.now()-at,reason:'Readiness endpoint did not respond within 2 seconds'}}
+    }
+    for(const file of [p?.pm2_env?.pm_out_log_path,p?.pm2_env?.pm_err_log_path])if(file)logBytes=Math.max(logBytes,await fs.stat(file).then(s=>s.size).catch(()=>0));
+    result.push({id,status:p?.pm2_env?.status||'missing',cpu:p?.monit?.cpu||0,memory:p?.monit?.memory||0,uptime:p?.pm2_env?.pm_uptime||null,restarts:p?.pm2_env?.restart_time||0,pid:p?.pid||null,logBytes,check});
+  }));return result;
+}
+
+async function infrastructureJob(root,job,tools,log) {
+  const {action,id,expiresAt}=job.payload;
+  if(!Number.isFinite(expiresAt)||Date.now()>expiresAt)throw Error('Operation expired; review the current server state and retry');
+  const saved=await readJson(path.join(root,'apps.json'),{});
+  if(action==='domain'){
+    const domain=job.payload.domain;
+    if(!ID.test(id)||!saved[id]||!ID.test(domain?.id)||typeof domain.hostname!=='string'||!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain.hostname))throw Error('Invalid managed domain');
+    const file=path.join(root,'domains.json'),previous=await readJson(file,{}),next={...previous};
+    if(previous[domain.id]&&(previous[domain.id].appId!==id||previous[domain.id].hostname!==domain.hostname))throw Error('Domain ownership changed');
+    if(domain.remove){
+      delete next[domain.id];
+      if(saved[id].app.hostname===domain.hostname&&domain.restoreHostname){
+        const restored=validateApp({...saved[id].app,hostname:domain.restoreHostname,access_mode:domain.restoreAccessMode});saved[id].app={...saved[id].app,...restored};
+      }
+    }else next[domain.id]={appId:id,hostname:domain.hostname};
+    const apps=Object.values(saved).map(x=>x.app);
+    await proxyConfig(root,await managedCaddyConfig(root,apps,next),tools);
+    await atomicJson(path.join(root,'apps.json'),saved);await atomicJson(file,next);log('[success] Managed domain routes verified and loaded\n');return{ok:true};
+  }
+  if(id){
+    if(!ID.test(id)||!saved[id]||!['start','stop','restart'].includes(action))throw Error('Unknown managed process or action');
+    const name=`manager-remote-${id}`,list=await processList(tools.pm);
+    if(action==='start'&&!list.some(p=>p.name===name)){
+      const ecosystem=await contained(root,path.relative(root,saved[id].ecosystem));
+      await checkPort(saved[id].app.port);await tools.pm(['start',ecosystem]);
+    }else await tools.pm([action,name]);
+    await tools.pm(['save','--force']);log(`[success] ${action} completed for ${saved[id].app.name}\n`);
+    return {ok:true};
+  }
+  if(action==='read-config'||action==='validate'){
+    if(tools.sharedProxy){
+      const config=JSON.stringify((await sharedProxyRead(tools.sharedProxy)).config,null,2);
+      if(Buffer.byteLength(config)>128000)throw Error('Configuration is too large to display');
+      if(action==='read-config')return {ok:true,config,configSize:Buffer.byteLength(config),configReadAt:new Date().toISOString(),configPath:'Active Caddy configuration (JSON)'};
+      const file=path.join(root,'caddy-validation-'+randomBytes(12).toString('hex')+'.json');
+      try{await fs.writeFile(file,config,{mode:0o600});await run(tools.caddy,['validate','--config',file],{timeout:15000});return{ok:true,valid:true,output:'Active Caddy configuration is valid'}}finally{await fs.unlink(file).catch(()=>{})}
+    }
+    const file=tools.sharedProxy?.configPath||path.join(root,'Caddyfile'),stat=await fs.stat(file);
+    if(stat.size>128000)throw Error('Configuration is too large to display');
+    if(action==='validate'){await run(tools.caddy,['validate','--config',file,'--adapter','caddyfile'],{timeout:15000});return{ok:true,valid:true,output:'Caddy configuration is valid'}}
+    return {ok:true,config:await fs.readFile(file,'utf8'),configSize:stat.size,configModifiedAt:stat.mtime.toISOString()};
+  }
+  if(!['start','stop','restart','reload'].includes(action))throw Error('Unknown Caddy action');
+  // A shared proxy owns sites outside Manager. Never stop it or replace its active configuration.
+  if(tools.sharedProxy){if(action!=='reload')throw Error('Shared Caddy serves existing sites; only managed-route reload is permitted');}
+  if(action==='reload'||action==='start')await proxyConfig(root,await managedCaddyConfig(root,Object.values(saved).map(x=>x.app)),tools);
+  else {await tools.pm([action,'manager-remote-caddy']);await tools.pm(['save','--force']);}
+  log('[success] Caddy operation completed\n');return{ok:true};
+}
 async function sample(root, tools, prior) {
   const cpu=cpuSnapshot(), delta=cpu.total-prior.total;
   const disk=await fs.statfs(root).catch(()=>null);
   const saved=await readJson(path.join(root,'apps.json'),{});
-  let list=[];let proxyError=null;
-  try{list=await processList(tools.pm);}catch(error){proxyError=error.message;}
+  let list=[];let proxyError=null;let pm2Error=false;
+  try{list=await processList(tools.pm);}catch(error){proxyError=error.message;pm2Error=true;}
   if(tools.sharedProxy) {
     try {await sharedProxyRead(tools.sharedProxy);}catch(error){proxyError=error.message;}
   } else if(Object.keys(saved).length&&!list.some(p=>p.name==='manager-remote-caddy'&&p.pm2_env?.status==='online'))proxyError='Caddy is not running';
@@ -612,7 +689,8 @@ async function sample(root, tools, prior) {
     cpuPercent:delta?Math.max(0,Math.min(100,100*(1-(cpu.idle-prior.idle)/delta))):0,
     memoryTotal:os.totalmem(),memoryFree:os.freemem(),diskTotal:disk?disk.blocks*disk.bsize:null,diskFree:disk?disk.bavail*disk.bsize:null,uptime:os.uptime(),
     addresses:Object.values(os.networkInterfaces()).flat().filter(x=>x&&!x.internal).map(x=>x.address),tools:tools.tools,proxyError,
-    apps:Object.keys(saved).map(id=>{const p=list.find(p=>p.name===`manager-remote-${id}`);return{id,status:p?.pm2_env?.status||'missing',cpu:p?.monit?.cpu||0,memory:p?.monit?.memory||0};})});
+    pm2Error,caddy:{mode:tools.sharedProxy?'shared':'pm2',status:proxyError?'unknown':tools.sharedProxy||list.some(p=>p.name==='manager-remote-caddy'&&p.pm2_env?.status==='online')?'running':'stopped',configPath:tools.sharedProxy?.configPath||path.join(root,'Caddyfile'),version:tools.tools.caddy},
+    apps:await sampleApplications(saved,list,pm2Error)});
   return {metrics,caPem,cpu};
 }
 
@@ -676,6 +754,14 @@ async function consoleJob(root,job,tools,log,signal) {
     return {ok:true,cwd};
   }
   if(typeof payload.command!=='string'||!payload.command.trim()||payload.command.length>8000||/[\r\n\0]/.test(payload.command))throw new Error('Enter one command line (maximum 8,000 characters)');
+  const changeDirectory=payload.command.trim().match(/^(?:cd|Set-Location)\s+(.+)$/i);
+  if(changeDirectory){
+    const target=changeDirectory[1].trim().replace(/^(["'])(.*)\1$/,'$2');
+    if(/[;&|`$<>]/.test(target))throw Error('Enter a literal directory path');
+    const next=await fs.realpath(path.resolve(cwd,target)),rel=path.relative(base,next);
+    if(rel.startsWith('..')||path.isAbsolute(rel)||!(await fs.stat(next)).isDirectory())throw Error('Working directory must stay inside this application');
+    log(next+'\n');return {ok:true,cwd:next};
+  }
   const env={...baseEnv(),...payload.environment,...runtime,FORCE_COLOR:'0',NO_COLOR:'1'};
   const command=payload.command;
   const args=process.platform==='win32'?['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from("$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new(); "+command+'; if($LASTEXITCODE){exit $LASTEXITCODE}', 'utf16le').toString('base64')]:['-c',command];
@@ -737,7 +823,7 @@ async function runAgent(root) {
   let heartbeatBusy=false;
   const pulse=async()=>{
     if(heartbeatBusy)return;heartbeatBusy=true;
-    try{const data=await sample(root,tools,prior);prior=data.cpu;data.metrics.capabilities=[SETUP_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,...(supervised?[UPDATE_CAPABILITY]:[])];await request(config,'heartbeat',{protocol:PROTOCOL_VERSION,metrics:data.metrics,caPem:data.caPem});send({type:'heartbeat',version:AGENT_VERSION,metrics:data.metrics});}
+    try{const data=await sample(root,tools,prior);prior=data.cpu;data.metrics.capabilities=[SETUP_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,INFRASTRUCTURE_CAPABILITY,...(supervised?[UPDATE_CAPABILITY]:[])];await request(config,'heartbeat',{protocol:PROTOCOL_VERSION,metrics:data.metrics,caPem:data.caPem});send({type:'heartbeat',version:AGENT_VERSION,metrics:data.metrics});}
     finally{heartbeatBusy=false;}
   };
   const describe=error=>console.error(`[agent] ${redact(error.message,[config.agentToken])}`);
@@ -764,6 +850,7 @@ async function runAgent(root) {
         try{
           if (!job.kind || job.kind==='deploy') journal.commitSha=await deploy(root,job,journal,tools,persist,log);
           else if (job.kind==='inspect') { journal.result=await inspectRepository(root,job,tools,log); journal.commitSha=journal.result.commit; }
+          else if (job.kind==='infrastructure') journal.result=await infrastructureJob(root,job,tools,log);
           else if (job.kind==='database') journal.result=await setupDatabase(root,job,log);
           else if (job.kind==='validate') journal.result=await validateSetup(root,job,tools);
           else if (['console','logs'].includes(job.kind)) { consoleAbort=new AbortController();lastConsoleReport=Date.now();journal.result=await consoleJob(root,job,tools,log,consoleAbort.signal); }
@@ -994,5 +1081,5 @@ async function main(){
   if(action==='check-tools')await checkConfiguredTools(root);else if(action==='enroll')await enrollCli(root,options);else await runAgent(root);
 }
 
-module.exports={toolVersion,validateRuntimeSelection,RUNTIME_CAPABILITY,validateRuntimeVersions,runtimeEnvironment,installedRuntimeVersions,CONSOLE_CAPABILITY,consoleJob,PROTOCOL_VERSION,AGENT_VERSION,SETUP_CAPABILITY,UPDATE_CAPABILITY,validateApp,sanitizeMetrics,redact,streamRedactor,caddyConfig,managerAddress,contained,run,request,deploy,restoreActivation,healthy,atomicJson,readJson,enrollCli,detectFramework,inspectRepository,validateDatabase,databaseEnvironment,setupDatabase,validateSetup,jobSecrets,findStaticRoot,serveStatic,loadToolPaths,checkConfiguredTools,privatePm2Environment,findTools,proxyConfig,sharedProxySettings,sharedProxyState,configDigest};
+module.exports={managedCaddyConfig,sampleApplications,infrastructureJob,INFRASTRUCTURE_CAPABILITY,toolVersion,validateRuntimeSelection,RUNTIME_CAPABILITY,validateRuntimeVersions,runtimeEnvironment,installedRuntimeVersions,CONSOLE_CAPABILITY,consoleJob,PROTOCOL_VERSION,AGENT_VERSION,SETUP_CAPABILITY,UPDATE_CAPABILITY,validateApp,sanitizeMetrics,redact,streamRedactor,caddyConfig,managerAddress,contained,run,request,deploy,restoreActivation,healthy,atomicJson,readJson,enrollCli,detectFramework,inspectRepository,validateDatabase,databaseEnvironment,setupDatabase,validateSetup,jobSecrets,findStaticRoot,serveStatic,loadToolPaths,checkConfiguredTools,privatePm2Environment,findTools,proxyConfig,sharedProxySettings,sharedProxyState,configDigest};
 if(require.main===module)main().catch(error=>{console.error(error.message);process.exitCode=1;});

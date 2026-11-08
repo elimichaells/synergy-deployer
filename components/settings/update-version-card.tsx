@@ -1,0 +1,4 @@
+'use client'
+import { RefreshCw } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+export function UpdateVersionCard({version,description,checking,disabled,onCheck}:{version?:string|null;description:string;checking:boolean;disabled:boolean;onCheck:()=>void}){return <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-white/[0.02] p-5"><div><p className="text-xs text-muted-foreground">Installed version</p><p className="mt-1 text-2xl font-semibold tracking-tight">{version?'v'+version:'Loading…'}</p><p className="mt-2 text-xs text-muted-foreground">{description}</p></div><Button variant="outline" disabled={disabled} onClick={onCheck}><RefreshCw className={`mr-2 h-4 w-4 ${checking?'animate-spin':''}`}/>Check for updates</Button></div>}

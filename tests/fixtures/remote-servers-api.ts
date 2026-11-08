@@ -6,7 +6,7 @@ const serverId = '11111111-1111-4111-8111-111111111111'
 const windowsId = '22222222-2222-4222-8222-222222222222'
 const appId = '33333333-3333-4333-8333-333333333333'
 const app: Record<string, any> = { id: appId, server_id: serverId, name: 'Campus Library', repo_url: 'https://github.com/example/library', branch: 'main', install_cmd: 'npm ci --include=dev', build_cmd: 'npm run build', start_cmd: 'npm start -- --hostname 127.0.0.1', port: 3100, health_path: '/health', access_mode: 'lan', hostname: 'library.campus.example.edu', ip_address: '192.168.10.20', ip_port: 8443, git_connection_id: null, env_names: ['DATABASE_URL'], live_commit: 'a'.repeat(40), deployed_at: new Date().toISOString() }
-const metrics = { hostname: 'campus-linux', platform: 'linux', version: '1.1.0', capabilities: ['guided-setup-v1'], cpuPercent: 23, memoryTotal: 16 * 1024 ** 3, memoryFree: 10 * 1024 ** 3, diskTotal: 500 * 1024 ** 3, diskFree: 350 * 1024 ** 3, uptime: 864000, addresses: ['192.168.10.20'], tools: { node: 'v24.13.0', git: 'git version 2.50', pm2: '6.0', caddy: 'v2.10' }, apps: [{ id: appId, status: 'online', cpu: 4, memory: 256 * 1024 ** 2 }], proxyError: null }
+const metrics = { hostname: 'campus-linux', platform: 'linux', version: '1.6.0', capabilities: ['guided-setup-v1','remote-infrastructure-v1','remote-console-v1','runtime-versions-v1','agent-update-v1'], cpuPercent: 23, memoryTotal: 16 * 1024 ** 3, memoryFree: 10 * 1024 ** 3, diskTotal: 500 * 1024 ** 3, diskFree: 350 * 1024 ** 3, uptime: 864000, addresses: ['192.168.10.20'], tools: { node: 'v24.13.0', git: 'git version 2.50', pm2: '6.0', caddy: 'v2.10' }, apps: [{ id: appId, status: 'online', cpu: 4, memory: 256 * 1024 ** 2 }], proxyError: null }
 const initial = { role: 'admin', servers: [
   { id: serverId, name: 'Main campus', location: 'Accra · institution LAN', platform: 'linux', enabled: true, enrolled_at: new Date().toISOString(), last_seen_at: new Date().toISOString(), metrics, status: 'online', app_count: 2, has_ca: true },
   { id: windowsId, name: 'Regional office', location: 'Kumasi · private network', platform: 'win32', enabled: true, enrolled_at: null, last_seen_at: null, metrics: null, status: 'pending', app_count: 0, has_ca: false },
@@ -23,13 +23,28 @@ export async function remoteServersFixture(request: Request) {
   const pathname = new URL(request.url).pathname
   if (!pathname.startsWith('/api/servers')) return null
   const parts = pathname.slice('/api/servers'.length).split('/').filter(Boolean)
+  if(parts[1]==='infrastructure') {
+    if(parts[2]==='services')return NextResponse.json([{id:appId,name:'manager-remote-fixture',displayName:app.name,status:'online',uptime:Date.now()-86400000,cpu:4,memory:256,restarts:1}])
+    if(parts[2]==='caddy')return NextResponse.json({mode:'shared',status:'running',configPath:'/etc/caddy/Caddyfile',version:'2.10'})
+    if(parts[2]==='health') {
+      if(parts[3]==='history')return NextResponse.json({range:'24h',from:Date.now()-86400000,to:Date.now(),intervalMs:300000,summary:{passed:1400,failed:2,unknown:1,paused:0,successPercent:99.86,averageMs:26},services:[],points:[],unavailable:false,stale:false,startedAt:Date.now()-86400000,checkedAt:Date.now()})
+      return NextResponse.json({checkedAt:new Date().toISOString(),stale:false,unavailable:false,incidents:[],snapshot:{disks:[{name:'Application disk',total:500*1024**3,free:350*1024**3}],memory:{total:16*1024**3,free:10*1024**3},pm2Updates:0,pm2Error:false,collectorError:null,apps:[{name:app.name,status:'online',restarts:1}],checks:[{name:app.name,ok:true,status:200,ms:26}]}})
+    }
+  }
+  if(parts[1]==='console')return NextResponse.json({jobs:[{id:'fixture-console',kind:'console',status:'success',log:'Synthetic preview: command completed.\n',created_at:new Date().toISOString(),result:{cwd:'/var/lib/manager-agent/console'}}]})
+  if(parts[1]==='services')return NextResponse.json({operations:[]})
+  if(parts[1]==='domains')return NextResponse.json({domains:[{id:appId,project_id:appId,project_name:app.name,environment:'production',hostname:app.hostname,record_type:'A',record_content:'192.0.2.10',dns_status:'manual',ssl_status:'Route loaded',application_route:true,proxied:false,is_primary:true}]})
+  if(parts[1]==='runtimes') {
+    if(parts[2]==='versions')return NextResponse.json({installed:['22.23.4'],available:[{version:'22.23.4',label:'Node.js 22.23.4 LTS'},{version:'24.22.2',label:'Node.js 24.22.2 LTS'}]})
+    return NextResponse.json({runtimes:[{id:'node',name:'Node.js',purpose:'JavaScript runtime',installed:true,version:'v24.22.1',canInstall:true,canUpdate:true,canConfigure:true,versioned:true,installedVersions:['22.23.4'],updateAvailable:true,latestVersion:'24.22.2',updateMode:'project-version',installSource:'Selected remote server'},{id:'postgresql',name:'PostgreSQL',purpose:'Database server',installed:false,version:null,canInstall:true,installedVersions:[],versioned:false}]})
+  }
   if (parts.length===2 && parts[1]==='agent-update') {
     const server = state.servers.find(item=>item.id===parts[0])
     if(!server)return NextResponse.json({error:'Server not found'},{status:404})
-    if(request.method==='GET')return NextResponse.json({installed:server.metrics?.version,available:'1.2.0',supported:!!server.enrolled_at,updateAvailable:server.metrics?.version!=='1.2.0',latest:updateFixture[server.id] || null})
+    if(request.method==='GET')return NextResponse.json({installed:server.metrics?.version,available:'1.6.0',supported:!!server.enrolled_at,updateAvailable:server.metrics?.version!=='1.6.0',latest:updateFixture[server.id] || null})
     const body=await request.json()
     if(body.action==='cancel'){if(updateFixture[server.id])updateFixture[server.id].status='cancelled';return NextResponse.json({ok:true})}
-    updateFixture[server.id]={id:crypto.randomUUID(),from_version:server.metrics?.version,target_version:'1.2.0',status:'queued',message:'Preview only: waiting for the agent to become idle. No server will be updated.',updated_at:new Date().toISOString()}
+    updateFixture[server.id]={id:crypto.randomUUID(),from_version:server.metrics?.version,target_version:'1.6.0',status:'queued',message:'Preview only: waiting for the agent to become idle. No server will be updated.',updated_at:new Date().toISOString()}
     return NextResponse.json({id:updateFixture[server.id].id},{status:202})
   }
   if (request.method === 'GET') {

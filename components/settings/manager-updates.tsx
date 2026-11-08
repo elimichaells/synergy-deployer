@@ -1,4 +1,5 @@
 'use client'
+import { UpdateVersionCard } from './update-version-card'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowUpRight, CheckCircle2, Download, History, Loader2, RefreshCw, ShieldCheck, Undo2, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -49,10 +50,8 @@ export function ManagerUpdates({isAdmin}:{isAdmin:boolean}) {
   const job=status?.job, working=!!job&&active.includes(job.phase), blocked=!!busy||working||!!job&&['preparing','ready','recovery_failed'].includes(job.phase)
   const newer=release?.newer && release.version!==status?.version
   return <div className="space-y-7">
-    <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-white/[0.02] p-5">
-      <div><p className="text-xs text-muted-foreground">Installed version</p><p className="mt-1 text-2xl font-semibold tracking-tight">{status?'v'+status.version:'Loading…'}</p><p className="mt-2 text-xs text-muted-foreground">Stable releases from elimichaells/synergy-deployer</p></div>
-      <Button variant="outline" disabled={!status?.configured||blocked} onClick={()=>void action('check')}><RefreshCw className={`mr-2 h-4 w-4 ${busy==='check'?'animate-spin':''}`}/>Check for updates</Button>
-    </div>
+    <UpdateVersionCard version={status?.version} description="Stable releases from elimichaells/synergy-deployer" disabled={!status?.configured||blocked} checking={busy==='check'} onCheck={()=>void action('check')}/>
+
     {reconnecting&&<p role="status" className="text-sm text-amber-400">{working?'Manager is restarting. This page will reconnect automatically.':'Waiting for Manager. Retrying the connection…'}</p>}
     {error&&<p role="alert" className="notice-error">{error}</p>}
     {status&&!status.configured&&<div className="notice-error"><p className="font-medium">One-time setup required</p><p className="mt-2 text-sm">Run <code>scripts/install-manager-updater.ps1</code> as an administrator on this Manager server. This registers recovery so it can run even when Manager is offline.</p></div>}

@@ -39,6 +39,7 @@ test('draft applications cannot deploy before setup completion; legacy applicati
 test('manual domain registration never accesses Cloudflare and keeps the application port', async () => {
   let port; const queries = [];
   const api = load('lib/cloudflare.ts', {
+    '@/lib/managed-servers': {ensureManagedServers:async()=>{}},
     '@/lib/api': { ApiError }, '@/lib/secret-crypto': { decryptSecret: () => { throw new Error('Cloudflare access is forbidden in manual mode'); } },
     '@/lib/caddy': { updateCaddyStrict: async (_name, value) => { port = value; } },
     '@/lib/db': { query: async (sql, values) => { queries.push([sql, values]); return { rows: sql.startsWith('select name,port') ? [{ name: 'Fixture', port: 3117 }] : sql.includes('returning id') ? [{ id: 'domain' }] : [] }; } },
@@ -51,6 +52,7 @@ test('manual domain registration never accesses Cloudflare and keeps the applica
 test('domain ownership conflicts fail before Caddy is changed', async () => {
   let writes = 0;
   const api = load('lib/cloudflare.ts', {
+    '@/lib/managed-servers': {ensureManagedServers:async()=>{}},
     '@/lib/api': { ApiError }, '@/lib/secret-crypto': {}, '@/lib/caddy': { updateCaddyStrict: async () => writes++ },
     '@/lib/db': { query: async sql => ({ rows: sql.startsWith('select name,port') ? [{ name: 'Fixture', port: 3117 }] : sql.includes('union all') ? [{ id: 'other' }] : [] }) },
   });
@@ -64,6 +66,7 @@ test('an unmanaged Cloudflare record is never overwritten', async t => {
   t.after(() => { global.fetch = originalFetch; });
   global.fetch = async (url, init) => { requests.push({ url, method: init?.method || 'GET' }); return Response.json({ success: true, result: url.includes('/dns_records') ? [{ id: 'unmanaged-record' }] : [{ id: 'zone', name: 'example.com' }] }); };
   const api = load('lib/cloudflare.ts', {
+    '@/lib/managed-servers': {ensureManagedServers:async()=>{}},
     '@/lib/api': { ApiError }, '@/lib/secret-crypto': { decryptSecret: () => 'fixture-token' }, '@/lib/caddy': { updateCaddyStrict: async () => caddyWrites++ },
     '@/lib/db': { query: async sql => ({ rows: sql.startsWith('select name,port') ? [{ name: 'Fixture', port: 3117 }] : sql.includes('select cc.*') ? [{ id: 'connection', token_ciphertext: 'fixture' }] : [] }) },
   });

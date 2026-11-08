@@ -12,7 +12,9 @@ export interface RemoteMetrics {
   uptime: number
   addresses: string[]
   tools: { node: string; git: string | null; pm2: string | null; caddy: string | null } & Record<string, string | null>
-  apps: { id: string; status: string; cpu: number; memory: number }[]
+  apps: { id: string; status: string; cpu: number; memory: number; uptime?: number|null; restarts?: number; pid?:number|null; logBytes?:number; check?:{ok:boolean;status:number|null;ms:number;reason:string}|null }[]
+  pm2Error?:boolean
+  caddy?:{mode:string;status:string;configPath:string;version:string}|null
   proxyError?: string | null
   capabilities?: string[]
 }
