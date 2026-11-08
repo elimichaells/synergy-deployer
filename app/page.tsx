@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { serverStatusColor, serverStatusLabel, useServerDirectory } from '@/components/infrastructure/server-directory'
 import { recentServerKey, serverOverview } from '@/lib/server-navigation'
 import { useWorkspace } from '@/components/layout/workspace-provider'
+import { RemoveServerDialog } from '@/components/infrastructure/remove-server-dialog'
 
 function ServerChooser() {
   const { data, error, refresh } = useServerDirectory()
@@ -52,7 +53,7 @@ function ServerChooser() {
         <p className="truncate text-xs text-muted-foreground">{data?.local?.hostname || 'The server running Synergy'}{data?.local?.platform && ` · ${data.local.platform === 'win32' ? 'Windows' : 'Linux'}`}</p>
         <span className="mt-auto flex items-center justify-between border-t border-border pt-2.5 text-xs font-medium">Open overview<ArrowRight className="h-3.5 w-3.5" /></span>
       </Link>}
-      {servers.map(server => <Link key={server.id} href={serverOverview(server.id)} className="syn-tile flex min-w-0 flex-col gap-3 p-4">
+      {servers.map(server => <div key={server.id} className="syn-tile flex min-w-0 flex-col"><Link href={serverOverview(server.id)} className="flex min-w-0 flex-1 flex-col gap-3 p-4">
         <div className="flex items-center gap-2.5">
           <span className="workspace-tab-icon is-remote"><Server className="h-4 w-4" /></span>
           <h3 className="min-w-0 flex-1 truncate text-sm font-semibold" title={server.name}>{server.name}</h3>
@@ -60,7 +61,7 @@ function ServerChooser() {
         </div>
         <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"><span className="shrink-0">{server.platform === 'win32' ? 'Windows' : 'Linux'}</span><span aria-hidden="true">·</span><MapPin className="h-3 w-3 shrink-0" /><span className="truncate" title={server.location || server.metrics?.hostname}>{server.location || server.metrics?.hostname || 'Location not set'}</span></p>
         <span className="mt-auto flex items-center justify-between gap-2 border-t border-border pt-2.5 text-xs"><span className="text-muted-foreground">{server.app_count} app{server.app_count === 1 ? '' : 's'}</span><span className="inline-flex items-center gap-2 font-medium">{server.status === 'pending' ? 'Finish setup' : server.status === 'revoked' ? 'View details' : 'Open overview'}<ArrowRight className="h-3.5 w-3.5" /></span></span>
-      </Link>)}
+      </Link>{data?.role === 'admin' && <div className="border-t border-border px-4 py-2"><RemoveServerDialog serverId={server.id} serverName={server.name} /></div>}</div>)}
       {!data && !error && <div role="status" className="flex min-h-32 items-center justify-center rounded-xl border border-border text-sm text-muted-foreground">Loading your servers…</div>}
     </div>
     {query && !showLocal && !servers.length && data && <p role="status" className="rounded-xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">No servers match “{search}”. Try a name, location or address.</p>}

@@ -120,6 +120,7 @@ export async function PUT(request: Request) {
   return result({ ok: true, updated: Object.keys(body) })
 }
 export async function DELETE(request: Request) {
+  const remote = await remoteServersFixture(request); if (remote) return remote
   const pathname = new URL(request.url).pathname
   if (pathname.endsWith('/related')) state.grouped = false
   if (/\/data-services\/[^/]+$/.test(pathname) || /\/data\/migrations\/[^/]+$/.test(pathname)) {

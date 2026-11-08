@@ -23,6 +23,19 @@ export async function remoteServersFixture(request: Request) {
   const pathname = new URL(request.url).pathname
   if (!pathname.startsWith('/api/servers')) return null
   const parts = pathname.slice('/api/servers'.length).split('/').filter(Boolean)
+  if(parts[1]==='removal') {
+    const server=state.servers.find(item=>item.id===parts[0])
+    if(!server)return NextResponse.json({error:'Server not found'},{status:404})
+    const applications=state.apps.filter(item=>item.server_id===server.id),requiresConfirmation=!!server.enrolled_at||!!applications.length
+    const review={server:{...server,enrolled:!!server.enrolled_at},applications:applications.map(item=>({...item,environment_name:'production'})),domains:[],queuedOperations:0,history:{jobs:1,agentUpdates:0,serviceOperations:0},requiresConfirmation,blockers:[],reviewToken:'synthetic-review'}
+    if(request.method==='GET')return NextResponse.json(review)
+    if(request.method==='DELETE'){
+      const body=await request.json()
+      if(body.reviewToken!==review.reviewToken || (requiresConfirmation && (body.confirmationName!==server.name||body.acknowledged!==true)))return NextResponse.json({error:'Review and confirm removal'},{status:400})
+      state.servers=state.servers.filter(item=>item.id!==server.id);state.apps=state.apps.filter(item=>item.server_id!==server.id)
+      return NextResponse.json({ok:true})
+    }
+  }
   if(parts[1]==='infrastructure') {
     if(parts[2]==='services')return NextResponse.json([{id:appId,name:'manager-remote-fixture',displayName:app.name,status:'online',uptime:Date.now()-86400000,cpu:4,memory:256,restarts:1}])
     if(parts[2]==='caddy')return NextResponse.json({mode:'shared',status:'running',configPath:'/etc/caddy/Caddyfile',version:'2.10'})

@@ -1,6 +1,6 @@
 import { isIP } from 'node:net'
 import { ApiError } from './api'
-import { query } from './db'
+import { db, query } from './db'
 import { randomUUID } from 'node:crypto'
 import { cfRequest,ensureCloudflareSchema,getZone,hostname,secretConnection,zoneSsl } from './cloudflare'
 import { decryptSecret } from './secret-crypto'
@@ -84,9 +84,16 @@ async function deleteDomain(serverId:string,id:string,userId:string){
 
 async function locked<T>(serverId:string,operation:()=>Promise<T>){
   await ensureCloudflareSchema();await serverDetail(serverId)
+  const lease=await db.connect()
+  let acquired=false
+  try{
+  acquired=(await lease.query("select pg_try_advisory_lock(hashtext('manager-remote-domains'),hashtext($1)) as acquired",[serverId])).rows[0].acquired
+  if(!acquired)throw new ApiError('Another domain operation or server removal is active. Retry when it finishes.',409)
+  await serverDetail(serverId)
   const owner=randomUUID(),lock=await query("insert into remote_domain_operations(server_id,owner,expires_at) values($1,$2,now()+interval '3 minutes') on conflict(server_id) do update set owner=excluded.owner,expires_at=excluded.expires_at where remote_domain_operations.expires_at<now() returning owner",[serverId,owner])
   if(!lock.rowCount)throw new ApiError('Another domain operation is active on this server. Interrupted operations can be retried after three minutes.',409)
   try{return await operation()}finally{await query('delete from remote_domain_operations where server_id=$1 and owner=$2',[serverId,owner])}
+  }finally{try{if(acquired)await lease.query("select pg_advisory_unlock(hashtext('manager-remote-domains'),hashtext($1))",[serverId])}finally{lease.release()}}
 }
 export const createRemoteDomain=(serverId:string,input:Record<string,unknown>,userId:string)=>locked(serverId,()=>createDomain(serverId,input,userId))
 export const syncRemoteDomain=(serverId:string,id:string,userId:string)=>locked(serverId,()=>syncDomain(serverId,id,userId))
