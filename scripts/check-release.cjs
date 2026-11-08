@@ -5,6 +5,7 @@ const manifest=JSON.parse(fs.readFileSync(path.join(root,'package.json'))),lock=
 if(!/^\d+\.\d+\.\d+$/.test(manifest.version)||lock.version!==manifest.version||lock.packages?.['']?.version!==manifest.version)throw Error('Release versions do not match');
 const tag=process.argv.slice(2).find(arg=>arg!=='--write');
 if(tag&&tag!=='v'+manifest.version)throw Error('Release tag does not match package version');
+if(!fs.existsSync(path.join(root,'docs','releases',manifest.version+'.md')))throw Error('Versioned release notes are missing');
 if(git('status','--porcelain'))throw Error('Release requires a clean source checkout');
 const metadata={version:manifest.version,sourceCommit:git('rev-parse','HEAD'),sourceDirty:false};
 if(process.argv.includes('--write'))fs.writeFileSync(path.join(root,'release-source.json'),JSON.stringify(metadata,null,2)+'\n');
