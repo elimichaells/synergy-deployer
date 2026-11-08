@@ -2,13 +2,13 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { spawn } from 'node:child_process'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { ApiError } from './api'
 import { audit } from './audit'
 import * as S from '@/scripts/manager-update-state.cjs'
 import * as P from '@/scripts/manager-update-package.cjs'
+import { startWorker } from '@/scripts/manager-update-launch.cjs'
 
 const version = process.env.NEXT_PUBLIC_MANAGER_VERSION || '2.21.0'
 const assetName = () => `manager-update-${process.platform}-${process.arch}-node${process.versions.node.split('.')[0]}.tar`
@@ -37,12 +37,6 @@ export async function latestRelease() {
   const expected = `https://github.com/${P.REPOSITORY}/releases/download/v${next}/${assetName()}`
   if (asset && (asset.browser_download_url !== expected || asset.size > P.MAX_PACKAGE)) throw new ApiError('Unexpected GitHub release asset',502)
   return { version: next, newer, available: !!asset && newer, url: `https://github.com/${P.REPOSITORY}/releases/tag/v${next}`, notes: String(release.body || '').slice(0,20000), publishedAt: release.published_at, asset: asset ? { url: expected, size: asset.size } : null }
-}
-function startWorker(c: S.UpdateConfig) {
-  const worker = path.join(c.stateRoot,'runner/manager-update-worker.cjs')
-  const child = spawn(c.nodeExe,[worker,path.join(c.managerRoot,'.manager-updater.json'),'run'],{cwd:c.stateRoot,detached:true,windowsHide:true,stdio:'ignore',env:{...process.env,MANAGER_PREVIEW:'0'}})
-  child.on('error', () => { /* The independent recovery task will pick up the queued job. */ })
-  child.unref()
 }
 async function createJob(source: string, userId: string) {
   const c=registration(), existing=S.currentJob(c)
