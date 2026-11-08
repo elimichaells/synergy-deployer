@@ -1,6 +1,7 @@
 import type { RemoteMetrics } from '../lib/managed-server-types'
 export const PROTOCOL_VERSION: number
 export const AGENT_VERSION: string
+export function toolVersion(id:string):Promise<string>
 export const SETUP_CAPABILITY: string
 export const UPDATE_CAPABILITY: string
 export const CONSOLE_CAPABILITY: string

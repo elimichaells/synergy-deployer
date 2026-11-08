@@ -12,7 +12,7 @@ const { randomBytes, X509Certificate, createHash } = require('node:crypto');
 const { rootCertificates } = require('node:tls');
 const { createInterface } = require('node:readline/promises');
 const PROTOCOL_VERSION = 1;
-const AGENT_VERSION = '1.5.0';
+const AGENT_VERSION = '1.5.1';
 const CONSOLE_CAPABILITY = 'remote-console-v1';
 const RUNTIME_CAPABILITY = 'runtime-versions-v1';
 const SETUP_CAPABILITY = 'guided-setup-v1';
@@ -22,7 +22,16 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 let configuredTools = {};
 const inheritedToolPath = process.env.Path || process.env.PATH || '';
 const executable = name => configuredTools[name] || name;
-const toolVersion = id => process.platform==='win32'&&id==='composer'&&/\.(cmd|bat)$/i.test(executable(id)) ? run(process.env.ComSpec||'cmd.exe',['/d','/s','/c','"'+executable(id)+'" --version']) : run(executable(id),[id==='go'?'version':'--version'],{timeout:10000});
+const toolVersion = id => {
+  if (process.platform==='win32' && id==='composer' && /\.(cmd|bat)$/i.test(executable(id))) {
+    // Let cmd expand the literal path once. Node's default argument escaping
+    // adds backslashes around quotes, which cmd treats as part of the filename.
+    return run(process.env.ComSpec||'cmd.exe',['/d','/v:off','/s','/c','""%MANAGER_TOOL_VERSION_PATH%" --version"'],{
+      windowsVerbatimArguments:true,timeout:10000,env:{...baseEnv(),MANAGER_TOOL_VERSION_PATH:executable(id)}
+    });
+  }
+  return run(executable(id),[id==='go'?'version':'--version'],{timeout:10000});
+};
 async function loadToolPaths(root) {
   const paths = await readJson(path.join(root,'tool-paths.json'),{});
   const allowed = ['node','git','caddy','pm2','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer'];
@@ -241,7 +250,8 @@ function run(file, args = [], options = {}) {
     if(options.signal?.aborted){reject(new Error('Command cancelled'));return;}
     let output = '', settled = false, timedOut = false;
     const child = spawn(file, args, { cwd: options.cwd, env: options.env || baseEnv(), shell: !!options.shell,
-      detached: process.platform !== 'win32', windowsHide: true, stdio: [options.input === undefined ? 'ignore' : 'pipe','pipe','pipe'] });
+      detached: process.platform !== 'win32', windowsHide: true, windowsVerbatimArguments: !!options.windowsVerbatimArguments,
+      stdio: [options.input === undefined ? 'ignore' : 'pipe','pipe','pipe'] });
     if (child.stdin) { child.stdin.on('error', () => {}); child.stdin.end(options.input); }
     const emit = text => { output = (output + text).slice(-262144); options.log?.(text); };
     const stdout = streamRedactor(options.secrets || [], emit), stderr = streamRedactor(options.secrets || [], text=>{if(!options.stdoutOnly)emit(text);else options.log?.(text);});
@@ -984,5 +994,5 @@ async function main(){
   if(action==='check-tools')await checkConfiguredTools(root);else if(action==='enroll')await enrollCli(root,options);else await runAgent(root);
 }
 
-module.exports={validateRuntimeSelection,RUNTIME_CAPABILITY,validateRuntimeVersions,runtimeEnvironment,installedRuntimeVersions,CONSOLE_CAPABILITY,consoleJob,PROTOCOL_VERSION,AGENT_VERSION,SETUP_CAPABILITY,UPDATE_CAPABILITY,validateApp,sanitizeMetrics,redact,streamRedactor,caddyConfig,managerAddress,contained,run,request,deploy,restoreActivation,healthy,atomicJson,readJson,enrollCli,detectFramework,inspectRepository,validateDatabase,databaseEnvironment,setupDatabase,validateSetup,jobSecrets,findStaticRoot,serveStatic,loadToolPaths,checkConfiguredTools,privatePm2Environment,findTools,proxyConfig,sharedProxySettings,sharedProxyState,configDigest};
+module.exports={toolVersion,validateRuntimeSelection,RUNTIME_CAPABILITY,validateRuntimeVersions,runtimeEnvironment,installedRuntimeVersions,CONSOLE_CAPABILITY,consoleJob,PROTOCOL_VERSION,AGENT_VERSION,SETUP_CAPABILITY,UPDATE_CAPABILITY,validateApp,sanitizeMetrics,redact,streamRedactor,caddyConfig,managerAddress,contained,run,request,deploy,restoreActivation,healthy,atomicJson,readJson,enrollCli,detectFramework,inspectRepository,validateDatabase,databaseEnvironment,setupDatabase,validateSetup,jobSecrets,findStaticRoot,serveStatic,loadToolPaths,checkConfiguredTools,privatePm2Environment,findTools,proxyConfig,sharedProxySettings,sharedProxyState,configDigest};
 if(require.main===module)main().catch(error=>{console.error(error.message);process.exitCode=1;});
