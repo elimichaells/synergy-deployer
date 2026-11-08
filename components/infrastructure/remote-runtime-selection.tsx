@@ -1,0 +1,9 @@
+'use client'
+import { useEffect,useState } from 'react'
+import Link from 'next/link'
+export function RemoteRuntimeSelection({serverId,value,onChange}:{serverId:string;value:Record<string,string>;onChange:(value:Record<string,string>)=>void}){
+  const [error,setError]=useState('')
+  const [items,setItems]=useState<{id:string;name:string;version:string|null;installedVersions:string[]}[]>([])
+  useEffect(()=>{let cancelled=false;void fetch(`/api/servers/${serverId}/runtimes`,{cache:'no-store'}).then(async r=>{const v=await r.json();if(!r.ok)throw Error(v.error);return v}).then(v=>{if(!cancelled)setItems((v.runtimes||[]).filter((r:{versioned:boolean})=>r.versioned))}).catch(e=>{if(!cancelled)setError(e.message)});return()=>{cancelled=true}},[serverId])
+  return <div className="space-y-3 rounded-lg border border-border p-4"><p className="text-sm font-medium">Application runtime versions</p><p className="text-xs text-muted-foreground">Pins apply to this application’s next build, start command and console. Other applications and the server default are unchanged.</p><div className="grid gap-3 sm:grid-cols-3">{items.map(item=><label className="field-label" key={item.id}>{item.name}<select className="control-input" value={value[item.id]||''} onChange={e=>{const next={...value};if(e.target.value)next[item.id]=e.target.value;else delete next[item.id];onChange(next)}}><option value="">Server default</option>{[...new Set([...item.installedVersions,...(value[item.id]?[value[item.id]]:[])])].map(version=><option key={version} value={version}>{version}{item.installedVersions.includes(version)?'':' · unavailable'}</option>)}</select></label>)}</div>{error&&<p className="text-xs text-destructive">{error}</p>}<Link className="text-xs underline" href={`/infrastructure/servers/${serverId}?section=runtimes#server-access`}>Install and manage versions on this server</Link></div>
+}

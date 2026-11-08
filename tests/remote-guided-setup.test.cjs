@@ -96,6 +96,19 @@ test('guided setup routes enforce administrator mutations, protected environment
   assert.equal((await route.POST(request(),context(['id','apps','import']))).status,201);assert.equal(calls,1);
 });
 
+test('the environment editor loads legacy and guided apps only from the requested server', async () => {
+  const records = [{id:'legacy',server_id:'one',guided_setup:false,env_ciphertext:'legacy-encrypted'}, {id:'guided',server_id:'two',guided_setup:true,env_ciphertext:'guided-encrypted'}];
+  const setup = load('lib/remote-app-setup.ts', {
+    '@/lib/db':{query:async(sql,[id,server])=>({rows:records.filter(row=>row.id===id && row.server_id===server && (!sql.includes('guided_setup=true') || row.guided_setup))})},
+    '@/lib/api':{ApiError},'@/lib/audit':{},'@/lib/secret-crypto':{decryptSecret:value=>JSON.stringify({API_KEY:value})},
+    '@/lib/github-connections':{},'@/lib/git-provider-policy':{},'@/lib/managed-servers':{ensureManagedServers:async()=>{},uuid:value=>value},
+    '@/scripts/manager-agent.cjs':{},'@/lib/remote-setup-policy':{},'@/lib/project-setup-policy':{},
+  });
+  assert.deepEqual(await setup.remoteSetupEnvironment('one','legacy'),{environment:{API_KEY:'legacy-encrypted'}});
+  assert.deepEqual(await setup.remoteSetupEnvironment('two','guided'),{environment:{API_KEY:'guided-encrypted'}});
+  await assert.rejects(setup.remoteSetupEnvironment('two','legacy'),error=>error.status===404);
+});
+
 test('real database: import modes, setup reports, per-server isolation, provisioning and deployment gates',{skip:!process.env.MANAGER_GUIDED_PG_LAB},async t=>{
   const url=new URL(process.env.MANAGER_REMOTE_TEST_DATABASE_URL);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.port,'55439');assert.match(url.pathname,/^\/manager_remote_test_/);
   const {Pool}=require('pg');const pool=new Pool({connectionString:url.href,max:10});t.after(()=>pool.end());

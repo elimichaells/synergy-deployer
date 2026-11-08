@@ -1,5 +1,5 @@
 import { serverOverview, serverScope } from '@/lib/server-navigation'
-import { Boxes, Cpu, Database, Gauge, Globe2, HardDrive, MemoryStick, Rocket, Server, Settings, ShieldCheck, Workflow, Wrench } from 'lucide-react'
+import { Boxes, Cpu, Database, Gauge, Globe2, HardDrive, MemoryStick, Rocket, Server, Settings, ShieldCheck, Terminal, Workflow, Wrench } from 'lucide-react'
 
 /** Top-level navigation. `matches` lists every route prefix a tab owns. */
 export const navItems = [
@@ -54,6 +54,7 @@ export function workspaceInfrastructureItems(pathname: string) {
     { href: `${root}#domains`, label: 'Domains & DNS', icon: Globe2, description: 'Application hostnames, IP access and Caddy HTTPS' },
     { href: `${root}?section=processes#server-access`, label: 'Processes', icon: Cpu, description: 'Application processes reported by this server' },
     { href: `${root}?section=runtimes#server-access`, label: 'Runtimes & tools', icon: Wrench, description: 'Installed tools reported by the agent' },
+    { href: `${root}?section=console#server-access`, label:'Server console', icon:Terminal, description:'Audited commands on this server' },
     { href: `${root}?section=agent#server-access`, label: 'Agent access & updates', icon: ShieldCheck, description: 'Connection, safe agent updates and enrollment' },
   ]
 }

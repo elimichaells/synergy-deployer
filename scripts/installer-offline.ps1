@@ -146,7 +146,7 @@ function Initialize-ManagerOfflineControlPostgres([string]$Bin, [string]$Data, [
     & icacls.exe $passwordFile /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
     if ($LASTEXITCODE -ne 0) { Remove-Item -LiteralPath $passwordFile -Force; throw 'Failed to secure PostgreSQL password file' }
     try {
-        Invoke-Native (Join-Path $Bin 'initdb.exe') @('-D',$Data,'-U',$User,'--encoding=UTF8','--auth-host=scram-sha-256','--auth-local=scram-sha-256',('--pwfile=' + $passwordFile)) 'Initialize offline control PostgreSQL'
+        Invoke-Native (Join-Path $Bin 'initdb.exe') @('-D',$Data,'-U',$User,'--encoding=UTF8','--auth-host=scram-sha-256','--auth-local=scram-sha-256',('--pwfile=' + $passwordFile)) 'Initialize control PostgreSQL'
     } finally { Remove-Item -LiteralPath $passwordFile -Force }
     Add-Content -LiteralPath (Join-Path $Data 'postgresql.conf') -Value ("`r`nlisten_addresses = '127.0.0.1'`r`nport = " + $Port + "`r`npassword_encryption = 'scram-sha-256'")
     & icacls.exe $Data /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-20:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
@@ -158,5 +158,5 @@ function Initialize-ManagerOfflineControlPostgres([string]$Bin, [string]$Data, [
         if ($LASTEXITCODE -eq 0) { return }
         Start-Sleep -Seconds 1
     }
-    throw 'Offline control PostgreSQL did not become ready'
+    throw 'Control PostgreSQL did not become ready'
 }

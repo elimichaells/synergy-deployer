@@ -45,6 +45,9 @@ test('fresh-server preflight rejects unsafe paths and conflicting listeners with
       CheckBlocked { Assert-ManagerInstallPaths $manager $web (Join-Path $manager 'package') } '*nested*'
       CheckBlocked { Assert-ManagerInstallPaths (Join-Path $source 'installed') $web $source } '*nested*'
       CheckBlocked { Assert-ManagerInstallPaths ${quote(existing)} $web $source } '*preserve existing encryption keys*'
+      New-Item -ItemType Directory -Path $web -Force | Out-Null
+      Set-Content -LiteralPath (Join-Path $web 'Caddyfile') -Value 'existing.example.test { respond "preserve" }'
+      CheckBlocked { Assert-ManagerInstallPaths $manager $web $source } '*will not replace existing sites*'
       function Get-NetTCPConnection { param($State, $LocalPort, $ErrorAction) if ($LocalPort -eq $script:occupied) { [pscustomobject]@{ LocalPort=$LocalPort } } }
       $script:occupied = 0
       Assert-ManagerInstallPorts 4000 5432 $true 5433 $true $false
@@ -52,6 +55,11 @@ test('fresh-server preflight rejects unsafe paths and conflicting listeners with
         CheckBlocked { Assert-ManagerInstallPorts $port 5432 $true 5433 $true $false } '*conflicts*'
       }
       CheckBlocked { Assert-ManagerInstallPorts 0 5432 $true 5433 $true $false } '*between 1 and 65535*'
+      foreach ($port in @(80,443,8432,8433)) {
+        CheckBlocked { Assert-ManagerInstallPorts 4000 $port $false 5433 $true $true } '*PostgreSQL port conflicts*'
+        CheckBlocked { Assert-ManagerInstallPorts 4000 5432 $true $port $true $true } '*PostgreSQL port conflicts*'
+      }
+      Assert-ManagerInstallPorts 4000 8432 $false 5433 $false $false
       foreach ($port in @(4000,80,443,8432,8433)) {
         $script:occupied = $port
         CheckBlocked { Assert-ManagerInstallPorts 4000 5432 $true 5433 $true $true } '*already in use*'
@@ -62,7 +70,7 @@ test('fresh-server preflight rejects unsafe paths and conflicting listeners with
     `);
     assert.match(result, /PASS/);
     assert.equal(fs.readFileSync(path.join(existing, '.env.local'), 'utf8'), 'MANAGER_ENCRYPTION_KEY=preserve-me');
-    assert.deepEqual(fs.readdirSync(root), ['existing']);
+    assert.equal(fs.readFileSync(path.join(root,'web','Caddyfile'),'utf8').trim(),'existing.example.test { respond "preserve" }');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

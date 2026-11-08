@@ -9,10 +9,12 @@ import { remoteAppHref, remoteDeployment, remoteProcessState } from '@/lib/remot
 import { Activity, ArrowRight, Database, Globe2, Rocket } from 'lucide-react'
 import Link from 'next/link'
 import { RemoteAppSetup } from './remote-app-setup'
+import { RemoteAppForm } from './remote-app-form'
+import { RemoteConsole } from './remote-console'
 
-export function RemoteApplicationWorkspace({ server, app, apps, jobs, tab, now, fresh, admin, deployer, onTab, onChanged, onDirtyChange, onDeploy, onEdit }: {
+export function RemoteApplicationWorkspace({ server, app, apps, jobs, tab, now, fresh, admin, deployer, onTab, onChanged, onDirtyChange, onDeploy }: {
   server: ManagedServer; app: RemoteApp; apps: RemoteApp[]; jobs: RemoteJob[]; tab: string; now: number; fresh: boolean; admin: boolean; deployer: boolean
-  onTab: (tab: string) => void; onChanged: () => void; onDirtyChange: (dirty: boolean) => void; onDeploy: () => Promise<void>; onEdit: () => void
+  onTab: (tab: string) => void; onChanged: () => void; onDirtyChange: (dirty: boolean) => void; onDeploy: () => Promise<void>
 }) {
   const history = jobs.filter(job => job.app_id === app.id).map(job => remoteDeployment(job, apps))
   const live = history.find(job => job.is_active) || null
@@ -21,13 +23,17 @@ export function RemoteApplicationWorkspace({ server, app, apps, jobs, tab, now, 
   const url = app.hostname.endsWith('.invalid') ? null : `https://${app.hostname}`
   const related = apps.filter(item => item.id !== app.id && (item.production_id || item.id) === (app.production_id || app.id))
   const section = ({environment:'environment',storage:'database',domains:'domain',settings:'runtime'} as const)[tab as 'environment'|'storage'|'domains'|'settings']
-  if (tab === 'setup' || section) return app.guided_setup ? <RemoteAppSetup key={`${app.id}:${tab}`} server={server} appId={app.id} section={section} canWrite={admin} canDeploy={deployer} onChanged={onChanged} onDirtyChange={onDirtyChange} onDeploy={onDeploy} /> : <Section title={tab === 'storage' ? 'Databases' : 'Application settings'} description="This application was created with the earlier configuration form."><p className="text-sm text-muted-foreground">Its existing configuration is preserved. Use Edit settings to manage its commands, environment variables and hostname.</p>{admin && server.enabled && <Button className="mt-4" variant="outline" onClick={onEdit}>Edit settings</Button>}</Section>
+  if (tab === 'setup' || section) {
+    if (app.guided_setup) return <RemoteAppSetup key={`${app.id}:${tab}`} server={server} appId={app.id} section={section} canWrite={admin} canDeploy={deployer} onChanged={onChanged} onDirtyChange={onDirtyChange} onDeploy={onDeploy} />
+    if (tab === 'storage') return <Section title="Databases" description="This application uses connection variables to reach its database."><p className="text-sm text-muted-foreground">Manage its database address and credentials in Environment. Database provisioning requires an application imported with guided setup.</p><Button className="mt-4" variant="outline" onClick={() => onTab('environment')}>Open environment</Button></Section>
+    return <RemoteAppForm key={`${app.id}:${tab}`} serverId={server.id} platform={server.platform} app={app} section={tab === 'environment' || tab === 'domains' ? tab : 'settings'} canWrite={admin && server.enabled} onSaved={onChanged} onDirtyChange={onDirtyChange} />
+  }
   if (tab === 'deployments') return <DeploymentHistory deployments={history} now={now} projectsHref={`/infrastructure/servers/${server.id}#applications`} />
-  if (tab === 'logs' || tab === 'console') return <Section title="Logs & console" description="Runtime tools for this application."><p className="text-sm leading-6 text-muted-foreground">This agent currently reports deployment logs and process health. Streaming runtime logs and interactive commands are not available through it yet.</p><Button className="mt-4" variant="outline" onClick={() => onTab('deployments')}>View deployment logs</Button></Section>
+  if (tab === 'logs' || tab === 'console') return <RemoteConsole server={server} appId={app.id} admin={admin} />
   return <div className="space-y-6">
     {!!related.length && <div className="flex flex-wrap gap-2">{related.map(item => <Button key={item.id} variant="outline" size="sm" asChild><Link href={remoteAppHref(server.id,item.id)}>Open {item.environment_name}</Link></Button>)}</div>}
     {needsSetup ? <div className="relative overflow-hidden rounded-xl border border-border bg-well p-8"><div className="syn-canvas pointer-events-none absolute inset-0 opacity-70" /><div className="relative flex flex-wrap items-center justify-between gap-6"><div className="flex items-center gap-4"><FrameworkAvatar type={app.project_type} size="lg" /><div><p className="text-xl font-semibold tracking-tight">Finish setting up {app.name}</p><p className="mt-1 text-sm text-muted-foreground">A few more steps (database, environment and domain), then your first deployment.</p></div></div><Button onClick={() => onTab('setup')}>Continue setup<ArrowRight className="ml-1.5 h-4 w-4" /></Button></div></div>
-      : <ApplicationRelease project={{project_type:app.project_type || 'node',default_branch:app.branch,repo_url:app.repo_url}} live={live} unlistedRelease={!live && app.live_commit ? {commit:app.live_commit,releasedAt:app.deployed_at} : undefined} primaryUrl={url} address={url ? app.hostname : null} hasRunningDeploy={active} clock={now} runtimeLogs={false} changeTab={onTab}
+      : <ApplicationRelease project={{project_type:app.project_type || 'node',default_branch:app.branch,repo_url:app.repo_url}} live={live} unlistedRelease={!live && app.live_commit ? {commit:app.live_commit,releasedAt:app.deployed_at} : undefined} primaryUrl={url} address={url ? app.hostname : null} hasRunningDeploy={active} clock={now} runtimeLogs={server.metrics?.capabilities?.includes('remote-console-v1')===true} changeTab={onTab}
         statusLabel={active ? 'Deploying…' : !app.live_commit ? 'Not deployed yet' : status.label}
         statusHint={active ? 'Building on this server. Activation is followed by a health check and automatic recovery on failure.' : !app.live_commit ? 'Deploy to put the first release live.' : fresh ? `Agent process status: ${status.label.toLowerCase()}. HTTP readiness is checked at deployment time.` : 'Fresh process status is unavailable. Check this server’s Infrastructure page.'} />}
     <Section title="At a glance" description="How this application is running, in plain language."><div className="divide-y divide-border">

@@ -8,15 +8,64 @@ const path = require('node:path');
 const os = require('node:os');
 const net = require('node:net');
 const { spawn } = require('node:child_process');
-const { randomBytes, X509Certificate } = require('node:crypto');
+const { randomBytes, X509Certificate, createHash } = require('node:crypto');
 const { rootCertificates } = require('node:tls');
 const { createInterface } = require('node:readline/promises');
 const PROTOCOL_VERSION = 1;
-const AGENT_VERSION = '1.2.0';
+const AGENT_VERSION = '1.5.0';
+const CONSOLE_CAPABILITY = 'remote-console-v1';
+const RUNTIME_CAPABILITY = 'runtime-versions-v1';
 const SETUP_CAPABILITY = 'guided-setup-v1';
 const UPDATE_CAPABILITY = 'agent-update-v1';
 const ID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+let configuredTools = {};
+const inheritedToolPath = process.env.Path || process.env.PATH || '';
+const executable = name => configuredTools[name] || name;
+const toolVersion = id => process.platform==='win32'&&id==='composer'&&/\.(cmd|bat)$/i.test(executable(id)) ? run(process.env.ComSpec||'cmd.exe',['/d','/s','/c','"'+executable(id)+'" --version']) : run(executable(id),[id==='go'?'version':'--version'],{timeout:10000});
+async function loadToolPaths(root) {
+  const paths = await readJson(path.join(root,'tool-paths.json'),{});
+  const allowed = ['node','git','caddy','pm2','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer'];
+  if(!paths || typeof paths!=='object' || Array.isArray(paths))throw new Error('Invalid tool path configuration');
+  for(const [id,file] of Object.entries(paths)) {
+    if(!allowed.includes(id)||typeof file!=='string'||!path.isAbsolute(file)||/[\x00-\x1f\x7f]/.test(file)||(process.platform==='win32'?file.slice(2):file).includes(path.delimiter))throw new Error('Invalid configured tool path: '+id);
+    if(!(await fs.stat(file)).isFile())throw new Error('Configured tool is not a file: '+id);
+    await fs.access(file,process.platform==='win32'?undefined:require('node:fs').constants.R_OK | require('node:fs').constants.X_OK);
+  }
+  configuredTools = paths;
+  // Commands inside app build scripts see the same selected runtimes after a reboot.
+  const dirs = [...new Set(Object.entries(paths).filter(([id])=>id!=='pm2').map(([,file])=>path.dirname(file)))];
+  const key = Object.keys(process.env).find(key=>key.toLowerCase()==='path') || 'PATH';
+  process.env[key] = [...new Set([...dirs,...inheritedToolPath.split(path.delimiter)].filter(Boolean))].join(path.delimiter);
+  return paths;
+}
+
+async function checkConfiguredTools(root) {
+  try {
+    await loadToolPaths(root);
+    if(Number(process.versions.node.split('.')[0])<22)throw new Error('Node.js 22 or later is required');
+    for(const [id,args,signature] of [['git',['--version'],/^git version 2\./],['caddy',['version'],/^v?2\./]]) {
+      const version = await run(executable(id),args,{timeout:10000});
+      if(!signature.test(version))throw new Error('Unsupported '+id+' executable');
+    }
+    for(const id of ['psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer']) {
+      if(configuredTools[id])await toolVersion(id);
+    }
+    const pm2 = configuredTools.pm2 || path.join(root,'tools','node_modules','pm2','bin','pm2');
+    await fs.access(pm2);
+    const real = await fs.realpath(pm2);
+    const pkg = await readJson(path.join(path.dirname(path.dirname(real)),'package.json'));
+    if(pkg?.name!=='pm2'||!/^\d+\.\d+\.\d+/.test(pkg.version || '')||Number(pkg.version.split('.')[0])<5)throw new Error('PM2 5 or later is required');
+    const pmEnv=await privatePm2Environment(root,pm2);
+    await run(process.execPath,['-e','require('+JSON.stringify(path.dirname(path.dirname(real)))+')'],{env:pmEnv,timeout:15000});
+    const shared=await sharedProxySettings(root);
+    if(shared)await sharedProxyState(root,executable('caddy'),shared);
+    await atomicJson(path.join(root,'tool-check.json'),{ok:true,at:new Date().toISOString()});
+  } catch(error) {
+    await atomicJson(path.join(root,'tool-check.json'),{ok:false,error:error.message,at:new Date().toISOString()});
+    throw error;
+  }
+}
 
 function requireText(value, label, max = 200) {
   if (typeof value !== 'string' || !value.trim() || value.length > max || /[\x00-\x1f]/.test(value)) throw new Error(`Invalid ${label}`);
@@ -66,7 +115,36 @@ function validateApp(input) {
     cleanEnv[key] = value;
   }
   if (JSON.stringify(cleanEnv).length > 65536) throw new Error('Environment exceeds 64 KB');
-  return { name, repo_url, branch, ...commands, port: appPort, health_path, access_mode: input.access_mode, hostname, ip_address, ip_port, environment: cleanEnv };
+  return { name, repo_url, branch, ...commands, port: appPort, health_path, access_mode: input.access_mode, hostname, ip_address, ip_port, environment: cleanEnv, runtime_versions:validateRuntimeVersions(input.runtime_versions) };
+}
+
+function validateRuntimeVersions(value={}) {
+  if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Runtime versions must be an object');
+  const selected={};for(const [id,version] of Object.entries(value)){
+    if(!['node','go','php'].includes(id))throw new Error('Unsupported project runtime');
+    if(version==='')continue;
+    if(typeof version!=='string'||!/^\d+\.\d+\.\d+$/.test(version))throw new Error('Invalid project runtime version');selected[id]=version;
+  }return selected;
+}
+function validateRuntimeSelection(value,metrics){
+  const selected=validateRuntimeVersions(value);
+  if(Object.keys(selected).length&&!metrics?.capabilities?.includes(RUNTIME_CAPABILITY))throw new Error('Update this server agent to enable project runtime versions');
+  for(const [id,version] of Object.entries(selected))if(!metrics.runtimeVersions?.[id]?.includes(version))throw new Error(`${id} ${version} is not reported as installed on this server`);
+  return selected;
+}
+async function runtimeEnvironment(root,selection={}) {
+  const chosen=validateRuntimeVersions(selection),registry=await readJson(path.join(root,'runtime-versions.json'),{}),dirs=[],env={};
+  for(const [id,version] of Object.entries(chosen)){
+    const file=registry[id]?.[version];if(typeof file!=='string'||!path.isAbsolute(file)||!await fs.stat(file).then(s=>s.isFile()).catch(()=>false))throw new Error(`${id} ${version} is not installed on this server`);
+    dirs.push(path.dirname(file));env['MANAGER_'+id.toUpperCase()+'_VERSION']=version;
+    if(id==='php'){env.PHPRC=path.dirname(file);env.PHP_INI_SCAN_DIR=path.join(path.dirname(file),'conf.d');}
+  }
+  if(dirs.length){const value=[...dirs,process.env.Path||process.env.PATH||''].join(path.delimiter);if(process.platform==='win32')env.Path=value;env.PATH=value;}
+  return env;
+}
+async function installedRuntimeVersions(root){
+  const registry=await readJson(path.join(root,'runtime-versions.json'),{}),result={};
+  for(const id of ['node','go','php']){result[id]=[];for(const [version,file] of Object.entries(registry[id]||{})){if(/^\d+\.\d+\.\d+$/.test(version)&&typeof file==='string'&&path.isAbsolute(file)&&await fs.stat(file).then(s=>s.isFile()).catch(()=>false))result[id].push(version)}result[id].sort((a,b)=>b.localeCompare(a,undefined,{numeric:true}));}return result;
 }
 
 function sanitizeMetrics(raw) {
@@ -77,15 +155,16 @@ function sanitizeMetrics(raw) {
   };
   const optional = value => value == null ? null : number(value);
   const str = (value, max = 200) => typeof value === 'string' ? value.replace(/[\x00-\x1f]/g, '').slice(0, max) : '';
-  const result = { hostname: str(raw.hostname), platform: raw.platform, version: str(raw.version, 30),
+  const result = { hostname: str(raw.hostname), platform: raw.platform, arch:['x64','arm64'].includes(raw.arch)?raw.arch:'x64', version: str(raw.version, 30),
+    runtimeVersions:Object.fromEntries(['node','go','php'].map(id=>[id,(Array.isArray(raw.runtimeVersions?.[id])?raw.runtimeVersions[id]:[]).filter(v=>typeof v==='string'&&/^\d+\.\d+\.\d+$/.test(v)).slice(0,100)])),
     cpuPercent: number(raw.cpuPercent, 100), memoryTotal: number(raw.memoryTotal), memoryFree: number(raw.memoryFree),
     diskTotal: optional(raw.diskTotal), diskFree: optional(raw.diskFree), uptime: number(raw.uptime),
     addresses: (Array.isArray(raw.addresses) ? raw.addresses : []).filter(x => typeof x === 'string' && net.isIP(x)).slice(0, 30),
-    tools: Object.fromEntries(['node','git','pm2','caddy'].map(key => [key, str(raw.tools?.[key]) || null])),
+    tools: Object.fromEntries(['node','git','pm2','caddy','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer'].filter(key => ['node','git','pm2','caddy'].includes(key) || Object.hasOwn(raw.tools || {},key)).map(key => [key, str(raw.tools?.[key]) || null])),
     apps: (Array.isArray(raw.apps) ? raw.apps : []).slice(0, 200).filter(x => ID.test(x.id)).map(x => ({ id: x.id,
       status: ['online','stopped','errored','launching','stopping','missing'].includes(x.status) ? x.status : 'unknown', cpu: number(x.cpu, 10000), memory: number(x.memory) })),
     proxyError: raw.proxyError ? str(raw.proxyError, 500) : null,
-    capabilities: [SETUP_CAPABILITY,UPDATE_CAPABILITY].filter(value => Array.isArray(raw.capabilities) && raw.capabilities.includes(value)) };
+    capabilities: [SETUP_CAPABILITY,UPDATE_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY].filter(value => Array.isArray(raw.capabilities) && raw.capabilities.includes(value)) };
   if (result.memoryFree > result.memoryTotal || (result.diskFree !== null && result.diskTotal !== null && result.diskFree > result.diskTotal)) throw new Error('Invalid capacity');
   return result;
 }
@@ -151,29 +230,34 @@ async function contained(root, ...segments) {
   return target;
 }
 function baseEnv() {
-  const allowed = ['PATH','Path','SystemRoot','WINDIR','ComSpec','TEMP','TMP','TMPDIR','HOME','USERPROFILE','APPDATA','LOCALAPPDATA','PROGRAMDATA','LANG','LC_ALL'];
-  return Object.fromEntries(allowed.filter(key => process.env[key]).map(key => [key,process.env[key]]));
+  const allowed = ['PATH','Path','PATHEXT','SystemRoot','SystemDrive','WINDIR','ComSpec','TEMP','TMP','TMPDIR','HOME','USERPROFILE','APPDATA','LOCALAPPDATA','PROGRAMDATA','LANG','LC_ALL'];
+  const env=Object.fromEntries(allowed.filter(key => process.env[key]).map(key => [key,process.env[key]]));
+  if(process.platform==='win32'&&!env.PATHEXT)env.PATHEXT='.COM;.EXE;.BAT;.CMD';
+  return env;
 }
 
 function run(file, args = [], options = {}) {
   return new Promise((resolve, reject) => {
+    if(options.signal?.aborted){reject(new Error('Command cancelled'));return;}
     let output = '', settled = false, timedOut = false;
     const child = spawn(file, args, { cwd: options.cwd, env: options.env || baseEnv(), shell: !!options.shell,
       detached: process.platform !== 'win32', windowsHide: true, stdio: [options.input === undefined ? 'ignore' : 'pipe','pipe','pipe'] });
     if (child.stdin) { child.stdin.on('error', () => {}); child.stdin.end(options.input); }
     const emit = text => { output = (output + text).slice(-262144); options.log?.(text); };
-    const stdout = streamRedactor(options.secrets || [], emit), stderr = streamRedactor(options.secrets || [], emit);
+    const stdout = streamRedactor(options.secrets || [], emit), stderr = streamRedactor(options.secrets || [], text=>{if(!options.stdoutOnly)emit(text);else options.log?.(text);});
     child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
     child.stdout.on('data', chunk => stdout.write(chunk)); child.stderr.on('data', chunk => stderr.write(chunk));
-    const timer = setTimeout(() => {
-      timedOut = true;
+    const kill = () => {
       if (child.pid) {
         if (process.platform === 'win32') spawn('taskkill.exe', ['/PID',String(child.pid),'/T','/F'], { windowsHide: true, stdio: 'ignore' });
         else { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }
       }
-    }, options.timeout || 120000);
+    };
+    const timer = setTimeout(() => { timedOut=true;kill(); }, options.timeout || 120000);
+    options.signal?.addEventListener('abort',kill,{once:true});
     const finish = (error, code) => {
-      if (settled) return; settled = true; clearTimeout(timer); stdout.end(); stderr.end();
+      if (settled) return; settled = true; clearTimeout(timer); options.signal?.removeEventListener('abort',kill); stdout.end(); stderr.end();
+      if(options.signal?.aborted){reject(new Error('Command cancelled'));return;}
       if (error || code !== 0 || timedOut) reject(new Error(timedOut ? 'Command exceeded its time limit' : error ? error.message : `Command exited ${code}: ${output.slice(-1500)}`));
       else resolve(output.trim());
     };
@@ -191,22 +275,43 @@ async function request(config, action, body) {
   return result;
 }
 
+async function privatePm2Environment(root,pm2,platform=process.platform) {
+  const env={...baseEnv(),PM2_HOME:path.join(root,'pm2')};
+  if(platform!=='win32')return env;
+  const marker=path.join(root,'pm2-private-pipes.json');
+  if(!await readJson(marker)&&await fs.stat(path.join(root,'pm2','pm2.pid')).catch(()=>null))throw new Error('Existing Windows agent PM2 needs an explicit private-pipe migration before continuing');
+  const packageRoot=path.dirname(path.dirname(await fs.realpath(pm2)));
+  const pathsFile=path.join(packageRoot,'paths.js');await fs.access(pathsFile);
+  const prefix='\\\\.\\pipe\\manager-agent-'+createHash('sha256').update(path.resolve(root).toLowerCase()).digest('hex').slice(0,24);
+  const hook=path.join(root,'pm2-private-pipes.cjs');
+  // PM2 5/6 overwrite pipe environment overrides on Windows. Patch only this
+  // process's module cache; the shared PM2 installation is never modified.
+  const source=`'use strict';\nconst file=${JSON.stringify(pathsFile)};const original=require(file);require.cache[require.resolve(file)].exports=function(home){const p=original(home);p.DAEMON_RPC_PORT=${JSON.stringify(prefix+'-rpc.sock')};p.DAEMON_PUB_PORT=${JSON.stringify(prefix+'-pub.sock')};p.INTERACTOR_RPC_PORT=${JSON.stringify(prefix+'-interactor.sock')};return p;};\n`;
+  await fs.writeFile(hook,source,{mode:0o600});
+  await atomicJson(marker,{prefix});
+  env.NODE_OPTIONS='--require='+JSON.stringify(hook);
+  return env;
+}
+
 async function findTools(root) {
   let pm2;
-  const localPm2 = path.join(root,'tools','node_modules','pm2','bin','pm2');
+  const localPm2 = configuredTools.pm2 || path.join(root,'tools','node_modules','pm2','bin','pm2');
   try { await fs.access(localPm2); pm2 = localPm2; } catch {
     const npmRoot = process.platform === 'win32' ? await run(process.env.ComSpec || 'cmd.exe', ['/d','/s','/c','npm root -g']) : await run('npm',['root','-g']);
     pm2 = path.join(npmRoot.trim(),'pm2','bin','pm2');
   }
   await fs.access(pm2);
-  const pmEnv = { ...baseEnv(), PM2_HOME: path.join(root,'pm2') };
+  const pmEnv = await privatePm2Environment(root,pm2);
   const pm = (args, options = {}) => run(process.execPath, [pm2, ...args], { ...options, env: pmEnv });
-  const tools = { node: process.version, git: null, pm2: null, caddy: null };
-  tools.git = await run('git',['--version']).catch(() => null);
+  const tools = { node: await run(executable('node'),['--version']).catch(()=>process.version), git: null, pm2: null, caddy: null };
+  tools.git = await run(executable('git'),['--version']).catch(() => null);
   tools.pm2 = (await pm(['--version'])).split('\n').pop();
-  const caddy = process.env.MANAGER_AGENT_CADDY || (process.platform === 'win32' ? 'caddy.exe' : 'caddy');
+  const caddy = configuredTools.caddy || process.env.MANAGER_AGENT_CADDY || (process.platform === 'win32' ? 'caddy.exe' : 'caddy');
   tools.caddy = await run(caddy,['version']).catch(() => null);
-  return { pm, caddy, tools };
+  for(const id of ['psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer']) {
+    if(configuredTools[id])tools[id] = await toolVersion(id).then(text=>text.split(/\r?\n/)[0]).catch(()=>null);
+  }
+  return { pm, caddy, tools, sharedProxy:await sharedProxySettings(root) };
 }
 
 async function processList(pm) {
@@ -239,8 +344,86 @@ async function healthy(app, timeout = 60000) {
   throw new Error(`Health check failed: ${reason}. Configure a path that returns HTTP 2xx.`);
 }
 
+function canonical(value) {
+  if(Array.isArray(value))return '['+value.map(canonical).join(',')+']';
+  if(value&&typeof value==='object')return '{'+Object.keys(value).sort().map(k=>JSON.stringify(k)+':'+canonical(value[k])).join(',')+'}';
+  return JSON.stringify(value);
+}
+const configDigest=value=>createHash('sha256').update(canonical(value)).digest('hex');
+async function sharedProxySettings(root) {
+  const value=await readJson(path.join(root,'proxy.json'));
+  if(!value)return null;
+  if(value.mode!=='existing-caddy'||typeof value.configPath!=='string'||!path.isAbsolute(value.configPath)||!/^http:\/\/127\.0\.0\.1:\d{2,5}$/.test(value.admin||'')||!/^[a-f0-9]{64}$/i.test(value.sourceHash||''))throw new Error('Invalid existing Caddy configuration');
+  if(typeof value.candidatePath!=='string'||!path.isAbsolute(value.candidatePath)||path.dirname(value.candidatePath)!==path.dirname(value.configPath)||path.basename(value.candidatePath).toLowerCase()===path.basename(value.configPath).toLowerCase())throw new Error('Existing Caddy needs a separate prepared candidate file beside its configuration');
+  const sourceStat=await fs.stat(value.configPath),candidateStat=await fs.lstat(value.candidatePath);
+  if(!candidateStat.isFile()||candidateStat.isSymbolicLink()||sourceStat.dev===candidateStat.dev&&sourceStat.ino===candidateStat.ino)throw new Error('Caddy candidate must be a separate regular file');
+  const adminPort=Number(new URL(value.admin).port);if(adminPort<1024||adminPort>65535)throw new Error('Invalid existing Caddy admin port');
+  if(!Array.isArray(value.reservedHosts)||value.reservedHosts.some(h=>typeof h!=='string')||!Array.isArray(value.reservedPorts)||value.reservedPorts.some(p=>!Number.isInteger(p)))throw new Error('Existing Caddy needs reserved host and port lists');
+  return value;
+}
+async function sharedProxyRead(settings) {
+  const response=await fetch(settings.admin+'/config/',{headers:{Origin:settings.admin},signal:AbortSignal.timeout(5000),redirect:'error'});
+  if(!response.ok||!response.headers.get('etag'))throw new Error('Existing Caddy must expose a loopback admin API with conditional updates');
+  return {config:await response.json(),etag:response.headers.get('etag')};
+}
+async function sharedProxyState(root,caddy,settings) {
+  const source=await fs.readFile(settings.configPath,'utf8');
+  if(createHash('sha256').update(source).digest('hex').toLowerCase()!==settings.sourceHash.toLowerCase())throw new Error('Existing Caddy configuration changed. Review it before deploying; it will not be overwritten.');
+  const importLine='import '+JSON.stringify(path.join(root,'managed-sites','*.caddy').replace(/\\/g,'/'));
+  if(source.split(/\r?\n/).filter(line=>line.trim()===importLine).length!==1)throw new Error('Existing Caddy must import the dedicated managed-sites directory exactly once');
+  const state=await sharedProxyRead(settings);
+  const expected=JSON.parse(await run(caddy,['adapt','--config',settings.configPath,'--adapter','caddyfile'],{stdoutOnly:true}));
+  if(configDigest(state.config)!==configDigest(expected))throw new Error('Running Caddy differs from its files. Resolve the external configuration change before deploying.');
+  return {...state,source,importLine};
+}
+async function atomicText(file,text) {
+  const temp=file+'.'+randomBytes(8).toString('hex')+'.tmp';await fs.writeFile(temp,text,{mode:0o600});await fs.rename(temp,file);
+}
+async function recoverSharedProxy(root,settings) {
+  const file=path.join(root,'shared-proxy-transaction.json'),pending=await readJson(file);
+  if(!pending)return;
+  const digest=configDigest((await sharedProxyRead(settings)).config);
+  if(digest===pending.nextHash)await atomicText(path.join(root,'managed-sites','active.caddy'),pending.sites);
+  else if(digest!==pending.previousHash)throw new Error('Caddy changed during managed-route recovery. Inspect locally before retrying.');
+  await fs.unlink(file);
+}
+async function sharedProxyConfig(root,text,tools,settings) {
+  await fs.mkdir(path.join(root,'managed-sites'),{recursive:true,mode:0o700});
+  await recoverSharedProxy(root,settings);
+  const boundary=text.indexOf('\n}\n\n');
+  if(boundary<0)throw new Error('Invalid managed Caddy configuration');
+  const sites=text.slice(boundary+4);
+  for(const match of sites.matchAll(/^https:\/\/(\S+) \{/gm)) {
+    const url=new URL('https://'+match[1]);
+    if(settings.reservedHosts.some(host=>url.hostname.toLowerCase()===host.toLowerCase()||host.startsWith('*.')&&url.hostname.toLowerCase().endsWith(host.slice(1).toLowerCase())))throw new Error('This hostname belongs to an existing site and cannot be managed by the agent');
+    if(net.isIP(url.hostname.replace(/^\[|\]$/g,''))&&settings.reservedPorts.includes(Number(url.port||443)))throw new Error('This IP port belongs to an existing service');
+  }
+  const previous=await sharedProxyState(root,tools.caddy,settings);
+  const candidate=path.join(root,'managed-sites','candidate.pending');
+  await fs.writeFile(candidate,sites,{mode:0o600});
+  const transaction=path.join(root,'shared-proxy-transaction.json');
+  try {
+    // Caddy 2.8 cannot adapt stdin. An administrator prepares this one writable
+    // candidate file beside the original; the agent needs no directory write access.
+    // Keeping the directory preserves all unrelated relative imports.
+    const source=previous.source.replace(previous.importLine,'import '+JSON.stringify(candidate.replace(/\\/g,'/')));
+    await fs.writeFile(settings.candidatePath,source);
+    const next=JSON.parse(await run(tools.caddy,['adapt','--config',settings.candidatePath,'--adapter','caddyfile'],{cwd:path.dirname(settings.configPath),stdoutOnly:true}));
+    await atomicJson(transaction,{previousHash:configDigest(previous.config),nextHash:configDigest(next),sites});
+    const response=await fetch(settings.admin+'/config/',{method:'POST',headers:{'Content-Type':'application/json','If-Match':previous.etag,Origin:settings.admin},body:JSON.stringify(next),signal:AbortSignal.timeout(30000),redirect:'error'});
+    if(!response.ok)throw new Error(response.status===412?'Caddy changed concurrently; no managed routes were applied':'Existing Caddy rejected the managed routes (HTTP '+response.status+')');
+    await recoverSharedProxy(root,settings);
+    await atomicText(path.join(root,'Caddyfile'),text);
+  } catch(error) {
+    await recoverSharedProxy(root,settings);
+    throw error;
+  } finally {await fs.unlink(candidate).catch(error=>{if(error.code!=='ENOENT')throw error;});}
+}
+
 async function proxyConfig(root, text, tools) {
   if (!tools.tools.caddy) throw new Error('Install Caddy and put it on the agent account PATH');
+  const shared=await sharedProxySettings(root);
+  if(shared)return sharedProxyConfig(root,text,tools,shared);
   const filename = path.join(root,'Caddyfile');
   const candidate = path.join(root,'Caddyfile.candidate');
   await fs.writeFile(candidate,text,{mode:0o600});
@@ -339,12 +522,12 @@ async function deploy(root, job, journal, tools, persist, log, dependencies = {}
     GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null',GIT_CONFIG_COUNT:String(gitConfig.length) };
   gitConfig.forEach(([key,value],i)=>{gitEnv[`GIT_CONFIG_KEY_${i}`]=key;gitEnv[`GIT_CONFIG_VALUE_${i}`]=value;});
   const secrets = [...Object.values(app.environment),git?.token,git?.token?Buffer.from(`${git.username}:${git.token}`).toString('base64'):''].filter(Boolean);
-  try { await command('git',['clone','--depth','1','--single-branch','--branch',app.branch,'--',app.repo_url,release],{env:gitEnv,timeout:600000,log,secrets}); }
+  try { await command(executable('git'),['clone','--depth','1','--single-branch','--branch',app.branch,'--',app.repo_url,release],{env:gitEnv,timeout:600000,log,secrets}); }
   finally { if(caFile)await fs.unlink(caFile); }
-  const commit = await command('git',['-C',release,'rev-parse','HEAD'],{env:{...baseEnv(),GIT_CONFIG_NOSYSTEM:'1'}});
+  const commit = await command(executable('git'),['-C',release,'rev-parse','HEAD'],{env:{...baseEnv(),GIT_CONFIG_NOSYSTEM:'1'}});
   if (!/^[a-f0-9]{40,64}$/.test(commit)) throw new Error('Git did not identify the checked-out commit');
   const appEnv = {...app.environment,...(job.payload.project_type==='go'?{APP_PORT:String(app.port)}:{}),PORT:String(app.port),HOST:'127.0.0.1',HOSTNAME:'127.0.0.1',NODE_ENV:'production'};
-  const env = {...baseEnv(),...appEnv};
+  const env = {...baseEnv(),...appEnv,...await runtimeEnvironment(root,app.runtime_versions)};
   await writeEnv(release,appEnv);
   for (const [stage, appCommand] of [['install',app.install_cmd],['build',app.build_cmd]]) {
     if (!appCommand) continue;
@@ -406,10 +589,16 @@ async function sample(root, tools, prior) {
   const saved=await readJson(path.join(root,'apps.json'),{});
   let list=[];let proxyError=null;
   try{list=await processList(tools.pm);}catch(error){proxyError=error.message;}
-  if(Object.keys(saved).length&&!list.some(p=>p.name==='manager-remote-caddy'&&p.pm2_env?.status==='online'))proxyError='Caddy is not running';
+  if(tools.sharedProxy) {
+    try {await sharedProxyRead(tools.sharedProxy);}catch(error){proxyError=error.message;}
+  } else if(Object.keys(saved).length&&!list.some(p=>p.name==='manager-remote-caddy'&&p.pm2_env?.status==='online'))proxyError='Caddy is not running';
   let caPem=null;
   try{caPem=await fs.readFile(path.join(root,'caddy-storage','pki','authorities','local','root.crt'),'utf8');}catch(error){if(error.code!=='ENOENT')throw error;}
-  const metrics=sanitizeMetrics({hostname:os.hostname(),platform:process.platform,version:AGENT_VERSION,
+  if(tools.sharedProxy&&Object.values(saved).some(item=>item.app.access_mode==='lan'||item.app.ip_address)) {
+    const response=await fetch(tools.sharedProxy.admin+'/pki/ca/local',{headers:{Origin:tools.sharedProxy.admin},signal:AbortSignal.timeout(3000),redirect:'error'}).catch(()=>null);
+    if(response?.ok)caPem=(await response.json()).root_certificate||null;
+  }
+  const metrics=sanitizeMetrics({hostname:os.hostname(),platform:process.platform,arch:process.arch,version:AGENT_VERSION,runtimeVersions:await installedRuntimeVersions(root),
     cpuPercent:delta?Math.max(0,Math.min(100,100*(1-(cpu.idle-prior.idle)/delta))):0,
     memoryTotal:os.totalmem(),memoryFree:os.freemem(),diskTotal:disk?disk.blocks*disk.bsize:null,diskFree:disk?disk.bavail*disk.bsize:null,uptime:os.uptime(),
     addresses:Object.values(os.networkInterfaces()).flat().filter(x=>x&&!x.internal).map(x=>x.address),tools:tools.tools,proxyError,
@@ -449,7 +638,44 @@ async function enrollCli(root, options) {
   } finally {terminal.close();}
 }
 
+async function consoleJob(root,job,tools,log,signal) {
+  const payload=job.payload;
+  if(!Number.isFinite(payload.expiresAt)||Date.now()>payload.expiresAt)throw new Error('Console request expired; run it again while connected');
+  let directory=path.join(root,'console'),runtime={};
+  if(payload.id){
+    if(!ID.test(payload.id))throw new Error('Invalid application');
+    const app=(await readJson(path.join(root,'apps.json'),{}))[payload.id];
+    if(!app)throw new Error('Deploy this application first');
+    const launch=await readJson(path.join(path.dirname(app.ecosystem),'launch.json'));
+    directory=await contained(root,'releases',payload.id,path.basename(launch.cwd));
+    if(path.resolve(directory)!==path.resolve(launch.cwd))throw new Error('Application directory changed');
+    runtime=Object.fromEntries(Object.entries(launch.env||{}).filter(([key])=>['Path','PATH','PHPRC','PHP_INI_SCAN_DIR'].includes(key)||/^MANAGER_(NODE|GO|PHP)_VERSION$/.test(key)));
+  }else await fs.mkdir(directory,{recursive:true,mode:0o700});
+  const base=await fs.realpath(directory),cwd=await fs.realpath(path.resolve(base,payload.cwd||'.'));
+  const relative=path.relative(base,cwd);
+  if(relative.startsWith('..')||path.isAbsolute(relative))throw new Error('Working directory must stay inside this application');
+  if(job.kind==='logs'){
+    const app=(await processList(tools.pm)).find(item=>item.name==='manager-remote-'+payload.id);
+    if(!app)throw new Error('Application process is unavailable');
+    for(const [name,key] of [['stdout','pm_out_log_path'],['stderr','pm_err_log_path']]){
+      const filename=app.pm2_env[key],rel=path.relative(path.join(root,'pm2'),filename||'');
+      if(!filename||rel.startsWith('..')||path.isAbsolute(rel))throw new Error('Log path is outside the private process manager');
+      const safe=await contained(root,'pm2',rel);
+      const file=await fs.open(safe,'r');try{const stat=await file.stat();const length=Math.min(stat.size,48000),buf=Buffer.alloc(length);await file.read(buf,0,length,Math.max(0,stat.size-length));log('['+name+']\n'+redact(buf.toString('utf8'),jobSecrets(payload))+'\n');}finally{await file.close();}
+    }
+    return {ok:true,cwd};
+  }
+  if(typeof payload.command!=='string'||!payload.command.trim()||payload.command.length>8000||/[\r\n\0]/.test(payload.command))throw new Error('Enter one command line (maximum 8,000 characters)');
+  const env={...baseEnv(),...payload.environment,...runtime,FORCE_COLOR:'0',NO_COLOR:'1'};
+  const command=payload.command;
+  const args=process.platform==='win32'?['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from("$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new(); "+command+'; if($LASTEXITCODE){exit $LASTEXITCODE}', 'utf16le').toString('base64')]:['-c',command];
+  await run(process.platform==='win32'?'powershell.exe':'/bin/bash',args,{cwd,env,timeout:900000,signal,log,secrets:jobSecrets(payload)});
+  log('\n[exit] Command finished with code 0\n');return {ok:true,cwd};
+}
+
 async function runAgent(root) {
+  await loadToolPaths(root);
+  const shared=await sharedProxySettings(root);if(shared)await recoverSharedProxy(root,shared);
   const config=await readJson(path.join(root,'agent.json'));
   if(!config?.enrolled)throw new Error('Enroll this agent first');
   const lock=path.join(root,'agent.lock');
@@ -462,7 +688,7 @@ async function runAgent(root) {
     await fs.unlink(lock);await fs.writeFile(lock,String(process.pid),{flag:'wx',mode:0o600});
   }
   // Updating the agent must not resurrect stopped apps or restart an existing PM2 daemon.
-  const tools=await findTools(root);
+  let tools=await findTools(root), toolsDigest=createHash('sha256').update(JSON.stringify(await readJson(path.join(root,'tool-paths.json'),{}))).digest('hex');
   const existingProcesses=await processList(tools.pm);
   if(!existingProcesses.length&&await fs.stat(path.join(root,'pm2','dump.pm2')).catch(()=>null))await tools.pm(['resurrect']);
   const journalFile=path.join(root,'current-job.json');
@@ -481,14 +707,15 @@ async function runAgent(root) {
     writing=writing.then(()=>atomicJson(journalFile,snapshot));
     return writing;
   };
-  let reportBusy=false;
+  let reportBusy=false, consoleAbort=null, lastConsoleReport=0;
   const report=async()=>{
     if(!journal||reportBusy)return;reportBusy=true;
     try{
       journal.sequence++;
       const snapshot={id:journal.id,claimToken:journal.claimToken,status:journal.status,log:journal.log,sequence:journal.sequence,commitSha:journal.commitSha,result:journal.result};
       await persist();
-      await request(config,'report',snapshot);
+      const reply=await request(config,'report',snapshot);
+      if(consoleAbort){lastConsoleReport=Date.now();if(reply.cancelRequested)consoleAbort.abort();}
       if(snapshot.status!=='running'&&journal?.id===snapshot.id){await fs.unlink(journalFile);journal=null;}
     }finally{reportBusy=false;}
   };
@@ -500,11 +727,12 @@ async function runAgent(root) {
   let heartbeatBusy=false;
   const pulse=async()=>{
     if(heartbeatBusy)return;heartbeatBusy=true;
-    try{const data=await sample(root,tools,prior);prior=data.cpu;data.metrics.capabilities=[SETUP_CAPABILITY,...(supervised?[UPDATE_CAPABILITY]:[])];await request(config,'heartbeat',{protocol:PROTOCOL_VERSION,metrics:data.metrics,caPem:data.caPem});send({type:'heartbeat',version:AGENT_VERSION,metrics:data.metrics});}
+    try{const data=await sample(root,tools,prior);prior=data.cpu;data.metrics.capabilities=[SETUP_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,...(supervised?[UPDATE_CAPABILITY]:[])];await request(config,'heartbeat',{protocol:PROTOCOL_VERSION,metrics:data.metrics,caPem:data.caPem});send({type:'heartbeat',version:AGENT_VERSION,metrics:data.metrics});}
     finally{heartbeatBusy=false;}
   };
   const describe=error=>console.error(`[agent] ${redact(error.message,[config.agentToken])}`);
   const timer=setInterval(()=>{void pulse().catch(describe);if(journal?.status==='running')void report().catch(describe);},15000);
+  const consoleTimer=setInterval(()=>{if(consoleAbort){if(stopped||Date.now()-lastConsoleReport>45000)consoleAbort.abort();void report().catch(error=>{if(error.status===401)consoleAbort?.abort();describe(error);});}},1000);
   console.log(`Manager agent ${AGENT_VERSION} running. Outbound connection to ${config.manager}`);
   try{
     while(!stopped){
@@ -513,7 +741,10 @@ async function runAgent(root) {
         if(journal){send({type:'idle',idle:false});await report();await wait(5000);continue;}
         if(stopped)break;
         send({type:'idle',idle:true});
-        const {job,protocol}=await request(config,'claim',{});
+        const {job,protocol,paused}=await request(config,'claim',{});
+        if(paused){await wait(5000);continue;}
+        const nextTools=createHash('sha256').update(JSON.stringify(await readJson(path.join(root,'tool-paths.json'),{}))).digest('hex');
+        if(nextTools!==toolsDigest){await loadToolPaths(root);tools=await findTools(root);toolsDigest=nextTools;}
         if(protocol!==PROTOCOL_VERSION)throw new Error('Agent upgrade required');
         if(!job){await wait(5000);continue;}
         send({type:'idle',idle:false});
@@ -525,15 +756,16 @@ async function runAgent(root) {
           else if (job.kind==='inspect') { journal.result=await inspectRepository(root,job,tools,log); journal.commitSha=journal.result.commit; }
           else if (job.kind==='database') journal.result=await setupDatabase(root,job,log);
           else if (job.kind==='validate') journal.result=await validateSetup(root,job,tools);
+          else if (['console','logs'].includes(job.kind)) { consoleAbort=new AbortController();lastConsoleReport=Date.now();journal.result=await consoleJob(root,job,tools,log,consoleAbort.signal); }
           else throw new Error('Unknown agent operation; upgrade the agent');
           journal.status='success';
         }
         catch(error){log(`[failed] ${error.message}\n`);journal.status='failed';}
-        await persist();await report();logSecrets=[];
+        consoleAbort=null;await persist();await report();logSecrets=[];
       }catch(error){describe(error);if(error.status===401){stopped=true;break;}await wait(10000);}
     }
   }finally{
-    clearInterval(timer);while(reportBusy||heartbeatBusy)await wait(100);
+    clearInterval(timer);clearInterval(consoleTimer);while(reportBusy||heartbeatBusy)await wait(100);
     await fs.unlink(lock).catch(()=>{});process.off('SIGINT',onStop);process.off('SIGTERM',onStop);
     if(supervised){process.off('message',onMessage);process.off('disconnect',onStop);if(process.connected)process.disconnect();}
   }
@@ -598,9 +830,9 @@ async function cloneForSetup(root, job, log, command = run) {
   const env = {...baseEnv(),GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'never',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null',GIT_CONFIG_COUNT:String(config.length)};
   config.forEach(([key,value],i)=>{env[`GIT_CONFIG_KEY_${i}`]=key;env[`GIT_CONFIG_VALUE_${i}`]=value;});
   log('[source] Cloning the selected branch on this server. No repository scripts are executed.\n');
-  try { await command('git',['clone','--depth','1','--single-branch','--branch',app.branch,'--',app.repo_url,destination],{env,timeout:600000,log,secrets:jobSecrets(job.payload)}); }
+  try { await command(executable('git'),['clone','--depth','1','--single-branch','--branch',app.branch,'--',app.repo_url,destination],{env,timeout:600000,log,secrets:jobSecrets(job.payload)}); }
   finally { if(ca)await fs.unlink(ca); }
-  const commit = await command('git',['-C',destination,'rev-parse','HEAD'],{env});
+  const commit = await command(executable('git'),['-C',destination,'rev-parse','HEAD'],{env});
   if(!/^[a-f0-9]{40,64}$/.test(commit))throw new Error('Git did not identify the inspected commit');
   return {destination,commit};
 }
@@ -636,7 +868,7 @@ async function inspectTools(tools, command = run) {
   for(const name of ['npm','pnpm','yarn','go','php','composer','psql','mysql','mariadb']) {
     try {
       // These are fixed tool names, never repository-controlled shell text.
-      result[name] = (await command(name,[name==='go'?'version':'--version'],{shell:process.platform==='win32' && ['npm','pnpm','yarn','composer'].includes(name),timeout:10000})).split(/\r?\n/)[0].slice(0,200);
+      result[name] = (await command(executable(name),[name==='go'?'version':'--version'],{shell:process.platform==='win32' && ['npm','pnpm','yarn','composer'].includes(name),timeout:10000})).split(/\r?\n/)[0].slice(0,200);
     } catch { result[name]=null; }
   }
   return result;
@@ -681,7 +913,7 @@ async function setupDatabase(root, job, log, dependencies = {}) {
   const sqlString=value=>`'${value.replace(/'/g,"''")}'`;
   async function sql(statement, admin=false, database=d.database) {
     const username=admin?d.adminUsername:d.username,password=admin?d.adminPassword:d.password;
-    if(d.provider==='postgresql')return command('psql',['-X','--no-password','--set','ON_ERROR_STOP=1','--tuples-only','--no-align','--host',d.host,'--port',String(d.port),'--username',username,'--dbname',database],{
+    if(d.provider==='postgresql')return command(executable('psql'),['-X','--no-password','--set','ON_ERROR_STOP=1','--tuples-only','--no-align','--host',d.host,'--port',String(d.port),'--username',username,'--dbname',database],{
       env:{...baseEnv(),PGPASSWORD:password,PGSSLMODE:d.tls?'verify-full':'disable',PGCONNECT_TIMEOUT:'10',PGOPTIONS:'-c statement_timeout=15000'},
       input:`SET standard_conforming_strings=on;\n${statement}\n`,timeout:30000,secrets});
     const filename=await contained(root,`db-client-${job.id}.cnf`);
@@ -689,7 +921,7 @@ async function setupDatabase(root, job, log, dependencies = {}) {
     try {
       const tls=d.provider==='mysql'?`ssl-mode=${d.tls?'VERIFY_IDENTITY':'DISABLED'}`:d.tls?'ssl\nssl-verify-server-cert':'skip-ssl';
       await fs.writeFile(filename,`[client]\nhost=${quoted(d.host)}\nport=${d.port}\nuser=${quoted(username)}\npassword=${quoted(password)}\nprotocol=tcp\n${tls}\n`,{mode:0o600,flag:'wx'});
-      return await command(d.provider==='mysql'?'mysql':'mariadb',[`--defaults-extra-file=${filename}`,'--batch','--skip-column-names','--raw',...(database?['--database',database]:[])],{input:`SET SESSION sql_mode='NO_BACKSLASH_ESCAPES';\n${statement}\n`,timeout:30000,secrets});
+      return await command(executable(d.provider==='mysql'?'mysql':'mariadb'),[`--defaults-extra-file=${filename}`,'--batch','--skip-column-names','--raw',...(database?['--database',database]:[])],{input:`SET SESSION sql_mode='NO_BACKSLASH_ESCAPES';\n${statement}\n`,timeout:30000,secrets});
     } finally { await fs.unlink(filename).catch(()=>{}); }
   }
   if(d.mode==='create') {
@@ -720,6 +952,9 @@ async function setupDatabase(root, job, log, dependencies = {}) {
 async function validateSetup(root, job, tools, dependencies = {}) {
   const app=validateApp(job.payload);
   const installed=await inspectTools(tools,dependencies.run || run);
+  const runtime=await runtimeEnvironment(root,app.runtime_versions);
+  for(const [id,version] of Object.entries(app.runtime_versions))installed[id]=version;
+  if(app.runtime_versions.node)installed.npm=await (dependencies.run||run)(process.platform==='win32'?'npm.cmd':'npm',['--version'],{env:{...baseEnv(),...runtime},shell:process.platform==='win32'});
   const framework=job.payload.project_type;
   const required=['git','caddy','pm2',...(framework==='go'?['go']:framework==='laravel'?['php','composer']:['node']),...(job.payload.packageManager?[job.payload.packageManager]:[])];
   const missing=required.filter(name=>!installed[name]);
@@ -736,7 +971,7 @@ async function main(){
   if(process.argv.length===3&&process.argv[2]==='version'){console.log(JSON.stringify({version:AGENT_VERSION,protocol:PROTOCOL_VERSION,supervisorProtocol:1}));return;}
   const [action,...args]=process.argv.slice(2),options={};
   for(let i=0;i<args.length;i+=2){if(!['--root','--manager','--server','--enrollment-file'].includes(args[i])||!args[i+1])throw new Error('Use --root, --manager, --server and --enrollment-file options');options[args[i].slice(2)]=args[i+1];}
-  if(!['enroll','run'].includes(action)||!options.root)throw new Error('Usage: node manager-agent.cjs enroll|run --root <dedicated absolute folder> [--manager https://manager.example.edu --server <id>]');
+  if(!['enroll','run','check-tools'].includes(action)||!options.root)throw new Error('Usage: node manager-agent.cjs enroll|run|check-tools --root <dedicated absolute folder> [--manager https://manager.example.edu --server <id>]');
   if(!path.isAbsolute(options.root))throw new Error('--root must be an absolute path');
   await fs.mkdir(options.root,{recursive:true,mode:0o700});
   const root=await fs.realpath(options.root);
@@ -746,8 +981,8 @@ async function main(){
     const account=(await run('whoami.exe')).trim();
     await run('icacls.exe',[root,'/inheritance:r','/grant:r',`${account}:(OI)(CI)F`,'*S-1-5-18:(OI)(CI)F','*S-1-5-32-544:(OI)(CI)F']);
   }else await fs.chmod(root,0o700);
-  if(action==='enroll')await enrollCli(root,options);else await runAgent(root);
+  if(action==='check-tools')await checkConfiguredTools(root);else if(action==='enroll')await enrollCli(root,options);else await runAgent(root);
 }
 
-module.exports={PROTOCOL_VERSION,AGENT_VERSION,SETUP_CAPABILITY,UPDATE_CAPABILITY,validateApp,sanitizeMetrics,redact,streamRedactor,caddyConfig,managerAddress,contained,run,request,deploy,restoreActivation,healthy,atomicJson,readJson,enrollCli,detectFramework,inspectRepository,validateDatabase,databaseEnvironment,setupDatabase,validateSetup,jobSecrets,findStaticRoot,serveStatic};
+module.exports={validateRuntimeSelection,RUNTIME_CAPABILITY,validateRuntimeVersions,runtimeEnvironment,installedRuntimeVersions,CONSOLE_CAPABILITY,consoleJob,PROTOCOL_VERSION,AGENT_VERSION,SETUP_CAPABILITY,UPDATE_CAPABILITY,validateApp,sanitizeMetrics,redact,streamRedactor,caddyConfig,managerAddress,contained,run,request,deploy,restoreActivation,healthy,atomicJson,readJson,enrollCli,detectFramework,inspectRepository,validateDatabase,databaseEnvironment,setupDatabase,validateSetup,jobSecrets,findStaticRoot,serveStatic,loadToolPaths,checkConfiguredTools,privatePm2Environment,findTools,proxyConfig,sharedProxySettings,sharedProxyState,configDigest};
 if(require.main===module)main().catch(error=>{console.error(error.message);process.exitCode=1;});

@@ -1,36 +1,57 @@
 'use client'
 
+import { RemoteRuntimeSelection } from './remote-runtime-selection'
 import { useEffect, useRef, useState } from 'react'
+import { Section } from '@/components/app/section'
+import { EnvEditor } from '@/components/env-editor'
+import { environmentText, parseEnvironmentText } from '@/lib/environment-text'
 import { Button } from '@/components/ui/button'
 import type { RemoteApp } from '@/lib/managed-server-types'
 
-const inputClass = 'mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm'
+const inputClass = 'control-input mt-1'
 type Connection = { id: string; name: string }
 
-export function RemoteAppForm({ serverId, platform, app, onSaved, onCancel, onDirtyChange }: {
-  serverId: string; platform: string; app?: RemoteApp; onSaved: () => void; onCancel: () => void; onDirtyChange?: (dirty: boolean) => void
+export function RemoteAppForm({ serverId, platform, app, onSaved, onDirtyChange, section = 'settings', canWrite = true }: {
+  section?: 'settings' | 'environment' | 'domains'; canWrite?: boolean; serverId: string; platform: string; app: RemoteApp; onSaved: () => void; onDirtyChange?: (dirty: boolean) => void
 }) {
-  const [form, setForm] = useState({ name: app?.name || '', repo_url: app?.repo_url || '', branch: app?.branch || 'main',
+  const appId = app.id
+  const [form, setForm] = useState({ runtime_versions:app.runtime_versions||{} as Record<string,string>,name: app?.name || '', repo_url: app?.repo_url || '', branch: app?.branch || 'main',
     install_cmd: app?.install_cmd ?? 'npm ci --include=dev', build_cmd: app?.build_cmd ?? 'npm run build', start_cmd: app?.start_cmd || 'npm start -- --hostname 127.0.0.1',
     port: String(app?.port || 3000), health_path: app?.health_path || '/', access_mode: app?.access_mode || 'lan', hostname: app?.hostname || '',
     ip_address: app?.ip_address || '', ip_port: String(app?.ip_port || 8443), git_connection_id: app?.git_connection_id || '' })
   const [environment, setEnvironment] = useState('')
+  const [envLoaded, setEnvLoaded] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const initialEnv = useRef('')
   const initial = useRef(JSON.stringify(form))
-  useEffect(() => { onDirtyChange?.(JSON.stringify(form) !== initial.current || environment !== '') }, [form, environment, onDirtyChange])
+  useEffect(() => { onDirtyChange?.(JSON.stringify(form) !== initial.current || environment !== initialEnv.current) }, [form, environment, onDirtyChange])
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange])
   const [connections, setConnections] = useState<Connection[]>([])
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   useEffect(() => { void fetch('/api/git/connections').then(async r => { if (r.ok) setConnections((await r.json()).connections || []) }).catch(() => {}) }, [])
+  useEffect(() => {
+    if (section !== 'environment' || !canWrite) return
+    const abort = new AbortController()
+    void fetch(`/api/servers/${serverId}/apps/${appId}/environment`, { cache: 'no-store', signal: abort.signal }).then(async response => {
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error || 'Could not load environment variables')
+      initialEnv.current = environmentText(result.environment)
+      setEnvironment(initialEnv.current); setEnvLoaded(true)
+    }).catch(error => { if (error.name !== 'AbortError') setError(error.message) })
+    return () => abort.abort()
+  }, [section, serverId, appId, canWrite])
   function field(name: keyof typeof form, value: string) { setForm(current => ({ ...current, [name]: value })) }
   async function save(event: React.FormEvent) {
-    event.preventDefault(); setBusy(true); setError('')
+    event.preventDefault(); if (!canWrite) return; setBusy(true); setError(''); setSaved(false)
     try {
-      const env = environment.trim() ? JSON.parse(environment) : app ? undefined : {}
+      if (section === 'environment' && !envLoaded) throw new Error('Wait for environment variables to load')
+      const env = section === 'environment' ? parseEnvironmentText(environment) : undefined
       const response = await fetch(`/api/servers/${serverId}/apps${app ? `/${app.id}` : ''}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...form, environment: env }) })
       const result = await response.json()
       if (!response.ok) throw new Error(result.error || 'Could not save application')
-      onSaved()
+      initial.current = JSON.stringify(form); initialEnv.current = environment
+      onDirtyChange?.(false); setSaved(true); onSaved()
     } catch (err) { setError((err as Error).message) } finally { setBusy(false) }
   }
   function preset(value: string) {
@@ -43,10 +64,13 @@ export function RemoteAppForm({ serverId, platform, app, onSaved, onCancel, onDi
     const values = commands[value]
     if (values) setForm(current => ({ ...current, install_cmd: values[0], build_cmd: values[1], start_cmd: values[2] }))
   }
-  return <form onSubmit={save} className="space-y-5 rounded-xl border border-border bg-card p-5">
-    <h2 className="font-semibold">{app ? 'Edit remote app' : 'New remote app'}</h2>
-    <p className="text-xs leading-5 text-muted-foreground">Commands run on this {platform === 'win32' ? 'Windows' : 'Linux'} server. Required language runtimes must already be installed. Applications and build scripts must be trusted to run as the agent account.</p>
+  return <form onSubmit={save} className="space-y-6">
     {error && <p role="alert" className="notice-error">{error}</p>}
+    {saved && <p role="status" className="text-sm text-status-ready">Changes saved. Deploy the application to apply them.</p>}
+    <Section title={section === 'environment' ? 'Environment variables' : section === 'domains' ? 'Domains' : 'Application settings'} description={section === 'environment' ? 'Settings and secrets used by this application.' : section === 'domains' ? 'Configure the address that opens this application.' : 'Name, repository and commands for this application.'}>
+    <fieldset disabled={busy || !canWrite} className="space-y-5">
+    {section === 'settings' && <>
+    <RemoteRuntimeSelection serverId={serverId} value={form.runtime_versions} onChange={runtime_versions=>setForm(f=>({...f,runtime_versions}))}/>
     <div className="grid gap-4 sm:grid-cols-2">
       <label className="text-sm">App name<input required maxLength={100} className={inputClass} value={form.name} onChange={e => field('name', e.target.value)} /></label>
       <label className="text-sm">Git connection<select className={inputClass} value={form.git_connection_id} onChange={e => field('git_connection_id', e.target.value)}><option value="">Public repository (no credentials)</option>{connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
@@ -57,7 +81,8 @@ export function RemoteAppForm({ serverId, platform, app, onSaved, onCancel, onDi
       <label className="text-sm">Application port<input type="number" min={1024} max={65535} required className={inputClass} value={form.port} onChange={e => field('port', e.target.value)} /></label>
       <label className="text-sm">Health check path<input required className={inputClass} value={form.health_path} onChange={e => field('health_path', e.target.value)} /><span className="mt-1 block text-xs text-muted-foreground">Must return HTTP 2xx without login or redirects.</span></label>
     </div>
-    <fieldset className="space-y-4 rounded-lg border border-border p-4"><legend className="px-2 text-sm font-medium">Caddy and access</legend>
+    </>}
+    {section === 'domains' && <fieldset className="space-y-4 rounded-lg border border-border p-4"><legend className="px-2 text-sm font-medium">Caddy and access</legend>
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="text-sm">Certificate mode<select className={inputClass} value={form.access_mode} onChange={e => field('access_mode', e.target.value)}><option value="lan">LAN — institution network / local CA</option><option value="wan">WAN — public domain / public CA</option></select></label>
         <label className="text-sm">Readable hostname<input required placeholder="library.campus.example.edu" className={inputClass} value={form.hostname} onChange={e => field('hostname', e.target.value)} /></label>
@@ -66,9 +91,11 @@ export function RemoteAppForm({ serverId, platform, app, onSaved, onCancel, onDi
       </div>
       <p className="text-xs leading-5 text-muted-foreground">{form.access_mode === 'lan' ? 'Create an internal DNS record pointing this name to the server’s LAN address. Install the server’s public root CA on client devices. Internal HTTPS does not need public DNS or internet access.' : 'Point public DNS to the server or its gateway. Forward TCP 80 and 443 to Caddy and allow outbound certificate issuance. For internal access to the same name, use split DNS or supported hairpin NAT.'}</p>
       <p className="text-xs leading-5 text-muted-foreground">Certificate mode does not restrict who can connect. Scope firewall rules to institution networks for LAN-only apps. Caddy uses ports 80/443, plus the optional IP HTTPS port. Keep backend app ports and admin port 2029 private. IP access always uses the local CA.</p>
+    </fieldset>}
+    {section === 'environment' && (canWrite ? <EnvEditor className="h-[340px]" value={environment} disabled={!envLoaded || busy} onChange={setEnvironment} /> : <p className="text-sm text-muted-foreground">{app?.env_names.length || 0} variables configured. An administrator can edit their values.</p>)}
+
     </fieldset>
-    <label className="block text-sm">Environment variables (JSON)<textarea rows={5} spellCheck={false} className={`${inputClass} font-mono`} placeholder={'{\n  "DATABASE_URL": "postgres://app:password@db-server:5432/app"\n}'} value={environment} onChange={e => setEnvironment(e.target.value)} /><span className="mt-1 block text-xs leading-5 text-muted-foreground">{app ? `Leave blank to preserve existing values (${app.env_names.join(', ') || 'none'}). Enter {} to clear them. ` : ''}Values are encrypted in Manager. PORT, HOST, HOSTNAME and NODE_ENV are supplied by the agent. Database hostnames must resolve from the target server.</span></label>
-    <p className="text-xs leading-5 text-muted-foreground">Each deployment creates a new release directory, then briefly stops the app for activation. Store uploads and other persistent files outside the release directory. Existing database changes are not reversed by an application rollback.</p>
-    <div className="flex gap-2"><Button disabled={busy} type="submit">{busy ? 'Saving…' : 'Save app'}</Button><Button type="button" variant="outline" onClick={onCancel}>Cancel</Button></div>
+    {canWrite && <div className="mt-5 flex gap-2"><Button disabled={busy || (section === 'environment' && !envLoaded)} type="submit">{busy ? 'Saving…' : 'Save changes'}</Button></div>}
+    </Section>
   </form>
 }

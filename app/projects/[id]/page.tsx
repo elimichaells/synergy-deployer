@@ -9,7 +9,7 @@ import { AppShell } from '@/components/layout/app-shell'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tabs, TabsContent } from '@/components/ui/tabs'
 import { FrameworkAvatar, FrameworkLogo } from '@/components/synergy/framework-logo'
 import { StatusLabel, type DeployStatus } from '@/components/synergy/status'
 import { Section, roleLabels } from '@/components/app/section'
@@ -21,6 +21,8 @@ import { ProjectDeployments, ProjectEnvironment, ProjectLogsConsole } from '@/co
 import { relativeTime } from '@/lib/deployment-stages'
 import { isApplicationRoot, projectEnvironment } from '@/lib/application-environments'
 import { cn } from '@/lib/utils'
+import { PROJECT_TABS, ProjectTabs } from '@/components/workspace/project-tabs'
+import { ProjectOverview, ProjectEnvironmentSwitch } from '@/components/workspace/project-overview'
 
 interface App { id: string; name: string; component_role: string; environment: 'production' | 'staging'; project_type: string; port: number | null; url: string | null; is_active: boolean; production_id: string | null; setup_required: boolean; repo_url: string | null; default_branch: string; auto_deploy: boolean; deployment_status: DeployStatus | null; deployed_at: string | null }
 interface Domain { id: string; hostname: string; project_id: string; is_primary: boolean; dns_status: string; ssl_status: string }
@@ -29,7 +31,7 @@ interface DatabaseRow { id: string; project_id: string; name: string; database_n
 interface Project { id: string; name: string; apps: App[]; domains: Domain[]; routes: Route[]; databases: DatabaseRow[] }
 interface Candidate { appId: string; name: string; project_type: string; projectName: string }
 
-const TABS = ['overview', 'apps', 'deployments', 'environment', 'logs', 'storage', 'domains', 'settings'] as const
+const TABS = PROJECT_TABS
 type Tab = typeof TABS[number]
 const menuItem = 'flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] text-muted-foreground outline-none data-[highlighted]:bg-white/[0.06] data-[highlighted]:text-foreground'
 
@@ -73,7 +75,6 @@ export default function ProjectPage() {
 
   const environment = projectEnvironment(project?.apps || [], preferredEnvironment)
   const apps = useMemo(() => (project?.apps || []).filter(app => app.environment === environment), [project, environment])
-  const hasStaging = !!project?.apps.some(app => app.environment === 'staging')
   const appName = (appId: string) => project?.apps.find(app => app.id === appId)?.name || 'app'
   const owned = useMemo(() => (project?.databases || []).filter(row => row.options?.ownership !== 'shared' && apps.some(app => app.id === row.project_id)), [project, apps])
   const usersOf = (row: DatabaseRow) => (project?.databases || []).filter(other => other.options?.sharedFrom === row.id).map(other => other.project_id)
@@ -166,16 +167,7 @@ export default function ProjectPage() {
 
   const role = access.isAdmin ? 'admin' : access.canWrite ? 'operator' : 'viewer'
   const rootApps = project.apps.filter(isApplicationRoot)
-  const tabs = (
-    <TabsList className="scrollbar-none h-auto min-h-0 w-full justify-start gap-0 overflow-x-auto border-0 bg-transparent p-0">
-      {TABS.map(value => (
-        <TabsTrigger key={value} value={value} title={{ overview: 'How the project fits together', apps: 'Every app, with shortcuts to all of its tools', deployments: 'Every release across the project', environment: 'The .env settings of each app', logs: 'Logs and a terminal for each app', storage: 'The project databases and services', domains: 'The web addresses of the project', settings: 'Rename the project and move apps' }[value]} className="group relative min-h-0 rounded-none border-0 px-1 pb-3 pt-1 text-[13px] font-normal text-muted-foreground data-[state=active]:text-foreground">
-          <span className="rounded-md px-2.5 py-1.5 transition-colors group-hover:bg-white/[0.06]">{{ overview: 'Overview', apps: 'Apps', deployments: 'Deployments', environment: 'Environment', logs: 'Logs & console', storage: 'Databases', domains: 'Domains', settings: 'Settings' }[value]}</span>
-          <span className="absolute inset-x-2 bottom-0 hidden h-[2px] rounded-full bg-foreground group-data-[state=active]:block" aria-hidden="true" />
-        </TabsTrigger>
-      ))}
-    </TabsList>
-  )
+  const tabs = <ProjectTabs />
 
   const addAppMenu = (
     <DropdownMenu.Root>
@@ -220,35 +212,10 @@ export default function ProjectPage() {
       >
         {error && <div role="alert" className="notice-error">{error}</div>}
         {notice && <p role="status" className="mb-5 rounded-md border border-status-ready/25 bg-status-ready/5 px-4 py-3 text-sm text-emerald-200">{notice}</p>}
-        {hasStaging && (
-          <div className="mb-6 flex h-8 w-fit items-center rounded-md border border-border p-0.5" role="group" aria-label="Environment">
-            {(['production', 'staging'] as const).filter(value => project.apps.some(app => app.environment === value)).map(value => <button key={value} type="button" onClick={() => setEnvironment(value)} aria-pressed={environment === value}
-              className={cn('h-full rounded-[5px] px-3 text-xs capitalize', environment === value ? 'bg-white/[0.09] text-foreground' : 'text-muted-foreground hover:text-foreground')}>{value}</button>)}
-          </div>
-        )}
+        <ProjectEnvironmentSwitch environments={(['production', 'staging'] as const).filter(value => project.apps.some(app => app.environment === value))} value={environment} onChange={setEnvironment} />
 
         <TabsContent value="overview" className="mt-0 space-y-6">
-          <Section title="What do you want to do?" description="Pick what you are looking for. Every tab here works for all the apps in this project at once.">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {([
-                ['deployments', Rocket, 'See releases', 'Every deployment, and why one failed.'],
-                ['environment', KeyRound, 'Edit settings and secrets', 'The .env file each app reads, such as database addresses and API keys.'],
-                ['logs', ScrollText, 'Read logs or run a command', 'What each app prints while running, and a terminal inside it.'],
-                ['storage', Database, 'Manage databases', 'Where the apps keep their data, with backups.'],
-                ['domains', Globe2, 'Manage web addresses', 'Which domains open which app.'],
-                ['apps', Layers, 'Open or deploy an app', 'Every app with shortcuts to all of its tools.'],
-              ] as const).map(([value, Icon, title, text]) => (
-                <button key={value} type="button" onClick={() => changeTab(value)} className="syn-tile flex flex-col p-4 text-left">
-                  <span className="flex items-center gap-2.5 text-sm font-medium"><Icon className="h-4 w-4 text-muted-foreground" aria-hidden="true" />{title}<ArrowRight className="ml-auto h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" /></span>
-                  <span className="mt-1.5 text-xs leading-5 text-muted-foreground">{text}</span>
-                </button>
-              ))}
-            </div>
-          </Section>
-          <Section title="How it fits together" description="Requests come in through a domain, reach your apps, and the apps read and write their databases.">
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_auto_minmax(0,1.3fr)_auto_minmax(0,0.9fr)] lg:items-start">
-              <div className="space-y-2">
-                <p className="eyebrow flex items-center gap-1.5"><Globe2 className="h-3 w-3" />Domains</p>
+          <ProjectOverview onTab={changeTab} domains={<>
                 {addresses.map(domain => (
                   <div key={domain.id} className="rounded-lg border border-border px-3 py-2.5 text-sm">
                     <a href={`https://${domain.hostname}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 truncate font-medium hover:underline">{domain.hostname}<ArrowUpRight className="h-3 w-3 shrink-0" /></a>
@@ -257,16 +224,10 @@ export default function ProjectPage() {
                   </div>
                 ))}
                 {!addresses.length && <button type="button" onClick={() => changeTab('domains')} className="w-full rounded-lg border border-dashed border-border px-3 py-4 text-xs text-muted-foreground hover:border-white/25 hover:text-foreground">No domain yet · Add one</button>}
-              </div>
-              <ArrowRight className="mx-auto hidden h-4 w-4 text-muted-foreground lg:mt-9 lg:block" />
-              <div className="space-y-2">
-                <p className="eyebrow flex items-center gap-1.5"><Layers className="h-3 w-3" />Apps</p>
+          </>} applications={<>
                 {apps.map(appCard)}
                 {access.canWrite && <Link href={`/sites/new?project=${project.id}`} className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-3 text-xs text-muted-foreground hover:border-white/25 hover:text-foreground"><Plus className="h-3.5 w-3.5" />Add an app from Git</Link>}
-              </div>
-              <ArrowRight className="mx-auto hidden h-4 w-4 text-muted-foreground lg:mt-9 lg:block" />
-              <div className="space-y-2">
-                <p className="eyebrow flex items-center gap-1.5"><Database className="h-3 w-3" />Data</p>
+          </>} databases={<>
                 {owned.map(row => (
                   <div key={row.id} className="flex items-start gap-3 rounded-lg border border-border px-3 py-2.5">
                     <ProviderLogo provider={row.provider} size="sm" />
@@ -277,9 +238,7 @@ export default function ProjectPage() {
                   </div>
                 ))}
                 {!owned.length && <button type="button" onClick={() => setServiceOpen(true)} disabled={!access.canWrite} className="w-full rounded-lg border border-dashed border-border px-3 py-4 text-xs text-muted-foreground hover:border-white/25 hover:text-foreground">No database · Add a service</button>}
-              </div>
-            </div>
-          </Section>
+          </>} />
         </TabsContent>
 
         <TabsContent value="apps" className="mt-0 space-y-4">

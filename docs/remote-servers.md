@@ -29,10 +29,15 @@ TLS verification. The downloaded agent is available only to signed-in administra
 ## Guided SSH setup
 
 Add a server in **Infrastructure → Servers**, select Windows or Linux, and choose
-**Connect with SSH**. Enter its IP/hostname, SSH port, username and password. Supply
+**Connect with SSH**. Enter its IP/hostname, SSH port, username and choose a password
+or private key. OpenSSH/PEM private keys are accepted, with an optional passphrase
+for encrypted keys. Keys and passphrases remain in request memory and are never
+written to disk, audit records, or the database. Linux key login supports root,
+passwordless sudo, or a separately supplied sudo password. Supply
 a Manager HTTPS address that the target can reach. **Check server identity** obtains
 the SSH host fingerprint without password authentication. Compare it with the
-server administrator's fingerprint, then select **Install and connect**. Setup pins
+server administrator's fingerprint, then inspect services and review the plan before
+selecting **Install and connect**. Setup pins
 that fingerprint before sending credentials. Changing the address or username clears
 the accepted identity.
 
@@ -42,9 +47,76 @@ root or sudo with the same password, systemd, and an apt/dnf distribution on x64
 ARM64. Windows needs x64 and an elevated OpenSSH administrator account. SSH cannot
 enable itself remotely when no management connection exists.
 
-Setup downloads Node.js 24, Caddy and (on Windows) portable Git using official
-release checksums, installs private PM2 tools, enrolls the agent and configures boot
-startup. Manager needs the Node, GitHub release and npm metadata endpoints; the target
+After accepting the fingerprint, **Inspect services and paths** checks installed
+executables, versions, database/web service status and listening ports before any
+installation or enrollment. Windows checks PATH, running executable paths, common installation folders and
+service executable folders; Linux checks PATH and common distribution folders.
+Inspection runs version commands and reads service information. Windows uses an
+account-protected temporary inspection script and removes it afterward. Inspection
+does not start PM2, restart services, create databases or install packages.
+
+The shared tool rows offer **Use existing**, **Install prerequisite**, or **Skip for
+now**. A compatible detected executable is selected for reuse by default. Enter a
+custom absolute executable path when discovery misses an installation, then select
+**Inspect again / verify paths**. Windows accepts local drive paths such as
+`D:\Database Tools\PostgreSQL\bin\psql.exe`; Linux accepts paths such as
+`/opt/postgresql/18/bin/psql`. PM2 takes its package's `bin/pm2` JavaScript path,
+not a Windows `.cmd` wrapper. Mapped drives and UNC paths are not supported for the
+Windows Local Service account. These are paths on the target, never Manager-host
+paths. Node.js must be 22 or later, Caddy 2.x, Git 2.x and PM2 5 or later.
+
+Setup inspects the choices again on the pinned SSH connection immediately before
+installation. It only downloads selected missing Node.js, Caddy, Windows Git or
+PM2 prerequisites. Reusing all core tools avoids release-metadata requests. Linux
+keeps a compatible existing Git; it does not upgrade it as part of enrollment.
+Missing database engines and optional runtimes are still installed separately.
+
+The protected `tool-paths.json` in the agent directory persists exact executable
+paths. Both boot launchers use the selected Node executable. The agent uses the
+selected Git/Caddy/database clients and adds runtime directories to its build PATH.
+Before enrollment, `check-tools` runs under the real service account, including
+checks of optional selected clients. It writes `tool-check.json` for diagnosis.
+An inaccessible custom location fails setup; permission changes on an existing
+installation are never silently granted. New Windows enrollment runs as Local
+Service, matching subsequent agent execution.
+
+Existing PostgreSQL, MySQL and MariaDB services and data are left intact. Selecting
+a client does not claim that its server or credentials are healthy: the application's
+Database step requires the host, port and credentials and performs a query from the
+agent account. Existing databases are attached explicitly, never reinitialized.
+Detected MongoDB/Redis services are informational; this does not add provisioning
+support for those engines.
+
+Reusing a Caddy executable does **not** adopt its running proxy configuration.
+Ports 80, 443 and 2029 must be free; otherwise setup shows a conflict and stops
+before downloads or enrollment. Existing routes, certificates and service accounts
+are preserved. The automatic SSH form continues to stop at this conflict. An
+administrator can prepare an existing Caddy service for manual bootstrap: keep its
+current routes, enable a loopback-only admin API with origin enforcement, set
+`skip_install_trust` for internal certificates, and import
+the dedicated agent `managed-sites/*.caddy` directory. A protected `proxy.json`
+selects `existing-caddy`, its absolute `configPath`, loopback `admin` URL, SHA-256
+`sourceHash`, and `reservedHosts` / `reservedPorts`. A separate `candidatePath`
+beside the original config must be a regular file writable by the agent account;
+this preserves relative imports and works with Caddy 2.8. The original config is
+read-only to the agent; directory-wide write access is unnecessary. The prepared Windows bootstrap
+accepts this file and verifies it under Local Service before enrollment. The existing
+Caddy service account must be able to read the managed route file.
+
+The agent writes only that managed route file. It checks that the original config
+hash and the running config still agree, rejects reserved names/ports, and uses
+Caddy's conditional config API to reject concurrent edits. A recovery journal
+handles interruption between accepting a config and persisting the route file.
+Changing the original Caddyfile outside Manager requires an administrator to review
+and update its pinned hash. Existing sites remain outside Manager's app registry.
+
+On Windows, the agent uses private PM2 named pipes as well as a separate PM2 data
+directory. Its process-local preload leaves the selected PM2 installation intact.
+Legacy agents with an existing PM2 PID file and no private-pipe marker require an
+explicit migration; they never silently attach to another account's daemon.
+
+For selected new tools, setup uses official release checksums, enrolls the agent and
+configures boot startup. Manager needs the Node, GitHub release and npm metadata endpoints; the target
 needs their download endpoints, npm and its OS package repositories. Institution
 proxies or offline environments may require manual enrollment. App-specific runtimes
 such as Go, PHP and Composer still need separate installation.
@@ -247,6 +319,22 @@ change the destination of an action. Account settings remain shared.
 
 ## Guided application creation
 
+Connected servers use the Manager host's project catalogue, project tabs and
+overview layout, database table, resource cards and runtime inventory components.
+Opening a project shows its Overview, Apps, Deployments, Environment, Databases,
+Domains and Settings. Production and staging remain separate within the project;
+switching sections and restoring workspace tabs keeps the selected environment.
+Every application link and action stays on that server. Missing projects show an
+unavailable state instead of silently opening the full application list.
+
+Older applications use the same Environment editor and separate Settings and
+Domains sections. Environment values are available only to administrators and
+remain encrypted; saving other settings preserves existing variables. Agent
+capabilities still determine which operations are available: unsupported runtime
+logs and console tools are disabled, and unreported database sizes or backups
+are labelled as unreported. Updating the central Manager provides these UI changes;
+there is no separate UI bundle to install on connected agents.
+
 On a connected server, **New app** now uses the same six setup steps as the Manager
 host: Source, Build, Database, Environment, Domain, Deploy. Import a public HTTPS
 repository or choose one from an existing Git connection. Pick **Production only**,
@@ -279,7 +367,7 @@ be on the agent account's PATH. These jobs run on the selected server, so localh
 means that server. PostgreSQL creation can target a reachable database server;
 MySQL/MariaDB creation is restricted to loopback and creates a localhost account.
 Attach remote MySQL/MariaDB databases using an account already authorized there.
-No database engine is installed and no firewall rules are changed.
+The Database step creates application databases; engine installation is available separately under Server access → Runtimes. No firewall rules are changed.
 
 New database/user names and passwords are generated per environment. Existing names
 are never overwritten or adopted by the create operation. Administrator credentials
@@ -297,7 +385,7 @@ The saved app credential and generated names are retained: use **Test saved conn
 after inspecting/repairing a partial database creation. PostgreSQL recovery also
 checks database ownership and revoked PUBLIC access. **No database** detaches the
 connection without deleting the database, user or data. Automatic database cleanup,
-database engine installation and migration rollback are not performed.
+and migration rollback are not performed.
 
 Database variables are injected separately from custom app variables and take
 precedence over duplicate `DATABASE_*`/`DB_*` keys. Angular apps cannot attach database
@@ -310,3 +398,49 @@ activation still happen during deployment, with the existing application rollbac
 Validation references: [PostgreSQL psql](https://www.postgresql.org/docs/current/app-psql.html),
 [MySQL CREATE USER](https://dev.mysql.com/doc/refman/8.4/en/create-user.html),
 [MySQL connection options](https://dev.mysql.com/doc/refman/8.4/en/connection-options.html).
+
+## Service installation and remote console
+
+Manager 2.27 and agent 1.5 add Server access → Runtimes → Install or reuse services,
+and Server console plus application Logs & console, in the central Manager UI.
+No connected server runs a separate dashboard. Commands run as the existing agent
+service identity, have a 15-minute limit, stream redacted output, and support stopping
+the process tree. Commands are not interactive SSH sessions. Lost contact cancels
+a running command; expired requests and interrupted work are never replayed.
+
+Administrators can inspect and reuse custom executable paths, or install missing
+PostgreSQL, MySQL, MariaDB, Node.js, Git, Caddy, PM2, Go, PHP, Python and Composer.
+Each privileged operation requires a verified SSH identity and a fresh reviewed
+inventory. SSH credentials are held for that request only. Application jobs and
+agent/Manager updates wait for service operations to finish. Reuse changes agent
+tool selection only; it does not reset existing service credentials or configuration.
+Existing database connections are tested in the application's Database step.
+
+New Windows databases use separate Manager services under Local Service, protected
+binaries, separate data directories, loopback listeners, automatic startup and an
+authenticated readiness check. Linux uses the distribution's apt/dnf packages and
+systemd units; package availability depends on the configured distribution repositories.
+The custom service-files directory holds portable runtimes; native Linux database
+packages keep their standard configuration/data locations, reported in the result.
+Existing services, occupied ports and existing data directories block initialization.
+New engine credentials are encrypted in Manager and can be selected by the app
+setup wizard without copying passwords. Recovery credentials remain encrypted if
+installation partially fails; initialized data is retained. An interrupted operation
+blocks further work until its protected receipt is recovered.
+
+Reusing Caddy's executable alone does not adopt a web server's routes. An existing
+proxy must have the dedicated managed-sites import and protected proxy.json integration
+described above; conflicting or externally changed routes are refused. Existing sites
+remain outside Manager's ownership. DNS, public reachability, backup destinations and
+application-specific production configuration still require their own validation.
+
+The remote Runtimes & tools screen now renders the same RuntimeManager component
+as the Manager host, with server-scoped inventory, Install, Verify setup, Versions
+and Check updates controls. Node.js and Go project versions install side by side
+on Windows/Linux; PHP NTS project versions use official Windows builds. Linux PHP
+uses its distribution package or a verified existing custom executable. The version
+list comes from official vendor catalogs and downloaded archives are checked against
+their SHA-256 manifests. Existing server defaults and running applications do not
+change when a project version is installed. Select installed versions in an app's
+Build settings; the agent verifies the selection before building or deploying.
+Version selections and installed-version telemetry are scoped to the target server.

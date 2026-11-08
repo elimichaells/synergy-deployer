@@ -28,10 +28,10 @@ export function cleanInspection(value: unknown): RemoteInspection {
   return { framework: result.framework, commit: result.commit, commands, tools, packageManager: ['npm', 'pnpm', 'yarn'].includes(String(result.packageManager)) ? result.packageManager : null }
 }
 
-export function remoteSetupChecks(app: { inspection?: RemoteInspection | null; project_type?: string | null; setup_decisions?: Record<string, unknown>; database_config?: { status?: string } | null; hostname: string; start_cmd: string; env_names: string[] }): SetupCheck[] {
+export function remoteSetupChecks(app: { runtime_versions?:Record<string,string>; inspection?: RemoteInspection | null; project_type?: string | null; setup_decisions?: Record<string, unknown>; database_config?: { status?: string } | null; hostname: string; start_cmd: string; env_names: string[] }): SetupCheck[] {
   const decisions = app.setup_decisions || {}
   const checked = (id: string, step: SetupCheck['step'], label: string, pass: boolean, detail: string): SetupCheck => ({ id, step, label, status: pass ? 'pass' : 'fail', detail })
-  const tools = app.inspection?.tools || {}
+  const tools:Record<string,string|null> = {...app.inspection?.tools,...app.runtime_versions,...(app.runtime_versions?.node?{npm:app.runtime_versions.node}:{})}
   const runtime = app.project_type === 'go' ? !!tools.go : app.project_type === 'laravel' ? !!tools.php && !!tools.composer : !!tools.node
   const manager = app.inspection?.packageManager
   return [

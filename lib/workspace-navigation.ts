@@ -21,8 +21,9 @@ export function workspaceHref(value: string): string | null {
     const url = new URL(value, 'https://workspace.invalid')
     if (url.origin !== 'https://workspace.invalid' || (!pages.has(url.pathname) && !details.test(url.pathname) && !remote.test(url.pathname))) return null
     const search = new URLSearchParams()
-    for (const key of ['tab', 'view', 'section', 'step']) {
+    for (const key of ['tab', 'view', 'section', 'step', 'environment']) {
       const item = url.searchParams.get(key)
+      if (key === 'environment' && !['production', 'staging'].includes(item || '')) continue
       if (item && (/^[a-z][a-z0-9-]{0,40}$/.test(item) || (key === 'view' && remote.test(url.pathname) && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(item)))) search.set(key, item)
     }
     const hash = remote.test(url.pathname) && /^#(?:applications|deployments|server-access|storage|domains|new|app-[a-f0-9-]{36})$/i.test(url.hash) ? url.hash : ''
