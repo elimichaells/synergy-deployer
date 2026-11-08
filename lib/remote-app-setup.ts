@@ -6,7 +6,7 @@ import { encryptSecret, decryptSecret } from '@/lib/secret-crypto'
 import { getGitConnection, getGitHubConnectionToken } from '@/lib/github-connections'
 import { repositoryPath } from '@/lib/git-provider-policy'
 import { ensureManagedServers, uuid } from '@/lib/managed-servers'
-import { validateApp, validateDatabase } from '@/scripts/manager-agent.cjs'
+import { validateApp, validateDatabase, validateRuntimeSelection, RUNTIME_CAPABILITY } from '@/scripts/manager-agent.cjs'
 import { remoteEnvironmentPlan, remoteSetupChecks, REMOTE_SETUP_CAPABILITY, REMOTE_FRAMEWORKS } from '@/lib/remote-setup-policy'
 import { SETUP_STEPS } from '@/lib/project-setup-policy'
 import type { PoolClient } from 'pg'
@@ -31,7 +31,7 @@ async function lockApp(client: PoolClient, serverId: string, appId: string) {
   return app
 }
 async function enqueue(client: PoolClient, serverId: string, appId: string, userId: string, kind: string, payload: object) {
-  const result = await client.query('insert into remote_jobs(server_id,app_id,user_id,kind,payload_ciphertext) values($1,$2,$3,$4,$5) returning id',[serverId,appId,userId,kind,encryptSecret(JSON.stringify(payload))])
+  const result = await client.query('insert into remote_jobs(server_id,app_id,user_id,kind,payload_ciphertext) values($1,$2,$3,$4,$5) returning id',[serverId,appId,userId,kind,encryptSecret(JSON.stringify({...payload,...(Object.keys((payload as {runtime_versions?:object}).runtime_versions||{}).length?{requiredCapability:RUNTIME_CAPABILITY}:{})}))])
   await client.query('update remote_apps set setup_completed_at=null where id=$1',[appId])
   return result.rows[0].id as string
 }
@@ -71,7 +71,7 @@ export async function importRemoteApp(serverId: string, body: Record<string, unk
 export async function remoteSetup(serverId: string, appId: string) {
   await ensureManagedServers(); uuid(serverId); uuid(appId)
   const app=(await query(`select id,server_id,name,repo_url,branch,install_cmd,build_cmd,start_cmd,port,health_path,access_mode,hostname,ip_address,ip_port,git_connection_id,
-    env_names,environment_name,production_id,project_type,guided_setup,setup_step,setup_decisions,inspection,setup_completed_at,database_config from remote_apps where id=$1 and server_id=$2`,[appId,serverId])).rows[0]
+    env_names,environment_name,production_id,project_type,guided_setup,setup_step,setup_decisions,inspection,setup_completed_at,database_config,runtime_versions from remote_apps where id=$1 and server_id=$2`,[appId,serverId])).rows[0]
   if (!app?.guided_setup) throw new ApiError('Guided application not found on this server',404)
   const related=(await query('select id,name,environment_name,setup_completed_at from remote_apps where server_id=$1 and (id=$2 or production_id=$2) order by environment_name',[serverId,app.production_id || app.id])).rows
   const jobs=(await query('select id,kind,status,log,created_at,finished_at from remote_jobs where server_id=$1 and app_id=$2 order by created_at desc limit 10',[serverId,appId])).rows
@@ -80,7 +80,7 @@ export async function remoteSetup(serverId: string, appId: string) {
 
 export async function remoteSetupEnvironment(serverId: string, appId: string) {
   await ensureManagedServers(); uuid(serverId); uuid(appId)
-  const app=(await query('select env_ciphertext from remote_apps where id=$1 and server_id=$2 and guided_setup=true',[appId,serverId])).rows[0]
+  const app=(await query('select env_ciphertext from remote_apps where id=$1 and server_id=$2',[appId,serverId])).rows[0]
   if(!app)throw new ApiError('Application not found',404)
   return {environment:JSON.parse(decryptSecret(app.env_ciphertext))}
 }
@@ -102,10 +102,12 @@ export async function changeRemoteSetup(serverId: string, appId: string, body: R
       await client.query('update remote_apps set setup_step=$2 where id=$1',[appId,body.step])
     } else if(body.action==='save') {
       if(!SETUP_STEPS.includes(body.step as typeof SETUP_STEPS[number]))throw new ApiError('Invalid setup step',400)
-      const fields=['install_cmd','build_cmd','start_cmd','port','health_path','access_mode','hostname','ip_address','ip_port']
+      const fields=['install_cmd','build_cmd','start_cmd','port','health_path','access_mode','hostname','ip_address','ip_port','runtime_versions']
       const update=Object.fromEntries(fields.filter(key=>Object.hasOwn(body,key)).map(key=>[key,body[key]]))
       const environment=body.environment === undefined ? JSON.parse(decryptSecret(app.env_ciphertext)) : body.environment
       const config=validateApp({...app,...update,environment})
+      const metrics=(await client.query('select metrics from managed_servers where id=$1',[serverId])).rows[0]?.metrics
+      validateRuntimeSelection(config.runtime_versions,metrics)
       const projectType=body.project_type ?? app.project_type
       if(projectType!==null && !REMOTE_FRAMEWORKS.includes(projectType))throw new ApiError('Unsupported framework',400)
       if(projectType==='angular' && app.database_config)throw new ApiError('Detach the database before choosing Angular; browser apps must use a backend API',400)
@@ -119,6 +121,7 @@ export async function changeRemoteSetup(serverId: string, appId: string, body: R
       await client.query(`update remote_apps set install_cmd=$2,build_cmd=$3,start_cmd=$4,port=$5,health_path=$6,access_mode=$7,hostname=$8,ip_address=$9,ip_port=$10,
         env_ciphertext=$11,env_names=$12,project_type=$13,setup_step=$14,setup_decisions=$15::jsonb,setup_completed_at=null where id=$1`,
       [appId,config.install_cmd,config.build_cmd,config.start_cmd,config.port,config.health_path,config.access_mode,config.hostname,config.ip_address,config.ip_port,encryptSecret(JSON.stringify(config.environment)),Object.keys(config.environment).sort(),projectType,body.step,JSON.stringify(decisions)])
+      await client.query('update remote_apps set runtime_versions=$2::jsonb where id=$1',[appId,JSON.stringify(config.runtime_versions)])
     } else if(body.action==='inspect') {
       if(app.repo_url!==before.repo_url || app.git_connection_id!==before.git_connection_id)throw new ApiError('Repository changed; retry inspection',409)
       const config=validateApp({...app,branch:body.branch ?? app.branch,start_cmd:app.start_cmd || 'npm start',environment:{}})
@@ -133,7 +136,14 @@ export async function changeRemoteSetup(serverId: string, appId: string, body: R
       } else {
         if(app.database_config && body.mode==='create')throw new ApiError('This app already has a database attempt. Test its saved connection or explicitly detach it first.',409)
         const suffix=appId.replaceAll('-','').slice(0,24)
-        database=validateDatabase({...body,...(body.mode==='create'?{database:`app_${suffix}`,username:`app_${suffix}`,password:randomBytes(32).toString('base64url')}: {})})
+        let managed:Record<string,unknown>={}
+        if(body.mode==='create'&&body.serviceOperationId){
+          const installed=(await client.query("select service_id,result,credentials_ciphertext from remote_service_operations where id=$1 and server_id=$2 and status='success'",[uuid(body.serviceOperationId),serverId])).rows[0]
+          if(!installed?.credentials_ciphertext || !['postgresql','mysql','mariadb'].includes(installed.service_id))throw new ApiError('Choose a completed database installation on this server',400)
+          const credentials=JSON.parse(decryptSecret(installed.credentials_ciphertext))
+          managed={provider:installed.service_id,host:'127.0.0.1',port:credentials.port,tls:false,adminUsername:credentials.username,adminPassword:credentials.password}
+        }
+        database=validateDatabase({...body,...managed,...(body.mode==='create'?{database:`app_${suffix}`,username:`app_${suffix}`,password:randomBytes(32).toString('base64url')}: {})})
       }
       const {password,adminPassword,adminUsername,...publicConfig}=database
       // The app credential survives interrupted creation; administrator credentials live only in the encrypted job payload.

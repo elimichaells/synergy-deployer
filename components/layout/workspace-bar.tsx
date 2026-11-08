@@ -41,7 +41,8 @@ export function WorkspaceBar({ title, context, onNew, onHashChange }: { title: s
   const tabs = state.key === key ? state.tabs : []
   const section = params.get('tab') || params.get('section') || (hash.startsWith('#app-') ? 'overview' : hash.slice(1))
   const sectionTitle = sectionNames[section] || (section ? section.replaceAll('-', ' ').replace(/^./, c => c.toUpperCase()) : '')
-  const detail = hash.startsWith('#app-') || /^\/(sites|projects|storage|deployments)\/[^/]+$/.test(pathname) && !pathname.endsWith('/new')
+  const remoteProject = hash === '#applications' && /^[a-f0-9-]{36}$/i.test(params.get('view') || '')
+  const detail = remoteProject || hash.startsWith('#app-') || /^\/(sites|projects|storage|deployments)\/[^/]+$/.test(pathname) && !pathname.endsWith('/new')
   const isRemote = !['fleet', 'local'].includes(serverId)
   const label = hash.startsWith('#app-') ? context?.destinations?.[hash] || 'Application' : isRemote ? context?.page || sectionTitle || 'Overview' : context?.page || pageNames[pathname] || title
   useEffect(() => {
@@ -112,8 +113,8 @@ export function WorkspaceBar({ title, context, onNew, onHashChange }: { title: s
           <li aria-hidden="true" className="shrink-0"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li>
           <li className="max-w-40 shrink-0 truncate"><Link href={serverId === 'fleet' ? '/' : serverOverview(serverId)} className="font-medium text-primary">{serverTitle}</Link></li>
           {context?.project && <><li aria-hidden="true" className="hidden shrink-0 sm:block"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li><li className="hidden min-w-0 truncate sm:block"><Link href={context.project.href} className="text-muted-foreground hover:text-primary">{context.project.name}</Link></li></>}
-          <li aria-hidden="true" className="shrink-0"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li><li className="min-w-0 truncate font-medium" aria-current={(isRemote && !hash.startsWith('#app-')) || !sectionTitle ? 'page' : undefined}>{label}</li>
-          {sectionTitle && (!isRemote || hash.startsWith('#app-')) && <><li aria-hidden="true" className="shrink-0"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li><li className="shrink-0 text-muted-foreground" aria-current="page">{sectionTitle}</li></>}
+          <li aria-hidden="true" className="shrink-0"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li><li className="min-w-0 truncate font-medium" aria-current={(isRemote && !hash.startsWith('#app-') && !remoteProject) || !sectionTitle ? 'page' : undefined}>{label}</li>
+          {sectionTitle && (!isRemote || hash.startsWith('#app-') || remoteProject) && <><li aria-hidden="true" className="shrink-0"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li><li className="shrink-0 text-muted-foreground" aria-current="page">{sectionTitle}</li></>}
           {detail && context?.environment && <li className={`environment-chip ml-1 hidden sm:inline-flex ${context.environment}`}>{context.environment}</li>}
         </ol></nav>
         <span className="hidden shrink-0 items-center gap-1.5 text-[10px] text-muted-foreground lg:flex" title={state.saved ? 'Navigation is saved in this browser for your account. Form contents are not saved.' : 'Browser storage is unavailable'}>{server && <><Circle className={`h-1.5 w-1.5 fill-current ${!error && server.status === 'online' ? 'text-status-ready' : 'text-status-building'}`} />{error ? 'Status unavailable' : server.status}<span className="mx-1 text-border">|</span></>}<Cloud className="h-3 w-3" />{state.saved ? 'Workspace remembered' : 'This visit only'}</span>

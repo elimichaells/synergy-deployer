@@ -70,6 +70,45 @@ do not delete the file to force a reinstall. The installer now records the
 absolute runtime paths used by the SYSTEM startup task, and starts Manager
 from its installed directory on `127.0.0.1`.
 
+Preflight also rejects an existing WebRoot `Caddyfile`, Manager startup
+configuration, conflicting selected ports, and a new control PostgreSQL
+installation when another PostgreSQL service is present (including stopped
+services). Existing sites and services require a deliberate reuse or recovery
+configuration. Creating Manager's control database refuses existing database
+or role names; it never resets their passwords or attaches new encryption keys
+to old Manager data. Use unused `DbName` and `DbAppUser` values for a new Manager
+on an existing PostgreSQL server.
+
+When reusing PostgreSQL, deselect **Install control PostgreSQL** and supply its
+administrator credentials. Setup requires `psql`, `pg_dump`, and `pg_restore`
+from the same installation; creating the separate application cluster also
+requires `postgres`, `initdb`, `pg_ctl`, and `pg_isready`. For a nondefault tools
+location, set `PostgreSqlBinDirectory` in the command-line JSON configuration
+(for example, `D:\\DatabaseTools\\PostgreSQL\\18\\bin` in JSON), or set
+`MANAGER_INSTALL_POSTGRESQLBINDIRECTORY` before launching the wizard. Online
+setup refuses to install an unselected control server to obtain missing tools.
+The offline edition uses its verified bundled tools.
+
+Completion checks verify the exact Manager release and database readiness,
+sign in with the new administrator, validate its session, and exercise the
+server-management API and schema. They run against the loopback listener;
+client HTTPS, DNS, certificate trust and automatic recovery after reboot still
+require the checks above.
+
+Installer regression checks can be run without provisioning the current host:
+
+```powershell
+node --require ./tests/register.cjs --test --test-reporter=tap tests/installer-*.test.cjs
+```
+
+To additionally test schema creation, administrator credentials, the application
+database connection, and preservation of existing database/role names, set
+`MANAGER_INSTALL_TEST_PG_BIN` to an existing PostgreSQL `bin` directory and run
+`tests/installer-fresh-database.test.cjs` with the same Node test command. This
+test creates and removes two temporary clusters on loopback with dynamically
+assigned ports; it does not register Windows services or change production
+clusters. It does not replace a clean Windows installation and reboot test.
+
 The wizard supports two package sources:
 
 - Online: downloads `manager-windows-*.zip` and its matching

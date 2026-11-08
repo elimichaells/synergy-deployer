@@ -4,9 +4,12 @@ const { generateKeyPairSync } = require('node:crypto');
 const { Server, utils } = require('ssh2');
 const load = require('./server-module.cjs');
 const policy = require('../scripts/manager-agent.cjs');
+const catalog = load('lib/server-tool-catalog.ts',{});
+const discovery = load('lib/server-discovery.ts',{'./server-tool-catalog':catalog});
 class ApiError extends Error { constructor(message,status){super(message);this.status=status;} }
 const ssh = load('lib/server-ssh.ts', {
   '@/lib/db': {}, '@/lib/api': {ApiError}, '@/lib/audit': {}, '@/lib/managed-servers': {}, '@/scripts/manager-agent.cjs': policy,
+  '@/lib/server-discovery':discovery, '@/lib/server-tool-catalog':catalog,
 });
 
 test('SSH target validation separates an address from commands and URLs', () => {
@@ -77,6 +80,34 @@ test('installer metadata pins versions and rejects missing hashes or foreign rel
   await assert.rejects(ssh.installerDownloads('win32','arm64'),/supports/);
 });
 
+test('private-key authentication pins the host, verifies signatures and never attempts passwords',{timeout:15000},async t=>{
+  const pair=()=>generateKeyPairSync('rsa',{modulusLength:2048,privateKeyEncoding:{type:'pkcs1',format:'pem'},publicKeyEncoding:{type:'pkcs1',format:'pem'}});
+  const host=pair(),clientKey=pair(),parsed=utils.parseKey(clientKey.privateKey);
+  const expected=ssh.fingerprint(utils.parseKey(host.privateKey).getPublicSSH());
+  let attempts=0,passwords=0;const clients=new Set();
+  const server=new Server({hostKeys:[host.privateKey]},client=>{
+    clients.add(client);client.on('error',()=>{}).on('close',()=>clients.delete(client));
+    client.on('authentication',ctx=>{
+      if(ctx.method==='password'){passwords++;ctx.reject(['publickey']);return}
+      if(ctx.method!=='publickey'){ctx.reject(['publickey']);return}
+      attempts++;
+      if(ctx.username==='admin'&&ctx.key.data.equals(parsed.getPublicSSH())&&(!ctx.signature||parsed.verify(ctx.blob,ctx.signature,ctx.hashAlgo)===true))ctx.accept();else ctx.reject(['publickey']);
+    });
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(async()=>{for(const c of clients)c.end();await new Promise(resolve=>server.close(resolve))});
+  const target={host:'127.0.0.1',port:server.address().port,username:'admin'};
+  const auth=ssh.sshCredentials({authentication:'key',privateKey:clientKey.privateKey,password:'must-not-be-used'});
+  assert.equal(auth.password,undefined);assert.equal((await ssh.probeSsh(target)).fingerprint,expected);assert.equal(attempts,0);
+  await assert.rejects(ssh.connectSsh(target,auth,'SHA256:'+'A'.repeat(43)),/host key changed/);assert.equal(attempts,0);
+  const connection=await ssh.connectSsh(target,auth,expected);connection.end();assert.ok(attempts>=1);assert.equal(passwords,0);
+  const encrypted=require('node:crypto').createPrivateKey(clientKey.privateKey).export({type:'pkcs1',format:'pem',cipher:'aes-256-cbc',passphrase:'fixture-key-passphrase'});
+  assert.throws(()=>ssh.sshCredentials({authentication:'key',privateKey:encrypted,passphrase:'wrong'}),/format and passphrase/);
+  const encryptedConnection=await ssh.connectSsh(target,ssh.sshCredentials({authentication:'key',privateKey:encrypted,passphrase:'fixture-key-passphrase'}),expected);encryptedConnection.end();
+  for(const body of [{authentication:'unexpected'},{authentication:'key',privateKey:'bad'},{authentication:'key',privateKey:'x'.repeat(16385)},{authentication:'key',privateKey:clientKey.privateKey,sudoPassword:'bad\npassword'},{authentication:'key',privateKey:clientKey.publicKey}])assert.throws(()=>ssh.sshCredentials(body));
+  assert.deepEqual(ssh.sudoCommand(auth),{prefix:'sudo -n -- ',input:''});
+  assert.deepEqual(ssh.sudoCommand({...auth,sudoPassword:'sudo-only'}),{prefix:"sudo -S -p '' -- ",input:'sudo-only\n'});
+});
+
 test('SSH API requires administrator role, same origin and bounded JSON before opening a connection', async()=>{
   let role='viewer', calls=0;
   const bodyTools=load('lib/request-body.ts',{'@/lib/api':{ApiError}});
@@ -86,13 +117,58 @@ test('SSH API requires administrator role, same origin and bounded JSON before o
     '@/lib/api':{ApiError,jsonError:error=>Response.json({error:error.message},{status:error.status||500})},
     '@/lib/request-body':bodyTools, '@/lib/managed-servers':{uuid:value=>value},
     '@/lib/update-maintenance':{updateProtected:(_name,work)=>work()},
-    '@/lib/server-ssh':{sshTarget:body=>body,probeSsh:async()=>{calls++;return{fingerprint:'test'};},setupServerSsh:async()=>{calls++;return{};}},
+    '@/lib/server-ssh':{sshTarget:body=>body,probeSsh:async()=>{calls++;return{fingerprint:'test'};},inspectServerSsh:async()=>{calls++;return{inventory:{}};},setupServerSsh:async()=>{calls++;return{};}},
   });
   const context={params:Promise.resolve({id:'11111111-1111-4111-8111-111111111111'})};
   const request=(body={action:'probe'},headers={})=>new Request('https://manager/api/servers/id/ssh',{method:'POST',headers:{host:'manager',origin:'https://manager','content-type':'application/json',...headers},body:JSON.stringify(body)});
-  for(const value of [null,'viewer','operator']){role=value;assert.equal((await route.POST(request(),context)).status,value?403:401);}
+  for(const value of [null,'viewer','operator']){role=value;for(const action of ['probe','inspect','setup'])assert.equal((await route.POST(request({action}),context)).status,value?403:401);}
   role='admin';assert.equal((await route.POST(request({}, {origin:'https://attacker.example'}),context)).status,403);
-  assert.equal((await route.POST(request({action:'setup',password:'x'.repeat(20000)}),context)).status,413);
+  assert.equal((await route.POST(request({action:'setup',password:'x'.repeat(65536)}),context)).status,413);
   assert.equal(calls,0);
   assert.equal((await route.POST(request(),context)).status,200);assert.equal(calls,1);
+  assert.equal((await route.POST(request({action:'inspect'}),context)).status,200);assert.equal(calls,2);
+});
+
+test('all reused prerequisites require no release network access; only missing tools download metadata',async t=>{
+  const original=global.fetch;t.after(()=>global.fetch=original);const calls=[];
+  global.fetch=async url=>{calls.push(url);if(url==='https://registry.npmjs.org/pm2/latest')return Response.json({version:'6.0.0'});throw Error('Unexpected release download');};
+  assert.deepEqual(await ssh.installerDownloads('win32','x64',[]),{});
+  assert.equal(calls.length,0);
+  assert.deepEqual(await ssh.installerDownloads('linux','x64',['pm2']),{pm2Version:'6.0.0'});
+  assert.deepEqual(calls,['https://registry.npmjs.org/pm2/latest']);
+});
+
+test('custom paths are OS-specific executable paths, never shell command text',()=>{
+  assert.equal(discovery.toolPath('D:\\Database Tools\\pgsql\\psql.exe','win32','psql'),'D:\\Database Tools\\pgsql\\psql.exe');
+  assert.equal(discovery.toolPath('/opt/My Database/bin/psql','linux','psql'),'/opt/My Database/bin/psql');
+  for(const p of ['psql','C:relative.exe','\\\\server\\share\\psql.exe','C:\\psql.exe;C:\\bad','C:\\psql.exe --password','C:\\psql.exe:stream'])assert.throws(()=>discovery.toolPath(p,'win32','psql'));
+  for(const p of ['bin/psql','/opt/bin:other/psql','/bin/psql\ncommand'])assert.throws(()=>discovery.toolPath(p,'linux','psql'));
+  assert.throws(()=>discovery.discoveryPaths({unknown:'/bin/x'},'linux'));
+  assert.equal(discovery.toolCompatible('node','v18.0.0'),false);
+  assert.equal(discovery.toolCompatible('node','v24.10.0'),true);
+  assert.equal(discovery.toolCompatible('psql','psql (PostgreSQL) 18.1'),true);
+  assert.equal(discovery.toolCompatible('psql','unrelated 18.1'),false);
+});
+
+test('fresh inventory blocks conflicts and invalid reuse instead of silently installing or adopting',()=>{
+  const selections=Object.fromEntries(catalog.SERVER_TOOLS.map(t=>[t.id,{mode:t.required?'install':'skip',path:''}]));
+  selections.psql={mode:'reuse',path:'/custom/postgres/psql'};
+  const plan=discovery.selectedTools(selections,'linux');
+  const tools=Object.fromEntries(catalog.SERVER_TOOLS.map(t=>[t.id,[]]));tools.psql=[{path:'/custom/postgres/psql',compatible:true,version:'psql (PostgreSQL) 18.1'}];
+  const inventory={platform:'linux',arch:'x64',portsKnown:true,ports:[5432,3306],tools,services:[],privileged:true};
+  discovery.verifyToolPlan(plan,inventory);
+  assert.throws(()=>discovery.verifyToolPlan(plan,{...inventory,ports:[443,5432]}),/already in use/);
+  assert.throws(()=>discovery.verifyToolPlan(plan,{...inventory,portsKnown:false}),/Could not inspect/);
+  assert.throws(()=>discovery.verifyToolPlan(plan,{...inventory,tools:{...tools,psql:[]}}),/missing, incompatible or inaccessible/);
+  assert.throws(()=>discovery.selectedTools({...selections,psql:{mode:'install'}},'linux'),/Choose how/);
+  assert.throws(()=>discovery.selectedTools({...selections,caddy:{mode:'skip'}},'linux'),/Choose how/);
+});
+
+test('Windows and Linux inventories preserve exact paths and distinguish clients from running services',()=>{
+  const win=ssh.parseServerInventory('MANAGER_INVENTORY='+JSON.stringify({platform:'win32',arch:'x64',privileged:true,portsKnown:true,ports:[5432,5432],services:[{name:'postgresql-x64-18',status:'Running',executable:'D:\\PG\\bin\\pg_ctl.exe',config:'E:\\Data'}],tools:{psql:[{path:'D:\\PG\\bin\\psql.exe',version:'psql (PostgreSQL) 18.1'}]}}),'win32');
+  assert.equal(win.tools.psql[0].compatible,true);assert.equal(win.services[0].config,'E:\\Data');assert.deepEqual(win.ports,[5432]);
+  const line=(kind,...v)=>[kind,...v.map(s=>Buffer.from(s).toString('base64'))].join('\t');
+  const linux=ssh.parseServerInventory([line('meta','Linux','arm64','1000'),line('ports','known'),line('tool','psql',"/opt/Database's Tools/psql",'psql (PostgreSQL) 18.1',''),line('service','postgresql.service','active','',''),line('port','5432')].join('\n'),'linux');
+  assert.equal(linux.tools.psql[0].path,"/opt/Database's Tools/psql");assert.equal(linux.privileged,false);assert.equal(linux.services[0].name,'postgresql.service');
+  assert.throws(()=>ssh.parseServerInventory(line('meta','Darwin','arm64','0'),'linux'),/unsupported operating system/);
 });

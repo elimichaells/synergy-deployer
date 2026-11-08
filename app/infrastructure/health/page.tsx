@@ -4,9 +4,9 @@ import Link from 'next/link'
 import { AppShell } from '@/components/layout/app-shell'
 import { useServerHealth } from '@/components/server-health'
 import { AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { ResourceUsage } from '@/components/workspace/resource-usage'
 import { HealthHistoryPanel } from '@/components/health-history'
 
-const gb = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`
 const when = (value: string) => new Date(value).toLocaleString()
 
 export default function ServerHealthPage() {
@@ -37,10 +37,7 @@ export default function ServerHealthPage() {
       </div>)}</section>}
       <HealthHistoryPanel />
       <Link href="/infrastructure/operations" className="block rounded-xl border border-border bg-card p-5 text-sm"><span className="font-semibold">AI Operations →</span><span className="mt-1 block text-muted-foreground">Investigate these alerts, review application recovery and inspect sampled uptime.</span></Link>
-      {sample && <div className="grid gap-4 sm:grid-cols-2">{sample.disks.map(disk => <div key={disk.name} className="rounded-xl border border-border bg-card p-5">
-        <p className="text-sm text-muted-foreground">{disk.name} free disk space</p><p className="mt-2 text-2xl font-semibold">{gb(disk.free)} <span className="text-sm font-normal text-muted-foreground">of {gb(disk.total)}</span></p>
-        <meter className="mt-3 h-3 w-full" min={0} max={disk.total} value={disk.free} low={disk.total * .2} optimum={disk.total} aria-label={`${disk.name} free space`} />
-      </div>)}<div className="rounded-xl border border-border bg-card p-5"><p className="text-sm text-muted-foreground">Free memory</p><p className="mt-2 text-2xl font-semibold">{gb(sample.memory.free)}</p><p className="mt-2 text-xs text-muted-foreground">{sample.apps.filter(x => x.status === 'online').length} processes online · {sample.pm2Updates} PM2 update processes</p></div></div>}
+      {sample && <ResourceUsage disks={sample.disks} memoryFree={sample.memory.free} processHint={`${sample.apps.filter(x => x.status === 'online').length} processes online · ${sample.pm2Updates} PM2 update processes`} />}
       {sample && <section className="overflow-hidden rounded-xl border border-border"><div className="border-b border-border p-4"><h2 className="font-medium">Service responses</h2><p className="mt-1 text-xs text-muted-foreground">Readiness checks follow local redirects and require a successful response or the app’s configured expected code. A running process alone does not establish readiness.</p></div><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="text-xs text-muted-foreground"><th className="px-4 py-3">Service</th><th className="px-4 py-3">Response</th><th className="px-4 py-3 text-right">Time</th></tr></thead><tbody>{sample.checks.map(check => <tr key={check.name} className="border-t border-border/60"><td className="px-4 py-3">{check.name}</td><td className={`px-4 py-3 ${check.ok ? 'text-status-ready' : 'text-red-300'}`}>{check.status ? `HTTP ${check.status}` : 'No response'}{check.reason && <p className="mt-1 text-xs text-muted-foreground">{check.reason}</p>}</td><td className="px-4 py-3 text-right tabular-nums">{check.ms} ms</td></tr>)}</tbody></table></div></section>}
       <section className="rounded-xl border border-border p-5"><h2 className="font-medium">When warnings appear</h2><ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-muted-foreground"><li>Disk: warning below 20% or 30 GB free; critical below 10% or 15 GB. Rapid growth also warns when estimated time to full is under six hours.</li><li>Memory: low free memory for three checks. Services: two failed or slow checks in a row.</li><li>Processes: missing applications, repeated restarts, or multiple PM2 updates. Critical update storms and critical disk space alert immediately.</li><li>Logs: active log files over 100 MB, critical at 500 MB. Incidents resolve after two healthy checks.</li></ul></section>
       <section className="rounded-xl border border-border p-5"><h2 className="font-medium">Recent resolved incidents</h2>{!resolved.length ? <p className="mt-3 text-sm text-muted-foreground">No resolved incidents recorded yet.</p> : <ul className="mt-3 divide-y divide-border">{resolved.map(alert => <li key={alert.id} className="py-3 text-sm"><p>{alert.message}</p><p className="mt-1 text-xs text-muted-foreground">{when(alert.openedAt)} → {when(alert.resolvedAt!)}</p></li>)}</ul>}</section>

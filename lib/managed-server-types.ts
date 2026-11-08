@@ -1,6 +1,8 @@
 export interface RemoteMetrics {
   hostname: string
   platform: 'win32' | 'linux'
+  arch?: string
+  runtimeVersions?: Record<string,string[]>
   version: string
   cpuPercent: number
   memoryTotal: number
@@ -9,7 +11,7 @@ export interface RemoteMetrics {
   diskFree: number | null
   uptime: number
   addresses: string[]
-  tools: { node: string; git: string | null; pm2: string | null; caddy: string | null }
+  tools: { node: string; git: string | null; pm2: string | null; caddy: string | null } & Record<string, string | null>
   apps: { id: string; status: string; cpu: number; memory: number }[]
   proxyError?: string | null
   capabilities?: string[]
@@ -30,6 +32,7 @@ export interface ManagedServer {
 }
 
 export interface RemoteApp {
+  runtime_versions?: Record<string,string>
   id: string
   server_id: string
   name: string

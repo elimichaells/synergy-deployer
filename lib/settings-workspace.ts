@@ -59,6 +59,6 @@ export function validateSettingsSection(section: SettingsSection, form: Settings
 
 export function runtimeCategory(id: string) {
   if (['node', 'php', 'go', 'python', 'angular', 'composer'].includes(id)) return 'languages'
-  if (['postgresql', 'mysql', 'mariadb', 'sqlserver', 'mongodb', 'redis'].includes(id)) return 'databases'
+  if (['postgresql', 'psql', 'pg_dump', 'pg_restore', 'mysql', 'mariadb', 'sqlserver', 'mongodb', 'redis'].includes(id)) return 'databases'
   return 'tools'
 }

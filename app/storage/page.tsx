@@ -13,6 +13,7 @@ import { Flag, serverRoleLabel } from '@/components/storage/bits'
 import { AddDatabaseSheet } from '@/components/storage/add-database-sheet'
 import { RenameReminders } from '@/components/storage/rename-reminders'
 import { ServersAndMigrations } from '@/components/storage/servers-panel'
+import { DatabaseList } from '@/components/workspace/database-list'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 interface StorageApp { serviceId: string; projectId: string; name: string; environment: string; groupId: string | null; groupName: string | null; ownership: string }
@@ -143,35 +144,17 @@ export default function StoragePage() {
           <p className="mt-1 max-w-sm text-xs text-muted-foreground">Add one from a project&apos;s Storage tab, or link the ones your apps already use above.</p>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-border bg-card">
-          <div className="hidden grid-cols-[minmax(0,1.6fr)_minmax(0,1.4fr)_100px_minmax(0,1fr)_24px] gap-4 border-b border-border px-5 py-2.5 text-xs text-muted-foreground md:grid">
-            <span>Database</span><span>Used by</span><span>Size</span><span>Backups</span><span />
-          </div>
-          <div className="divide-y divide-border">
-            {visible.map(database => (
-              <Link key={database.key} href={`/storage/${database.id}`} className="grid gap-3 px-5 py-3.5 transition-colors hover:bg-white/[0.025] md:grid-cols-[minmax(0,1.6fr)_minmax(0,1.4fr)_100px_minmax(0,1fr)_24px] md:items-center">
-                <div className="flex min-w-0 items-center gap-3">
-                  <ProviderLogo provider={database.engine} />
-                  <div className="min-w-0">
-                    <p className="flex items-center gap-2 truncate font-mono text-sm font-medium">{database.database}{database.warnings.length > 0 && <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-status-building" aria-label={`${database.warnings.length} warnings`} />}</p>
-                    <p className="flex items-center gap-2 truncate text-xs text-muted-foreground">{providerMeta[database.engine]?.label}<span className={cn('rounded-full border px-1.5 py-px text-[10px]', serverRoleLabel[database.serverRole].className)}>{serverRoleLabel[database.serverRole].label}</span></p>
-                  </div>
-                </div>
-                <div className="min-w-0 text-sm">
-                  <p className="truncate">{database.apps.map(app => app.name).join(', ')}</p>
-                  <p className="truncate text-xs text-muted-foreground">{[...new Set(database.apps.map(app => app.groupName).filter(Boolean))].join(', ') || '—'}</p>
-                </div>
-                <span className="font-mono text-xs text-muted-foreground">{formatBytes(database.sizeBytes)}</span>
-                <span className="text-xs">
-                  {database.backup
-                    ? <span className={database.backup.lastStatus === 'failed' ? 'text-status-failed' : 'text-muted-foreground'}>{database.backup.frequency}{database.backup.lastFinishedAt ? ` · last ${relativeTime(database.backup.lastFinishedAt, now)}` : ' · not run yet'}{database.backup.lastStatus === 'failed' ? ' · failed' : ''}</span>
-                    : <span className={database.engine === 'postgresql' ? 'text-status-building' : 'text-muted-foreground'}>{database.engine === 'postgresql' ? 'No backups' : 'Managed by the server'}</span>}
-                </span>
-                <ArrowRight className="hidden h-4 w-4 text-muted-foreground md:block" />
-              </Link>
-            ))}
-          </div>
-        </div>
+        <DatabaseList rows={visible.map(database => ({
+          id: database.key, href: `/storage/${database.id}`, database: database.database, engine: database.engine,
+          warnings: database.warnings.length,
+          server: <span className={cn('rounded-full border px-1.5 py-px text-[10px]', serverRoleLabel[database.serverRole].className)}>{serverRoleLabel[database.serverRole].label}</span>,
+          applications: database.apps.map(app => app.name).join(', '),
+          detail: [...new Set(database.apps.map(app => app.groupName).filter(Boolean))].join(', '),
+          size: formatBytes(database.sizeBytes),
+          backup: database.backup
+            ? <span className={database.backup.lastStatus === 'failed' ? 'text-status-failed' : 'text-muted-foreground'}>{database.backup.frequency}{database.backup.lastFinishedAt ? ` · last ${relativeTime(database.backup.lastFinishedAt, now)}` : ' · not run yet'}{database.backup.lastStatus === 'failed' ? ' · failed' : ''}</span>
+            : <span className={database.engine === 'postgresql' ? 'text-status-building' : 'text-muted-foreground'}>{database.engine === 'postgresql' ? 'No backups' : 'Managed by the server'}</span>,
+        }))} />
       )}
       {atRisk > 0 && <p className="mt-4 flex items-center gap-1.5 text-xs text-muted-foreground"><ShieldAlert className="h-3.5 w-3.5" />Databases marked with a warning sign have a risk worth fixing. Open one to see what and how.</p>}
       </TabsContent>

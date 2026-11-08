@@ -1,12 +1,15 @@
 'use client'
 
 import { AgentUpdates } from '@/components/infrastructure/agent-updates'
-import { RemoteAppForm } from '@/components/infrastructure/remote-app-form'
 import { RemoteAppImport } from '@/components/infrastructure/remote-app-import'
 import { RemoteApplicationWorkspace } from '@/components/infrastructure/remote-application-workspace'
 import { RemoteApplications } from '@/components/infrastructure/remote-applications'
 import { RemoteDeployment } from '@/components/infrastructure/remote-deployment'
+import { RemoteServerHealth, RemoteProcesses } from '@/components/infrastructure/remote-server-health'
+import { RemoteRuntimes } from '@/components/infrastructure/remote-runtimes'
+import { RemoteConsole } from '@/components/infrastructure/remote-console'
 import { RemoteResources } from '@/components/infrastructure/remote-resources'
+import { RemoteProjectWorkspace } from '@/components/infrastructure/remote-project-workspace'
 import { RemoteServerOverview } from '@/components/infrastructure/remote-server-overview'
 import { ServerEnrollment } from '@/components/infrastructure/server-enrollment'
 import { ServerSshSetup } from '@/components/infrastructure/server-ssh-setup'
@@ -19,15 +22,17 @@ import { Tabs, TabsContent } from '@/components/ui/tabs'
 import { ApplicationTabs } from '@/components/workspace/application-tabs'
 import { DeploymentHistory } from '@/components/workspace/deployment-history'
 import { InfrastructureOverview } from '@/components/workspace/infrastructure-overview'
+import { PROJECT_TABS, ProjectTabs, type ProjectTab } from '@/components/workspace/project-tabs'
 import type { ManagedServer, RemoteApp, RemoteJob } from '@/lib/managed-server-types'
+import { projectEnvironment as chooseProjectEnvironment } from '@/lib/application-environments'
 import { remoteOverview, remoteWorkspaceView } from '@/lib/remote-server-overview'
-import { remoteAppHref, remoteDeployment } from '@/lib/remote-workspace'
-import { ArrowUpRight, Download, Plus, RefreshCw, Rocket } from 'lucide-react'
+import { remoteAppHref, remoteDeployment, remoteProjects, remoteProjectHref, remoteRuntimeToolsUnavailable, remoteDatabases } from '@/lib/remote-workspace'
+import { ArrowUpRight, Database, Download, Plus, RefreshCw, Rocket } from 'lucide-react'
 import Link from 'next/link'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { useCallback, useEffect, useState } from 'react'
 
-const gb = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`
+
 type Detail = { server: ManagedServer; apps: RemoteApp[]; jobs: RemoteJob[]; role: string }
 
 export default function ManagedServerPage() {
@@ -48,7 +53,6 @@ function ManagedServerWorkspace({ id }: { id: string }) {
   const [error, setError] = useState('')
   const [loadError, setLoadError] = useState('')
   const [busy, setBusy] = useState(false)
-  const [editing, setEditing] = useState<RemoteApp | 'new' | null>(null)
   const [enrollment, setEnrollment] = useState<string | null>(null)
   const [revoke, setRevoke] = useState(false)
   const [manual, setManual] = useState(false)
@@ -63,7 +67,7 @@ function ManagedServerWorkspace({ id }: { id: string }) {
     } catch (err) { setLoadError((err as Error).message) }
   }, [id])
   useEffect(() => { void load(); const timer = setInterval(() => void load(), 10000); return () => clearInterval(timer) }, [load])
-  useEffect(() => { setEditing(null); setFormDirty(false); setRevoke(false) }, [hash])
+  useEffect(() => { setFormDirty(false); setRevoke(false) }, [hash])
   async function action(suffix: string, body: object = {}) {
     setBusy(true); setError('')
     try {
@@ -80,22 +84,36 @@ function ManagedServerWorkspace({ id }: { id: string }) {
   </AppShell>
   const summary = remoteOverview(server, data?.apps || [], data?.jobs || [], now, !!loadError)
   const selected = view === 'app' ? summary.apps.find(app => hash === `#app-${app.id}`) : undefined
+  const projects = remoteProjects(id, summary.apps, summary.jobs)
+  const projectId = view === 'applications' && params.get('view') !== 'apps' ? params.get('view') : null
+  const project = projects.find(item => item.id === projectId)
+  const parentProject = selected ? projects.find(item => item.apps.some(app => app.id === selected.id)) : undefined
+  const projectTab = PROJECT_TABS.includes(params.get('tab') as ProjectTab) ? params.get('tab') as ProjectTab : 'overview'
+  const projectEnvironment = chooseProjectEnvironment((project?.apps || []).map(app => ({ environment: app.environment as 'production' | 'staging' })), params.get('environment') === 'staging' ? 'staging' : 'production')
+  const projectApps = project ? summary.apps.filter(app => project.apps.some(member => member.id === app.id)) : []
+  const environmentApps = projectApps.filter(app => (app.environment_name || 'production') === projectEnvironment)
+  const databaseCount = remoteDatabases(environmentApps).length
+  const domainCount = new Set(environmentApps.filter(app => !app.hostname.endsWith('.invalid')).map(app => app.hostname)).size
   const openedJob = view === 'deployments' && params.get('view') ? summary.jobs.find(job => job.id === params.get('view')) : undefined
   const infraSection = params.get('section') || 'overview'
   const requestedTab = params.get('tab')
   const appTab = (requestedTab && ['overview','deployments','environment','logs','console','storage','domains','settings','setup'].includes(requestedTab) ? requestedTab : null) || (selected?.guided_setup && !selected.setup_completed_at ? 'setup' : 'overview')
-  const changeTab = (tab: string) => { if (selected) navigate(() => router.push(remoteAppHref(id, selected.id, tab))) }
-  const titles = { overview: 'Overview', applications: 'Projects', deployments: openedJob ? openedJob.app_name : 'Deployments', 'server-access': 'Infrastructure', storage: 'Storage', domains: 'Domains & HTTPS', new: 'Add a new app', app: selected?.name || 'Application unavailable' }
-  const title = editing ? editing === 'new' ? 'New application' : `Edit ${editing.name}` : titles[view]
+  const changeTab = (tab: string) => navigate(() => {
+    if (selected) router.push(remoteAppHref(id, selected.id, tab))
+    else if (project) router.push(remoteProjectHref(id, project.id, tab, projectEnvironment))
+  })
+  const titles = { overview: 'Overview', applications: 'Projects', deployments: openedJob ? openedJob.app_name : 'Deployments', 'server-access': { health: 'Health & alerts', runtimes: 'Runtimes & tools', processes: 'Processes', agent: 'Agent access & updates', console:'Server console' }[infraSection] || 'Infrastructure', storage: 'Storage', domains: 'Domains & HTTPS', new: 'Add a new app', app: selected?.name || 'Application unavailable' }
+  const title = projectId ? project?.name || 'Project unavailable' : titles[view]
   const notice = 'rounded-lg border border-status-building/25 bg-status-building/5 p-4 text-sm leading-6 text-status-building'
-  return <Tabs value={appTab} onValueChange={changeTab}><AppShell infrastructureSection={params.get('section')} area={view === 'server-access' || view === 'domains' ? 'infrastructure' : undefined} title={title} onWorkspaceHashChange={setHash} unsavedChanges={formDirty} workspace={{ href: `${root}${params.size ? `?${params}` : ''}${hash}`, environment: selected ? selected.environment_name || 'production' : undefined, page: openedJob ? `Release ${openedJob.id.slice(0,8)}` : undefined, destinations: Object.fromEntries(summary.apps.map(app => [`#app-${app.id}`, `${app.name}${app.environment_name ? ` · ${app.environment_name}` : ''}`])) }} subtitle={selected ? <span className="flex items-center gap-2"><EnvironmentBadge environment={selected.environment_name || 'production'} /><span className="font-mono text-xs">{selected.repo_url.replace(/^https?:\/\//, '').replace(/\.git$/, '')}</span></span> : `${server.name} · ${server.platform === 'win32' ? 'Windows' : 'Linux'}${server.location ? ` · ${server.location}` : ''}`}
-    back={view === 'app' || view === 'new' ? { href: `${root}#applications`, label: 'Projects' } : openedJob ? { href: `${root}#deployments`, label: 'Deployments' } : undefined}
-    tabs={selected && !editing ? <ApplicationTabs activeTab={appTab} showSetupTab={!!selected.guided_setup && (!selected.setup_completed_at || appTab === 'setup')} /> : undefined}
+  return <Tabs value={project ? projectTab : appTab} onValueChange={changeTab}><AppShell infrastructureSection={params.get('section')} area={view === 'server-access' || view === 'domains' ? 'infrastructure' : undefined} title={title} onWorkspaceHashChange={setHash} unsavedChanges={formDirty} workspace={{ href: `${root}${params.size ? `?${params}` : ''}${hash}`, project: parentProject ? { name: parentProject.name, href: remoteProjectHref(id, parentProject.id) } : undefined, environment: selected ? selected.environment_name || 'production' : project ? projectEnvironment : undefined, page: project?.name || (openedJob ? `Release ${openedJob.id.slice(0,8)}` : undefined), destinations: Object.fromEntries(summary.apps.map(app => [`#app-${app.id}`, `${app.name}${app.environment_name ? ` · ${app.environment_name}` : ''}`])) }} subtitle={selected ? <span className="flex items-center gap-2"><EnvironmentBadge environment={selected.environment_name || 'production'} /><span className="font-mono text-xs">{selected.repo_url.replace(/^https?:\/\//, '').replace(/\.git$/, '')}</span></span> : project ? `${project.apps.filter(app => !app.production_id).length} app · ${databaseCount || 'no'} ${databaseCount === 1 ? 'database' : 'databases'} · ${domainCount || 'no'} ${domainCount === 1 ? 'domain' : 'domains'}` : view === 'applications' ? `${projects.length} projects · ${summary.apps.length} environments` : `${server.name} · ${server.platform === 'win32' ? 'Windows' : 'Linux'}${server.location ? ` · ${server.location}` : ''}`}
+    back={parentProject ? { href: remoteProjectHref(id, parentProject.id, 'overview', selected?.environment_name), label: parentProject.name } : projectId ? { href: `${root}#applications`, label: 'Projects' } : view === 'app' || view === 'new' ? { href: `${root}#applications`, label: 'Projects' } : openedJob ? { href: `${root}#deployments`, label: 'Deployments' } : undefined}
+    tabs={project ? <ProjectTabs unavailable={server.metrics?.capabilities?.includes('remote-console-v1')?{}:{ logs: remoteRuntimeToolsUnavailable }} /> : selected ? <ApplicationTabs unavailable={server.metrics?.capabilities?.includes('remote-console-v1')?{}:{ logs: remoteRuntimeToolsUnavailable }} activeTab={appTab} showSetupTab={!!selected.guided_setup && (!selected.setup_completed_at || appTab === 'setup')} /> : undefined}
     actions={<>
       {selected && !selected.hostname.endsWith('.invalid') && <Button asChild variant="outline" size="sm"><a href={`https://${selected.hostname}`} target="_blank" rel="noreferrer">Visit<ArrowUpRight className="ml-1.5 h-3.5 w-3.5" /></a></Button>}
       <Button variant="outline" size="sm" onClick={() => void load()}><RefreshCw className="mr-1.5 h-3.5 w-3.5" />Refresh</Button>
       {selected && deployer && <Button size="sm" disabled={busy || !server.enabled || !server.enrolled_at || summary.active.some(job => job.app_id === selected.id) || (!!selected.guided_setup && !selected.setup_completed_at)} onClick={() => void action(`/apps/${selected.id}/deploy`)}><Rocket className="mr-1.5 h-3.5 w-3.5" />Deploy</Button>}
-      {admin && server.enabled && !selected && view !== 'new' && !openedJob && !editing && <Button asChild size="sm" disabled={sshBusy}><Link href={`${root}#new`}><Plus className="mr-1.5 h-4 w-4" />New app</Link></Button>}
+      {admin && server.enabled && project && <Button asChild size="sm"><Link href={remoteProjectHref(id, project.id, 'storage', projectEnvironment)}><Database className="mr-1.5 h-4 w-4" />Add service</Link></Button>}
+      {admin && server.enabled && !selected && !projectId && ['overview', 'applications'].includes(view) && !openedJob && <Button asChild size="sm" disabled={sshBusy}><Link href={`${root}#new`}><Plus className="mr-1.5 h-4 w-4" />New app</Link></Button>}
     </>}>
     <div className="space-y-6">
       {(error || loadError) && <p role="alert" className="notice-error">{error || loadError}</p>}
@@ -109,27 +127,26 @@ function ManagedServerWorkspace({ id }: { id: string }) {
       {server.status === 'online' && !summary.fresh && <p className={notice}>Current server health is unavailable. Last reported values are shown until the next successful heartbeat.</p>}
       {metrics?.proxyError && <p role="alert" className={notice}>Caddy needs attention: {metrics.proxyError}</p>}
       {server?.status === 'revoked' && <p className="rounded-lg border border-border p-4 text-sm">Agent access has been revoked. Existing apps may still be running on the server. Inspect and manage them locally.</p>}
-      {!editing && view === 'server-access' && infraSection === 'overview' && <InfrastructureOverview projectsHref={`${root}#applications`} items={workspaceInfrastructureItems(root)} />}
-      {!editing && view === 'server-access' && ['health','runtimes'].includes(infraSection) && metrics && <>
-        <div className="grid gap-3 sm:grid-cols-3">{[['CPU',`${metrics.cpuPercent.toFixed(0)}%`],['Memory free',`${gb(metrics.memoryFree)} / ${gb(metrics.memoryTotal)}`],['Disk free',metrics.diskFree === null ? 'Unavailable' : `${gb(metrics.diskFree)} / ${gb(metrics.diskTotal || 0)}`]].map(([label,value], index) => <div key={label} data-tone={index} className="metric-tile rounded-xl border border-border bg-card p-4"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-2 text-lg font-semibold">{value}</p></div>)}</div>
-        <div className="rounded-xl border border-border p-4 text-xs leading-6 text-muted-foreground"><p>{metrics.hostname} · {metrics.addresses.join(', ')} · uptime {(metrics.uptime / 86400).toFixed(1)} days</p><p>{Object.entries(metrics.tools).map(([tool,value]) => `${tool}: ${value || 'missing'}`).join(' · ')}</p><p>Last seen {server?.last_seen_at ? new Date(server.last_seen_at).toLocaleString() : '—'} · agent {metrics.version}</p></div>
-      </>}
-      {!editing && view === 'domains' && server.has_ca && <div className="rounded-xl border border-border bg-card p-5"><h2 className="text-sm font-semibold">LAN certificate trust</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">Distribute this server’s public root CA through your institution’s device policy or trust store. This enables trusted HTTPS for internal hostnames and IP access. Internal DNS must point each name to this server. The certificate is public; private keys stay on the server.</p><Button asChild variant="outline" size="sm" className="mt-3"><a href={`/api/servers/${id}/ca`}><Download className="mr-2 h-3.5 w-3.5" />Download root CA</a></Button></div>}
-      {!editing && view === 'server-access' && infraSection === 'agent' && <AgentUpdates server={server} admin={admin} onChanged={() => void load()} />}
-      {view === 'new' && admin && <RemoteAppImport server={server} onDirtyChange={setFormDirty} onCreated={appId => { setEditing(null); setFormDirty(false); void load().then(() => router.push(`${root}?tab=setup#app-${appId}`)) }} onCancel={() => { setEditing(null); setFormDirty(false); router.push(`${root}#applications`) }} />}
-      {editing && editing !== 'new' && <RemoteAppForm key={editing.id} serverId={id} platform={server.platform} app={editing} onDirtyChange={setFormDirty} onSaved={() => { setEditing(null); setFormDirty(false); void load() }} onCancel={() => { setEditing(null); setFormDirty(false) }} />}
-      {!editing && view === 'overview' && <RemoteServerOverview server={server} apps={summary.apps} jobs={summary.jobs} now={now} loadError={!!loadError} canCreate={admin && server.enabled && !sshBusy} />}
-      {!editing && view === 'applications' && <RemoteApplications now={now} server={server} apps={summary.apps} jobs={summary.jobs} fresh={summary.fresh} />}
-      {!editing && (view === 'storage' || view === 'domains') && <RemoteResources apps={summary.apps} mode={view} />}
-      {!editing && selected && <TabsContent value={appTab} className="mt-0"><RemoteApplicationWorkspace key={selected.id} server={server} app={selected} apps={summary.apps} jobs={summary.jobs} tab={appTab} now={now} fresh={summary.fresh} admin={admin} deployer={deployer}
-        onTab={changeTab} onChanged={() => void load()} onDirtyChange={setFormDirty} onEdit={() => setEditing(selected)}
+      {view === 'server-access' && infraSection === 'overview' && <InfrastructureOverview projectsHref={`${root}#applications`} items={workspaceInfrastructureItems(root)} />}
+      {view === 'server-access' && infraSection === 'console' && <RemoteConsole server={server} admin={admin} />}
+      {view === 'server-access' && infraSection === 'health' && <RemoteServerHealth server={server} apps={summary.apps} fresh={summary.fresh} />}
+      {view === 'server-access' && infraSection === 'runtimes' && <RemoteRuntimes server={server} fresh={summary.fresh} admin={admin} onChanged={()=>void load()} />}
+      {view === 'domains' && server.has_ca && <div className="rounded-xl border border-border bg-card p-5"><h2 className="text-sm font-semibold">LAN certificate trust</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">Distribute this server’s public root CA through your institution’s device policy or trust store. This enables trusted HTTPS for internal hostnames and IP access. Internal DNS must point each name to this server. The certificate is public; private keys stay on the server.</p><Button asChild variant="outline" size="sm" className="mt-3"><a href={`/api/servers/${id}/ca`}><Download className="mr-2 h-3.5 w-3.5" />Download root CA</a></Button></div>}
+      {view === 'server-access' && infraSection === 'agent' && <AgentUpdates server={server} admin={admin} onChanged={() => void load()} />}
+      {view === 'new' && admin && <RemoteAppImport server={server} onDirtyChange={setFormDirty} onCreated={appId => { setFormDirty(false); void load().then(() => router.push(`${root}?tab=setup#app-${appId}`)) }} onCancel={() => { setFormDirty(false); router.push(`${root}#applications`) }} />}
+      {view === 'overview' && <RemoteServerOverview server={server} apps={summary.apps} jobs={summary.jobs} now={now} loadError={!!loadError} canCreate={admin && server.enabled && !sshBusy} />}
+      {view === 'applications' && !projectId && <RemoteApplications canCreate={admin && server.enabled} now={now} server={server} apps={summary.apps} jobs={summary.jobs} fresh={summary.fresh} />}
+      {project && <TabsContent value={projectTab} className="mt-0"><RemoteProjectWorkspace key={project.id} server={server} projectId={project.id} apps={projectApps} jobs={summary.jobs} tab={projectTab} preferredEnvironment={projectEnvironment} now={now} canWrite={admin} canDeploy={deployer} busy={busy} onDeploy={appId => { void action(`/apps/${appId}/deploy`).then(ok => { if (ok) router.push(remoteAppHref(id, appId, 'deployments')) }) }} /></TabsContent>}
+      {projectId && !project && <div role="alert" className="notice-error">This project is no longer available on {server.name}. <Link href={`${root}#applications`} className="underline">View projects</Link></div>}
+      {(view === 'storage' || view === 'domains') && <RemoteResources apps={summary.apps} mode={view} />}
+      {selected && <TabsContent value={appTab} className="mt-0"><RemoteApplicationWorkspace key={selected.id} server={server} app={selected} apps={summary.apps} jobs={summary.jobs} tab={appTab} now={now} fresh={summary.fresh} admin={admin} deployer={deployer}
+        onTab={changeTab} onChanged={() => void load()} onDirtyChange={setFormDirty}
         onDeploy={async () => { if (await action(`/apps/${selected.id}/deploy`)) router.push(remoteAppHref(id, selected.id, 'deployments')) }} /></TabsContent>}
-      {!editing && view === 'app' && !selected && <div className="notice-error">This application is no longer available on {server.name}. <Link href={`${root}#applications`} className="underline">View projects</Link></div>}
-      {!editing && view === 'deployments' && (openedJob ? <RemoteDeployment job={openedJob} apps={summary.apps} now={now} canCancel={deployer && server.enabled} busy={busy} onCancel={() => void action(`/jobs/${openedJob.id}/cancel`)} /> : params.get('view') ? <div className="notice-error">This deployment is not in this server’s recent history. <Link href={`${root}#deployments`} className="underline">View deployments</Link></div> : <><DeploymentHistory deployments={summary.jobs.map(job => remoteDeployment(job, summary.apps))} now={now} projectsHref={`${root}#applications`} /><p className="mt-3 text-xs text-muted-foreground">Latest 30 deployment records from this server.</p></>)}
+      {view === 'app' && !selected && <div className="notice-error">This application is no longer available on {server.name}. <Link href={`${root}#applications`} className="underline">View projects</Link></div>}
+      {view === 'deployments' && (openedJob ? <RemoteDeployment job={openedJob} apps={summary.apps} now={now} canCancel={deployer && server.enabled} busy={busy} onCancel={() => void action(`/jobs/${openedJob.id}/cancel`)} /> : params.get('view') ? <div className="notice-error">This deployment is not in this server’s recent history. <Link href={`${root}#deployments`} className="underline">View deployments</Link></div> : <><DeploymentHistory deployments={summary.jobs.map(job => remoteDeployment(job, summary.apps))} now={now} projectsHref={`${root}#applications`} /><p className="mt-3 text-xs text-muted-foreground">Latest 30 deployment records from this server.</p></>)}
       {view === 'new' && !admin && <div className="notice-error">An administrator can create applications on this server.</div>}
-      {!editing && view === 'server-access' && infraSection === 'processes' && <section className="rounded-xl border border-border bg-card"><h2 className="border-b border-border p-4 text-sm font-semibold">Application processes</h2><div className="divide-y divide-border">{summary.apps.map(app => { const process = metrics?.apps.find(item => item.id === app.id); return <Link key={app.id} href={remoteAppHref(id,app.id)} className="flex items-center justify-between gap-3 p-4 text-sm hover:bg-accent"><span>{app.name}</span><span className="text-xs text-muted-foreground">{summary.fresh ? process?.status || 'Not running' : 'Unknown'} · {process ? `${process.cpu.toFixed(0)}% CPU · ${gb(process.memory)}` : 'Awaiting process report'}</span></Link>})}</div></section>}
-      {!editing && view === 'server-access' && ['health','runtimes'].includes(infraSection) && !metrics && <p className="rounded-xl border border-border p-6 text-sm text-muted-foreground">Connect this server to receive health and tool reports.</p>}
-      {!editing && view === 'server-access' && infraSection === 'agent' && <section id="server-access" className="rounded-xl border border-border bg-card p-5"><h2 className="text-sm font-semibold">Agent access</h2><p className="mt-2 text-sm text-muted-foreground">{server.status === 'pending' ? 'Finish SSH setup above to connect this server.' : server.status === 'revoked' ? 'Agent access has been revoked.' : 'This server connects to Manager using its own agent credential.'}</p>{admin && server.enabled && <><Button asChild variant="outline" size="sm" className="mt-3 mr-2"><a href="/api/servers/agent" download="manager-agent.cjs">Download current agent</a></Button><p className="mt-2 text-xs text-muted-foreground">Use Agent updates above for supervised upgrades. Existing installations can follow the one-time supervisor guide while keeping their server enrollment and applications.</p>{!revoke ? <Button variant="outline" size="sm" className="mt-3" onClick={() => setRevoke(true)}>Revoke agent access…</Button> : <><p className="mt-2 text-sm leading-6 text-muted-foreground">This invalidates the agent credential and cancels its queued jobs. An operation already running may finish locally. Existing apps and Caddy continue running. This server cannot reconnect with its current credential.</p><div className="mt-3 flex gap-2"><Button disabled={busy} variant="destructive" onClick={() => void action('', { action: 'revoke' })}>Revoke access</Button><Button variant="outline" onClick={() => setRevoke(false)}>Keep connected</Button></div></>}</>}</section>}
+      {view === 'server-access' && infraSection === 'processes' && <RemoteProcesses server={server} apps={summary.apps} fresh={summary.fresh} />}
+      {view === 'server-access' && infraSection === 'agent' && <section id="server-access" className="rounded-xl border border-border bg-card p-5"><h2 className="text-sm font-semibold">Agent access</h2><p className="mt-2 text-sm text-muted-foreground">{server.status === 'pending' ? 'Finish SSH setup above to connect this server.' : server.status === 'revoked' ? 'Agent access has been revoked.' : 'This server connects to Manager using its own agent credential.'}</p>{admin && server.enabled && <><Button asChild variant="outline" size="sm" className="mt-3 mr-2"><a href="/api/servers/agent" download="manager-agent.cjs">Download current agent</a></Button><p className="mt-2 text-xs text-muted-foreground">Use Agent updates above for supervised upgrades. Existing installations can follow the one-time supervisor guide while keeping their server enrollment and applications.</p>{!revoke ? <Button variant="outline" size="sm" className="mt-3" onClick={() => setRevoke(true)}>Revoke agent access…</Button> : <><p className="mt-2 text-sm leading-6 text-muted-foreground">This invalidates the agent credential and cancels its queued jobs. An operation already running may finish locally. Existing apps and Caddy continue running. This server cannot reconnect with its current credential.</p><div className="mt-3 flex gap-2"><Button disabled={busy} variant="destructive" onClick={() => void action('', { action: 'revoke' })}>Revoke access</Button><Button variant="outline" onClick={() => setRevoke(false)}>Keep connected</Button></div></>}</>}</section>}
     </div>
   </AppShell></Tabs>
 }

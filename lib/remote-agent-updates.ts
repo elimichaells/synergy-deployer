@@ -67,6 +67,7 @@ export async function claimAgentUpdate(serverId: string, body: Record<string, un
     if (!server?.enabled) throw new ApiError('Server revoked', 401)
     let job = (await client.query(`select * from remote_agent_updates where server_id=$1 and status in ${active}`, [serverId])).rows[0]
     if (job?.status === 'queued') {
+      if((await client.query("select 1 from remote_service_operations where server_id=$1 and status in ('running','interrupted')",[serverId])).rowCount){await client.query('commit');return {update:null}}
       // The same server row lock serializes application claims and update claims.
       if ((await client.query("select id from remote_jobs where server_id=$1 and status='running'", [serverId])).rowCount) job = null
       else if (body.version !== job.from_version || !server.metrics?.capabilities?.includes(UPDATE_CAPABILITY)) throw new ApiError('Installed agent changed; cancel this queued update and check versions again', 409)

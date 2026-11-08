@@ -5,11 +5,13 @@ import { AlertTriangle, ArrowUp, CheckCircle2, Download, Eye, Layers3, Loader2, 
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { RuntimeFilters, RuntimeInventoryRow } from '@/components/workspace/runtime-inventory'
 import { runtimeCategory } from '@/lib/settings-workspace'
 
 type JobAction = 'install' | 'update' | 'configure' | 'install-version'
 interface RuntimeJob { id: string; runtime_id: string; action: JobAction; requested_version: string | null; status: 'queued' | 'running' | 'success' | 'failed' | 'interrupted'; log: string; error: string | null; created_at: string }
 interface RuntimeStatus {
+  updateMode?:'project-version'
   id: string
   name: string
   purpose: string
@@ -31,7 +33,7 @@ interface RuntimeStatus {
 }
 interface VersionOption { version: string; label: string; date?: string }
 
-export function RuntimeManager({ isAdmin, runtimeIds, workspace = false, onChanged }: { isAdmin: boolean; runtimeIds?: string[]; workspace?: boolean; onChanged?: () => void | Promise<void> }) {
+export function RuntimeManager({ isAdmin, runtimeIds, workspace = false, onChanged, endpoint = '/api/system/runtimes', onRequestOperation }: { isAdmin: boolean; runtimeIds?: string[]; workspace?: boolean; onChanged?: () => void | Promise<void>; endpoint?:string; onRequestOperation?:(runtime:RuntimeStatus,action:JobAction,version?:string)=>void }) {
   const [runtimes, setRuntimes] = useState<RuntimeStatus[]>([])
   const [loading, setLoading] = useState(true)
   const [checking, setChecking] = useState(false)
@@ -44,27 +46,30 @@ export function RuntimeManager({ isAdmin, runtimeIds, workspace = false, onChang
   const [category, setCategory] = useState('all')
   const [status, setStatus] = useState('all')
   const streamRef = useRef<EventSource | null>(null)
+  const remotePoll = useRef<ReturnType<typeof setInterval>|null>(null)
   const logRef = useRef<HTMLPreElement | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const response = await fetch('/api/system/runtimes', { cache: 'no-store' })
+      const response = await fetch(endpoint, { cache: 'no-store' })
       const body = await response.json()
       if (!response.ok) throw new Error(body.error || 'Failed to inspect runtimes')
       setRuntimes(body.runtimes || [])
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Failed to inspect runtimes') }
     finally { setLoading(false) }
-  }, [])
+  }, [endpoint])
 
   useEffect(() => { void load() }, [load])
-  useEffect(() => () => streamRef.current?.close(), [])
+  useEffect(() => () => {streamRef.current?.close();if(remotePoll.current)clearInterval(remotePoll.current)}, [])
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight }, [job?.log])
 
   const watchJob = (nextJob: RuntimeJob) => {
+    if(remotePoll.current)clearInterval(remotePoll.current)
     streamRef.current?.close()
     setJob(nextJob)
     if (!['queued', 'running'].includes(nextJob.status)) return
+    if(onRequestOperation){remotePoll.current=setInterval(()=>void fetch(endpoint+'/jobs/'+nextJob.id,{cache:'no-store'}).then(async r=>{const body=await r.json();if(!r.ok)throw Error(body.error);setJob(body.job);if(!['queued','running'].includes(body.job.status)){if(remotePoll.current)clearInterval(remotePoll.current);void load();void onChanged?.()}}).catch(e=>setMessage(e.message)),2000);return}
     const stream = new EventSource(`/api/system/runtimes/jobs/${nextJob.id}/stream`)
     streamRef.current = stream
     stream.onmessage = (event) => {
@@ -83,8 +88,9 @@ export function RuntimeManager({ isAdmin, runtimeIds, workspace = false, onChang
 
   const startJob = async (runtime: RuntimeStatus, action: JobAction, version?: string) => {
     setMessage(null)
+    if(onRequestOperation){onRequestOperation(runtime,action,version||runtime.latestVersion||undefined);setVersionRuntime(null);return}
     try {
-      const response = await fetch('/api/system/runtimes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ runtime: runtime.id, action, version }) })
+      const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ runtime: runtime.id, action, version }) })
       const body = await response.json()
       if (!response.ok) throw new Error(body.error || `${runtime.name} operation failed to start`)
       if (action === 'install-version') setVersionRuntime(null)
@@ -96,7 +102,7 @@ export function RuntimeManager({ isAdmin, runtimeIds, workspace = false, onChang
   const checkUpdates = async () => {
     setChecking(true); setMessage(null)
     try {
-      const response = await fetch('/api/system/runtimes/check-updates', { method: 'POST' })
+      const response = await fetch(endpoint+'/check-updates', { method: 'POST' })
       const body = await response.json()
       if (!response.ok) throw new Error(body.error || 'Update check failed')
       setRuntimes(body.runtimes || [])
@@ -109,7 +115,7 @@ export function RuntimeManager({ isAdmin, runtimeIds, workspace = false, onChang
   const openVersions = async (runtime: RuntimeStatus) => {
     setVersionRuntime(runtime); setVersionsLoading(true); setVersions([])
     try {
-      const response = await fetch(`/api/system/runtimes/versions?runtime=${encodeURIComponent(runtime.id)}`, { cache: 'no-store' })
+      const response = await fetch(`${endpoint}/versions?runtime=${encodeURIComponent(runtime.id)}`, { cache: 'no-store' })
       const body = await response.json()
       if (!response.ok) throw new Error(body.error || 'Version catalog could not be loaded')
       setVersions(body.available || [])
@@ -137,34 +143,26 @@ export function RuntimeManager({ isAdmin, runtimeIds, workspace = false, onChang
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => void load()} disabled={loading} title="Refresh runtimes" aria-label="Refresh runtimes"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></Button>
         </div>
       </div>
-      {workspace && <div className="grid gap-2 py-2 sm:grid-cols-[minmax(0,1fr)_160px_150px]">
-        <div className="relative min-w-0"><Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><input aria-label="Search runtimes" className="control-input pl-9" placeholder="Search dependencies" value={search} onChange={event => setSearch(event.target.value)} /></div>
-        <select aria-label="Runtime category" className="control-input" value={category} onChange={event => setCategory(event.target.value)}><option value="all">All categories</option><option value="languages">Languages & build</option><option value="databases">Databases</option><option value="tools">Host tools</option></select>
-        <select aria-label="Runtime status" className="control-input" value={status} onChange={event => setStatus(event.target.value)}><option value="all">All statuses</option><option value="installed">Installed</option><option value="missing">Not installed</option><option value="updates">Updates available</option></select>
-      </div>}
+      {workspace && <RuntimeFilters search={search} category={category} status={status} onSearch={setSearch} onCategory={setCategory} onStatus={setStatus} />}
       <div className="divide-y divide-border/50 border-y border-border/60">
         {loading && !available.length && <p role="status" className="py-8 text-sm text-muted-foreground">Inspecting host dependencies...</p>}
         {!loading && !shown.length && <p className="py-8 text-sm text-muted-foreground">{available.length ? 'No dependencies match these filters.' : 'No dependencies available.'}</p>}
-        {shown.map((runtime) => <div key={runtime.id} className="flex flex-wrap items-center justify-between gap-4 py-4">
-          <div className="min-w-0 flex-1 basis-56">
-            <div className="flex flex-wrap items-center gap-2 text-sm font-medium">{runtime.installed ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : <AlertTriangle className="h-4 w-4 text-amber-500" />}{runtime.name}{runtime.updateAvailable && <Badge variant="outline" className="border-amber-500/30 text-amber-400">{runtime.latestVersion} available{runtime.updateRisk ? ` · ${runtime.updateRisk}` : ''}</Badge>}{runtime.id === 'mysql' && runtime.latestJob?.action === 'configure' && runtime.latestJob.status === 'success' && <Badge variant="secondary">Provisioning ready</Badge>}{runtime.installedVersions.length > 0 && <Badge variant="secondary">{runtime.installedVersions.length} project version{runtime.installedVersions.length === 1 ? '' : 's'}</Badge>}</div>
-            <p className="mt-1 break-words pl-6 text-xs text-muted-foreground">{runtime.version || runtime.purpose}</p>
+        {shown.map(runtime => <RuntimeInventoryRow key={runtime.id} installed={runtime.installed} name={runtime.name} description={runtime.version || runtime.purpose}
+          badges={<>{runtime.updateAvailable && <Badge variant="outline" className="border-amber-500/30 text-amber-400">{runtime.latestVersion} available{runtime.updateRisk ? ` · ${runtime.updateRisk}` : ''}</Badge>}{runtime.id === 'mysql' && runtime.latestJob?.action === 'configure' && runtime.latestJob.status === 'success' && <Badge variant="secondary">Provisioning ready</Badge>}{runtime.installedVersions.length > 0 && <Badge variant="secondary">{runtime.installedVersions.length} project version{runtime.installedVersions.length === 1 ? '' : 's'}</Badge>}</>}
+          detail={<>
             {runtime.installSource && <p className="mt-1 pl-6 text-xs text-muted-foreground">{runtime.installSource}</p>}
-            {runtime.latestJob?.status === 'failed' && !runtime.activeJob && <button className="mt-1 pl-6 text-left text-[11px] text-destructive hover:underline" onClick={() => watchJob(runtime.latestJob!)}>Last operation failed: {runtime.latestJob.error}</button>}
-          </div>
-          <div className="flex max-w-full flex-wrap items-center gap-1">
+            {runtime.latestJob?.status === 'failed' && !runtime.activeJob && <button className="mt-1 pl-6 text-left text-[11px] text-destructive hover:underline" onClick={() => watchJob(runtime.latestJob!)}>Last operation failed: {runtime.latestJob.error}</button>}          </>}
+          actions={<>
             {runtime.activeJob && <Button variant="outline" size="sm" className="h-8" onClick={() => watchJob(runtime.activeJob!)}><Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />Progress</Button>}
             {!runtime.activeJob && runtime.versioned && <Button variant="ghost" size="sm" className="h-8" onClick={() => void openVersions(runtime)}><Layers3 className="mr-2 h-3.5 w-3.5" />Versions</Button>}
             {!runtime.activeJob && runtime.installed && runtime.canConfigure && isAdmin && <Button variant="ghost" size="sm" className="h-8" title="Verify service startup, saved credentials and persisted data" onClick={() => void startJob(runtime, 'configure')} disabled={anyActive}><Wrench className="mr-2 h-3.5 w-3.5" />Verify setup</Button>}
-            {!runtime.activeJob && runtime.updateAvailable && runtime.canUpdate && isAdmin && <Button variant="outline" size="sm" className="h-8" onClick={() => { const compatibility = runtime.updateRisk === 'major' ? ' This is a major update and may require application compatibility changes.' : ''; if (window.confirm(`Update ${runtime.name} to ${runtime.latestVersion}? Stateful services may briefly restart.${compatibility}`)) void startJob(runtime, 'update') }} disabled={anyActive}><ArrowUp className="mr-2 h-3.5 w-3.5" />Update</Button>}
+            {!runtime.activeJob && runtime.updateAvailable && runtime.canUpdate && isAdmin && <Button variant="outline" size="sm" className="h-8" onClick={() => { const compatibility = runtime.updateRisk === 'major' ? ' This is a major update and may require application compatibility changes.' : ''; if (onRequestOperation || window.confirm(`Update ${runtime.name} to ${runtime.latestVersion}? Stateful services may briefly restart.${compatibility}`)) void startJob(runtime, 'update') }} disabled={anyActive}><ArrowUp className="mr-2 h-3.5 w-3.5" />{runtime.updateMode==='project-version'?'Install version':'Update'}</Button>}
             {!runtime.activeJob && !runtime.installed && runtime.canInstall && isAdmin && <Button variant="outline" size="sm" className="h-8" onClick={() => void startJob(runtime, 'install')} disabled={anyActive}><Download className="mr-2 h-3.5 w-3.5" />Install</Button>}
-            {!runtime.activeJob && runtime.latestJob && <Button variant="ghost" size="icon" className="h-8 w-8" title="Latest operation log" onClick={() => watchJob(runtime.latestJob!)}><Eye className="h-3.5 w-3.5" /></Button>}
-          </div>
-        </div>)}
+            {!runtime.activeJob && runtime.latestJob && <Button variant="ghost" size="icon" className="h-8 w-8" title="Latest operation log" onClick={() => watchJob(runtime.latestJob!)}><Eye className="h-3.5 w-3.5" /></Button>}          </>} />)}
       </div>
       {message && <p role="status" className="text-xs text-muted-foreground">{message}</p>}
 
-      <Sheet open={job !== null} onOpenChange={(open) => { if (!open) { streamRef.current?.close(); streamRef.current = null; setJob(null) } }}>
+      <Sheet open={job !== null} onOpenChange={(open) => { if (!open) { streamRef.current?.close(); streamRef.current = null;if(remotePoll.current)clearInterval(remotePoll.current);setJob(null) } }}>
         <SheetContent className="overflow-y-auto sm:max-w-2xl"><SheetHeader><SheetTitle>{jobTitle}</SheetTitle><SheetDescription>{job?.requested_version ? `Version ${job.requested_version}` : job?.runtime_id === 'mysql' && job.action === 'configure' ? 'Service and provisioning credential verification' : 'Live installer output'} · {jobStatus}</SheetDescription></SheetHeader>{job && <pre ref={logRef} className="mt-6 h-[34rem] overflow-auto whitespace-pre-wrap bg-well p-4 font-mono text-xs leading-5">{job.log || 'Waiting for installer output...'}</pre>}</SheetContent>
       </Sheet>
 

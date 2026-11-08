@@ -90,6 +90,15 @@ jobs:
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
 
+      - name: Verify fresh installer database initialization
+        if: matrix.node == 22
+        shell: pwsh
+        run: |
+          if (!$env:PGBIN -or !(Test-Path -LiteralPath (Join-Path $env:PGBIN 'initdb.exe'))) { throw 'The Windows validation runner must provide PostgreSQL server tools.' }
+          $env:MANAGER_INSTALL_TEST_PG_BIN = $env:PGBIN
+          node --require ./tests/register.cjs --test --test-reporter=tap tests/installer-fresh-database.test.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Fresh installer database verification failed.' }
+
       - name: Verify production build
         env:
           MANAGER_PREVIEW: "1"

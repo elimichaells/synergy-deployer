@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const load = require('./server-module.cjs');
 const { remoteDeployment, remotePipeline, remoteProcessState, remoteAppHref } = load('lib/remote-workspace.ts');
+const { remoteProjects, remoteProjectHref, remoteDatabases } = load('lib/remote-workspace.ts');
 const { remoteOverview, remoteWorkspaceView } = load('lib/remote-server-overview.ts');
 const { environmentText, parseEnvironmentText } = load('lib/environment-text.ts');
 const { workspaceHref, restoreWorkspace, workspaceTabId, openWorkspaceTab } = load('lib/workspace-navigation.ts', { './server-navigation': load('lib/server-navigation.ts') });
@@ -64,4 +65,35 @@ test('remote overview, projects, deployment history and individual releases keep
   assert.equal(workspaceTabId(remoteAppHref(serverId,appId,'overview')),workspaceTabId(remoteAppHref(serverId,appId,'environment')));
   const tab = {id:workspaceTabId(remoteAppHref(serverId,appId)),href:remoteAppHref(serverId,appId),server:serverId,title:'Library',environment:'staging'};
   assert.equal(openWorkspaceTab([tab],{...tab,environment:undefined})[0].environment,'staging');
+});
+
+test('project adapters group environments, retain standalone staging, and exclude other hosts and setup jobs', () => {
+  const database = { provider:'postgresql',host:'DB.EXAMPLE',port:5432,database:'library',status:'ready' };
+  const production = {...app,hostname:'library.example',environment_name:'production',database_config:database};
+  const staging = {...production,id:'44444444-4444-4444-8444-444444444444',name:'Library staging',environment_name:'staging',production_id:appId,hostname:'staging.example',database_config:{...database,host:'db.example'}};
+  const standalone = {...production,id:'66666666-6666-4666-8666-666666666666',environment_name:'staging',production_id:'missing',hostname:'draft.invalid',database_config:null};
+  const foreign = {...production,id:'foreign',server_id:'other'};
+  const projects = remoteProjects(serverId,[production,staging,standalone,foreign],[{...job,id:'old',status:'failed',created_at:'2020-01-01'},job,{...job,id:'inspection',kind:'inspect',status:'failed',created_at:'2030-01-01'}]);
+  assert.equal(projects.length,2);
+  assert.deepEqual(projects[0].apps.map(item=>item.id),[production.id,staging.id]);
+  assert.equal(projects[0].apps[0].deployment_status,'success');
+  assert.equal(projects[0].database_count,1);
+  assert.equal(projects[1].apps[0].production_id,null);
+  assert.deepEqual(projects[1].domains,[]);
+});
+
+test('remote project tabs preserve the environment and restore as one project, separate from the catalogue', () => {
+  const href = remoteProjectHref(serverId,appId,'storage','staging');
+  assert.equal(workspaceHref(href),`/infrastructure/servers/${serverId}?tab=storage&view=${appId}&environment=staging#applications`);
+  assert.equal(workspaceTabId(href),workspaceTabId(remoteProjectHref(serverId,appId,'environment','production')));
+  assert.notEqual(workspaceTabId(href),workspaceTabId(`/infrastructure/servers/${serverId}#applications`));
+  assert.equal(restoreWorkspace(JSON.stringify({tabs:[{href,title:'Library'}]}),[serverId]).tabs[0].href,workspaceHref(href));
+  assert.ok(!workspaceHref(href.replace('environment=staging','environment=secret')).includes('secret'));
+});
+
+test('storage groups physical databases without inventing connections or merging different servers', () => {
+  const config = { provider:'postgresql',host:'DB.EXAMPLE',port:5432,database:'library',status:'ready' };
+  const rows = remoteDatabases([{...app,database_config:config},{...app,id:'staging',database_config:{...config,host:'db.example'}},{...app,id:'none',database_config:null},{...app,id:'other-port',database_config:{...config,port:5433}},{...app,id:'other-server',server_id:'other',database_config:config}]);
+  assert.equal(rows.length,3);
+  assert.deepEqual(rows[0].apps.map(item=>item.id),[appId,'staging']);
 });

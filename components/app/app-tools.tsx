@@ -22,11 +22,11 @@ export const APP_TOOLS: AppTool[] = [
 export const toolHref = (appId: string, tab: AppTool['tab']) => tab === 'jobs' ? `/automation?project=${appId}` : `/sites/${appId}?tab=${tab}`
 
 /** A compact row of labelled links to every tool for one app. */
-export function AppToolLinks({ appId, className }: { appId: string; className?: string }) {
+export function AppToolLinks({ appId, className, hrefFor = toolHref, unavailable = {} }: { appId: string; className?: string; hrefFor?: (appId: string, tab: AppTool['tab']) => string; unavailable?: Partial<Record<AppTool['tab'], string>> }) {
   return (
     <div className={cn('flex flex-wrap gap-1.5', className)}>
       {APP_TOOLS.map(tool => (
-        <Link key={tool.tab} href={toolHref(appId, tool.tab)} title={tool.help} className="relative z-10 inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-white/25 hover:text-foreground">
+        unavailable[tool.tab] ? <span key={tool.tab} aria-disabled="true" title={unavailable[tool.tab]} className="relative z-10 inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground opacity-50"><tool.icon className="h-3.5 w-3.5" aria-hidden="true" />{tool.short}</span> : <Link key={tool.tab} href={hrefFor(appId, tool.tab)} title={tool.help} className="relative z-10 inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-white/25 hover:text-foreground">
           <tool.icon className="h-3.5 w-3.5" aria-hidden="true" />{tool.short}
         </Link>
       ))}

@@ -78,7 +78,7 @@ async function inspectCandidate(file) {
 }
 async function snapshot(root) {
   const result={};
-  for(const name of ['agent.json','apps.json','Caddyfile']) {
+  for(const name of ['agent.json','apps.json','Caddyfile','tool-paths.json','runtime-versions.json','proxy.json','managed-sites/active.caddy','pm2-private-pipes.json']) {
     const file=await safePath(root,name);
     result[name]=await fs.readFile(file).then(digest).catch(error=>{if(error.code!=='ENOENT')throw error;return null;});
   }

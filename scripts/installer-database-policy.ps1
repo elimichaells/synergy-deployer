@@ -17,3 +17,27 @@ function Get-ManagerDatabaseConflict([string[]]$Engines, [object[]]$Services = @
     }
     return $null
 }
+
+function Get-ManagerControlDatabaseSql([string]$Database, [string]$Role, [string]$Password) {
+    foreach ($name in @($Database,$Role)) {
+        if (-not $name -or $name -match '[\x00-\x1f]' -or [Text.Encoding]::UTF8.GetByteCount($name) -gt 63) {
+            throw 'Control database and role names must contain 1 to 63 UTF-8 bytes without control characters.'
+        }
+    }
+    # A fresh installation generates new encryption keys. Never silently attach it
+    # to an old Manager database or rotate a role another installation still uses.
+    $delimiter = '$manager_' + [guid]::NewGuid().ToString('N') + '$'
+    return @'
+SET standard_conforming_strings = on;
+DO {0}
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_database WHERE datname = '{1}') OR
+     EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{2}') THEN
+    RAISE EXCEPTION 'The Manager database or application role already exists. Choose unused DbName and DbAppUser values, or use recovery to preserve existing encryption keys and credentials.';
+  END IF;
+  CREATE ROLE "{3}" LOGIN PASSWORD '{4}';
+END
+{0};
+CREATE DATABASE "{5}" OWNER "{3}";
+'@ -f $delimiter,$Database.Replace("'","''"),$Role.Replace("'","''"),$Role.Replace('"','""'),$Password.Replace("'","''"),$Database.Replace('"','""')
+}

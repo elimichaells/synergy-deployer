@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { remoteSetupChecks } from '@/lib/remote-setup-policy'
+import { SERVER_TOOLS } from '@/lib/server-tool-catalog'
 
 const serverId = '11111111-1111-4111-8111-111111111111'
 const windowsId = '22222222-2222-4222-8222-222222222222'
@@ -88,6 +89,11 @@ export async function remoteServersFixture(request: Request) {
   if (parts[1] === 'ssh') {
     if (body.action === 'probe') return NextResponse.json({ fingerprint: 'SHA256:PreviewOnlyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' })
     const server = state.servers.find(s => s.id === parts[0])!
+    if (body.action === 'inspect') {
+      const win = server.platform === 'win32'
+      const versions: Record<string,string> = { node: 'v24.13.0', git: 'git version 2.50.0', caddy: 'v2.10.0', pm2: '6.0.0', psql: 'psql (PostgreSQL) 18.1', pg_dump: 'pg_dump (PostgreSQL) 18.1', pg_restore: 'pg_restore (PostgreSQL) 18.1', mysql: 'mysql Ver 8.4.0' }
+      return NextResponse.json({inventory:{ platform:server.platform,arch:'x64',privileged:true,portsKnown:true,ports:[22,5432,3306],services:[{name:win?'postgresql-x64-18':'postgresql.service',status:'Running',executable:win?'D:\\Databases\\PostgreSQL\\bin\\pg_ctl.exe':'/usr/lib/postgresql/18/bin/postgres',config:win?'E:\\Database Data\\PostgreSQL':'/var/lib/postgresql/18/main'}],tools:Object.fromEntries(SERVER_TOOLS.map(tool=>[tool.id,versions[tool.id] || body.paths?.[tool.id] ? [{path:body.paths?.[tool.id] || (win ? tool.id==='pm2'?'D:\\Tools\\node_modules\\pm2\\bin\\pm2':`D:\\Tools\\${tool.id}\\${tool.id}.exe`:`/opt/tools/${tool.id}/bin/${tool.id}`),version:versions[tool.id] || 'custom version',compatible:!body.paths?.[tool.id]?.includes('missing'),error:body.paths?.[tool.id]?.includes('missing')?'File not found':undefined}]:[]]))}})
+    }
     server.enrolled_at = new Date().toISOString(); server.last_seen_at = server.enrolled_at; server.status = 'online'
     server.metrics = { ...metrics, platform: server.platform, hostname: 'regional-windows', addresses: [body.host], apps: [] }
     return NextResponse.json({ online: true, message: 'Preview: agent installed and reporting to Manager.', log: '[preview] Synthetic SSH setup only. No server was contacted.\n[setup] Identity checked\n[setup] Tools installed\n[setup] Agent reporting' })
@@ -97,6 +103,14 @@ export async function remoteServersFixture(request: Request) {
     const id = crypto.randomUUID()
     state.apps.push({ ...app, ...body, id, server_id: parts[0], port: Number(body.port), ip_port: Number(body.ip_port), env_names: Object.keys(body.environment || {}), live_commit: null, deployed_at: null })
     return NextResponse.json({ id })
+  }
+  if (parts[1] === 'apps' && parts.length === 3) {
+    const target = state.apps.find(item => item.id === parts[2] && item.server_id === parts[0])
+    if (!target) return NextResponse.json({ error: 'Application not found' }, { status: 404 })
+    const { environment, ...config } = body
+    Object.assign(target, config)
+    if (environment !== undefined) { variables[target.id] = environment; target.env_names = Object.keys(environment) }
+    return NextResponse.json({ id: target.id })
   }
   if (parts[3] === 'deploy') {
     const target = state.apps.find(a => a.id === parts[2])!

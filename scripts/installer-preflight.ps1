@@ -25,6 +25,9 @@ function Assert-ManagerInstallPaths([string]$ManagerRoot, [string]$WebRoot, [str
     if (Test-Path -LiteralPath (Join-Path $manager '.env.local')) {
         throw 'ManagerRoot already contains .env.local. Setup is for new installations; use the upgrade or recovery procedure to preserve existing encryption keys and credentials.'
     }
+    if (Test-Path -LiteralPath (Join-Path $web 'Caddyfile')) {
+        throw 'WebRoot already contains a Caddyfile. Choose a new WebRoot or use the existing installation recovery procedure; setup will not replace existing sites, even when Caddy is stopped.'
+    }
 }
 
 function Assert-ManagerInstallPorts([int]$ManagerPort, [int]$DbPort, [bool]$InstallApplicationPostgres,
@@ -40,6 +43,12 @@ function Assert-ManagerInstallPorts([int]$ManagerPort, [int]$DbPort, [bool]$Inst
     if ($InstallPhpMyAdmin) { $reserved += 8433 }
     if ($reserved -contains $ManagerPort) { throw 'ManagerPort conflicts with a selected database, web client, or Caddy port.' }
     if ($InstallApplicationPostgres -and $AppDbPort -eq $DbPort) { throw 'AppDbPort must differ from the Manager control database port.' }
+    $webPorts = @(80,443)
+    if ($InstallPgweb) { $webPorts += 8432 }
+    if ($InstallPhpMyAdmin) { $webPorts += 8433 }
+    if ($webPorts -contains $DbPort -or ($InstallApplicationPostgres -and $webPorts -contains $AppDbPort)) {
+        throw 'A PostgreSQL port conflicts with Caddy or a selected database web client.'
+    }
     $requiredFree = @($ManagerPort, 80, 443)
     if ($InstallPgweb) { $requiredFree += 8432 }
     if ($InstallPhpMyAdmin) { $requiredFree += 8433 }

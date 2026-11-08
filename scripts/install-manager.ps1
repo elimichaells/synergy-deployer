@@ -127,15 +127,52 @@ function Ensure-LatestNpm {
 }
 
 function Find-PostgresTool([string]$Tool) {
+    if ($env:PG_BIN_PATH) {
+        $selected = Join-Path $env:PG_BIN_PATH ($Tool + '.exe')
+        if (Test-Path -LiteralPath $selected -PathType Leaf) { return $selected }
+        return $null
+    }
     $command = Get-Command ($Tool + '.exe') -ErrorAction SilentlyContinue
     if ($command) { return $command.Source }
-    $candidate = Get-ChildItem 'C:\Program Files\PostgreSQL' -Filter ($Tool + '.exe') -Recurse -ErrorAction SilentlyContinue |
-        Sort-Object FullName -Descending | Select-Object -First 1
-    if ($candidate) { return $candidate.FullName }
+    $versions = @(Get-ChildItem (Join-Path $env:ProgramFiles 'PostgreSQL') -Directory -ErrorAction SilentlyContinue |
+        Sort-Object { try { [version]$_.Name } catch { [version]'0.0' } } -Descending)
+    foreach ($version in $versions) {
+        $candidate = Join-Path $version.FullName ('bin\' + $Tool + '.exe')
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    }
     return $null
 }
 
-function Escape-Sql([string]$Value) { return $Value.Replace("'","''") }
+function Ensure-OnlinePostgres {
+    $psql = Find-PostgresTool 'psql'
+    $serverTools = @('postgres','initdb','pg_ctl','pg_isready','pg_dump','pg_restore')
+    $missing = @($serverTools | Where-Object { -not $psql -or -not (Test-Path -LiteralPath (Join-Path (Split-Path $psql -Parent) ($_ + '.exe')) -PathType Leaf) })
+    if (-not $psql -or (($installPostgres -or $installApplicationPostgres) -and $missing.Count)) {
+        if ($env:PG_BIN_PATH) { throw 'The selected PostgreSQL bin directory is incomplete. Provide server tools for installation, or complete client tools when reusing a server.' }
+        if (-not $installPostgres) { throw 'Reusing an existing server requires PostgreSQL client tools, plus server tools if creating the application cluster. Set PostgreSqlBinDirectory or use the bundled offline tools; setup will not install an unselected control server.' }
+        Invoke-Native 'choco.exe' @('install',$postgresPackage,'-y','--no-progress','--params',('/Password:' + $dbAdminPassword + ' /Port:' + $dbPort)) 'Install PostgreSQL server tools'
+        $env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')
+        $psql = Find-PostgresTool 'psql'
+        # A standalone client earlier in PATH must not hide the installed server.
+        if ($installPostgres -or $installApplicationPostgres) {
+            $candidates = @(Get-ChildItem (Join-Path $env:ProgramFiles 'PostgreSQL') -Directory -ErrorAction SilentlyContinue | Sort-Object { try { [version]$_.Name } catch { [version]'0.0' } } -Descending)
+            foreach ($candidate in $candidates) {
+                $bin = Join-Path $candidate.FullName 'bin'
+                $absent = @(@('psql') + $serverTools | Where-Object { -not (Test-Path -LiteralPath (Join-Path $bin ($_ + '.exe')) -PathType Leaf) })
+                if (-not $absent.Count) { $psql = Join-Path $bin 'psql.exe'; break }
+            }
+        }
+    }
+    if (-not $psql) { throw 'PostgreSQL client tools were not installed' }
+    $env:PG_BIN_PATH = Split-Path $psql -Parent
+    foreach ($tool in @('pg_dump','pg_restore') + $(if ($installPostgres -or $installApplicationPostgres) { @('postgres','initdb','pg_ctl','pg_isready') } else { @() })) {
+        if (-not (Find-PostgresTool $tool)) { throw ('The selected PostgreSQL installation is missing ' + $tool + '.exe') }
+    }
+    # Existing server binaries alone are not a running control database.
+    if ($installPostgres -and -not (Get-NetTCPConnection -State Listen -LocalPort $dbPort -ErrorAction SilentlyContinue)) {
+        Initialize-ManagerOfflineControlPostgres $env:PG_BIN_PATH (Join-Path $env:ProgramData 'Manager\postgres-control') $dbPort $dbAdminUser $dbAdminPassword
+    }
+}
 
 function Initialize-ApplicationPostgres {
     $initdb = Find-PostgresTool 'initdb'
@@ -245,6 +282,11 @@ $optionalRuntimes = @(Get-ListSetting 'OptionalRuntimes' @('go','php','composer'
 $optionalEngines = @(Get-ListSetting 'OptionalDatabaseEngines' @())
 $installPhpMyAdmin = @($optionalEngines | Where-Object { $_ -in @('mysql','mariadb') }).Count -gt 0
 $postgresPackage = [string](Get-Setting 'PostgreSqlPackage' 'auto')
+$postgresBinDirectory = [string](Get-Setting 'PostgreSqlBinDirectory' $env:PG_BIN_PATH)
+if ($postgresBinDirectory) {
+    if ($postgresBinDirectory -notmatch '^[A-Za-z]:[\\/]' -or -not (Test-Path -LiteralPath $postgresBinDirectory -PathType Container)) { throw 'PostgreSqlBinDirectory must be an existing absolute local directory.' }
+    $env:PG_BIN_PATH = [IO.Path]::GetFullPath($postgresBinDirectory)
+}
 if ($postgresPackage -eq 'auto') { $postgresPackage = if ($offlineInstall) { 'postgresql17' } else { Get-ManagerPostgresPackage ([Environment]::OSVersion.Version.Build) } }
 if ($offlineInstall -and $postgresPackage -ne 'postgresql17') { throw 'The offline release bundles PostgreSQL 17' }
 $caddyExe = Join-Path $webRoot 'caddy.exe'
@@ -270,6 +312,26 @@ Add-Result 'Operating system' 'pass' ([Environment]::OSVersion.VersionString)
 Add-Result 'PostgreSQL package' 'pass' $postgresPackage
 Assert-ManagerInstallPaths $managerRoot $webRoot $packageRoot
 Assert-ManagerInstallPorts $managerPort $dbPort $installApplicationPostgres $appDbPort $installPgweb $installPhpMyAdmin
+$null = Get-ManagerControlDatabaseSql $dbName $dbAppUser $dbAppPassword
+$null = Get-ManagerPgpassEntry $dbHost $dbPort $dbAdminUser $dbAdminPassword
+if ((Test-Path -LiteralPath (Join-Path $env:ProgramData 'Manager\pm2-startup.json')) -or (Get-ScheduledTask -TaskName 'Manager PM2 Startup' -ErrorAction SilentlyContinue)) {
+    throw 'This machine already has Manager startup configuration. Use its upgrade or recovery procedure instead of creating a second installation.'
+}
+if ($installPostgres -and $dbHost -notin @('127.0.0.1','localhost')) { throw 'Installing control PostgreSQL requires DbHost 127.0.0.1 or localhost. Deselect its installation to connect an existing server.' }
+if ($installPostgres -and (Get-NetTCPConnection -State Listen -LocalPort $dbPort -ErrorAction SilentlyContinue)) { throw 'Control PostgreSQL port is occupied. Deselect its installation to use the existing database.' }
+if ($installPostgres -and @(Get-CimInstance Win32_Service | Where-Object { ($_.Name + ' ' + $_.PathName) -match '(?i)postgres|pg_ctl' }).Count) {
+    throw 'A PostgreSQL service is already installed, possibly stopped. Deselect control PostgreSQL installation and verify the existing server before continuing; setup will not create a competing service.'
+}
+if (-not $offlineInstall -and -not $installPostgres) {
+    $requiredTools = @('psql','pg_dump','pg_restore')
+    if ($installApplicationPostgres) { $requiredTools += @('postgres','initdb','pg_ctl','pg_isready') }
+    $existingPsql = Find-PostgresTool 'psql'
+    foreach ($tool in $requiredTools) {
+        if (-not $existingPsql -or -not (Test-Path -LiteralPath (Join-Path (Split-Path $existingPsql -Parent) ($tool + '.exe')) -PathType Leaf)) {
+            throw ('Existing PostgreSQL selected, but ' + $tool + '.exe was not found alongside psql.exe. Set PostgreSqlBinDirectory to its tools before running setup, or use the offline bundle.')
+        }
+    }
+}
 Add-Result 'Installation paths and ports' 'pass' 'Dedicated installation directory and required TCP ports are available'
 Add-Result 'Manager address' 'pass' ($managerUrl + ' (' + $managerAccessMode + ', ' + $network.TlsMode + ' HTTPS)')
 if ($network.TlsMode -eq 'internal') {
@@ -306,8 +368,6 @@ if ($offlineInstall) {
     if ($offlineBundle.Manifest.sourceCommit -ne $release.sourceCommit) { throw 'Offline application build does not match the source release' }
     if ($network.TlsMode -ne 'internal') { throw 'Offline setup requires local access mode for HTTPS. Public certificates require internet access.' }
     if ($dbHost -notin @('127.0.0.1','localhost') -and $installPostgres) { throw 'Offline control PostgreSQL installation must use 127.0.0.1 or localhost' }
-    $null = Get-ManagerPgpassEntry $dbHost $dbPort $dbAdminUser $dbAdminPassword
-    if ($installPostgres -and (Get-NetTCPConnection -State Listen -LocalPort $dbPort -ErrorAction SilentlyContinue)) { throw 'Control PostgreSQL port is occupied. Deselect its installation to use the existing database.' }
     $bundleBytes = [long](($offlineBundle.Manifest.artifacts | Measure-Object -Property bytes -Sum).Sum)
     $systemDriveName = [IO.Path]::GetPathRoot($env:ProgramData).TrimEnd('\').TrimEnd(':')
     $systemDrive = Get-PSDrive -Name $systemDriveName
@@ -350,9 +410,7 @@ else {
 }
 Ensure-Package 'caddy.exe' 'caddy'
 Invoke-Native 'powershell.exe' @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $packageRoot 'scripts\install-sling.ps1'),'-InstallDirectory',(Join-Path $webRoot 'tools\sling')) 'Install database migration engine'
-if (($installPostgres -or $installApplicationPostgres) -and -not (Find-PostgresTool 'psql')) {
-    Ensure-Package 'psql.exe' $postgresPackage @('--params',('/Password:' + $dbAdminPassword + ' /Port:' + $dbPort))
-}
+Ensure-OnlinePostgres
 if ($installApplicationPostgres) { Initialize-ApplicationPostgres }
 if ($optionalRuntimes -contains 'go') { Ensure-Package 'go.exe' 'golang' }
 if (($optionalRuntimes -contains 'php') -or $installPhpMyAdmin) { Ensure-Package 'php.exe' 'php' }
@@ -406,38 +464,29 @@ if ([IO.Path]::GetFullPath($installedCaddy) -ne [IO.Path]::GetFullPath($caddyExe
 Write-Step 'Creating the Manager control database'
 $psql = Find-PostgresTool 'psql'
 if (-not $psql) { throw 'psql.exe was not found' }
-$connectionPasswordFile = $null
-if ($offlineInstall) {
+$connectionPasswordFile = Join-Path $env:TEMP ('manager-pgpass-' + [guid]::NewGuid() + '.conf')
+$sqlPath = Join-Path $env:TEMP ('manager-init-' + [guid]::NewGuid() + '.sql')
+$previousConnectTimeout = $env:PGCONNECT_TIMEOUT
+try {
     # Windows libpq reads environment passwords through the ANSI code page. A
     # private UTF-8 pgpass file preserves non-ASCII passwords created by initdb.
-    $connectionPasswordFile = Join-Path $env:TEMP ('manager-pgpass-' + [guid]::NewGuid() + '.conf')
     [IO.File]::WriteAllText($connectionPasswordFile,(Get-ManagerPgpassEntry $dbHost $dbPort $dbAdminUser $dbAdminPassword),[Text.UTF8Encoding]::new($false))
     & icacls.exe $connectionPasswordFile /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
     if ($LASTEXITCODE -ne 0) { Remove-Item -LiteralPath $connectionPasswordFile -Force; throw 'Failed to secure PostgreSQL connection password file' }
     Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
     $env:PGPASSFILE = $connectionPasswordFile
-} else { $env:PGPASSWORD = $dbAdminPassword }
-$sqlPath = Join-Path $env:TEMP ('manager-init-' + [guid]::NewGuid() + '.sql')
-$sqlTemplate = @'
-DO $manager$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{0}') THEN
-    CREATE ROLE "{1}" LOGIN PASSWORD '{2}';
-  ELSE
-    ALTER ROLE "{1}" WITH LOGIN PASSWORD '{2}';
-  END IF;
-END
-$manager$;
-SELECT 'CREATE DATABASE "{3}" OWNER "{1}"'
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{4}')\gexec
-'@
-$sql = $sqlTemplate -f (Escape-Sql $dbAppUser),$dbAppUser.Replace('"','""'),(Escape-Sql $dbAppPassword),$dbName.Replace('"','""'),(Escape-Sql $dbName)
-$sql | Set-Content -LiteralPath $sqlPath -Encoding UTF8
-try { Invoke-Native $psql @('-h',$dbHost,'-p',$dbPort,'-U',$dbAdminUser,'-d','postgres','-v','ON_ERROR_STOP=1','-f',$sqlPath) 'Initialize control database' }
+    $sql = Get-ManagerControlDatabaseSql $dbName $dbAppUser $dbAppPassword
+    $sql | Set-Content -LiteralPath $sqlPath -Encoding UTF8
+    & icacls.exe $sqlPath /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to secure the control database initialization file' }
+    $env:PGCONNECT_TIMEOUT = '5'
+    Invoke-Native $psql @('-X','-w','-h',$dbHost,'-p',$dbPort,'-U',$dbAdminUser,'-d','postgres','-v','ON_ERROR_STOP=1','-f',$sqlPath) 'Authenticate PostgreSQL and initialize a new control database'
+}
 finally {
     Remove-Item $sqlPath -Force -ErrorAction SilentlyContinue
     Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
     if ($connectionPasswordFile) { Remove-Item -LiteralPath $connectionPasswordFile -Force -ErrorAction SilentlyContinue; Remove-Item Env:PGPASSFILE -ErrorAction SilentlyContinue }
+    $env:PGCONNECT_TIMEOUT = $previousConnectTimeout
 }
 
 Write-Step 'Installing and building Manager'
@@ -459,7 +508,7 @@ try {
         'XDG_CONFIG_HOME=' + $caddyConfigHome.Replace('\','\\')
         'MANAGER_PORT=' + $managerPort
         'MANAGER_OFFLINE_INSTALL=' + $(if ($offlineInstall) { '1' } else { '0' })
-        $(if ($offlineInstall) { 'PG_BIN_PATH=' + $env:PG_BIN_PATH.Replace('\','\\') })
+        'PG_BIN_PATH=' + $env:PG_BIN_PATH.Replace('\','\\')
         $(if ($offlineInstall) { 'SLING_EXE=' + (Join-Path $offlineTools['sling'] 'sling.exe').Replace('\','\\') })
         'DATABASE_HOST=' + $dbHost
         'DATABASE_PORT=' + $dbPort
@@ -613,6 +662,11 @@ Add-Result 'Database firewall' 'pass' 'No database engine ports were opened'
 Write-Step 'Verifying installation'
 $status = Wait-Http ('http://127.0.0.1:' + $managerPort + '/login')
 Add-Result 'Manager health' 'pass' ('Local login returned HTTP ' + $status)
+try {
+    $env:ADMIN_EMAIL=$adminEmail; $env:ADMIN_PASSWORD=$adminPassword
+    Invoke-Native 'node.exe' @((Join-Path $managerRoot 'scripts\verify-manager-installation.cjs'),$managerRoot,[string]$managerPort) 'Verify release readiness, administrator sign-in and server management'
+} finally { Remove-Item Env:ADMIN_PASSWORD -ErrorAction SilentlyContinue }
+Add-Result 'Administrator and server management' 'pass' 'Expected release, database readiness, administrator session and server schema verified'
 $publicManagerListener = @(Get-NetTCPConnection -State Listen -LocalPort $managerPort -ErrorAction Stop | Where-Object { $_.LocalAddress -notin @('127.0.0.1','::1') })
 if ($publicManagerListener.Count) { throw 'Manager must listen only on loopback behind Caddy' }
 Invoke-Native $caddyExe @('validate','--config',$caddyfile,'--adapter','caddyfile') 'Final Caddy validation'
