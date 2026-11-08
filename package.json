@@ -47,7 +47,7 @@
     "react-dom": "^18.2.0",
     "redis": "^5.12.1",
     "ssh2": "^1.17.0",
-    "systeminformation": "^5.33.6",
+    "systeminformation": "^5.33.19",
     "tailwind-merge": "^2.2.1",
     "tar": "7.5.22",
     "ws": "^8.21.3"
