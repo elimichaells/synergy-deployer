@@ -37,6 +37,27 @@ async function main() {
   const { db } = require('../../lib/db.ts');
   const managed = require('../../lib/managed-servers.ts');
   const ssh = require('../../lib/server-ssh.ts');
+  // Report the stage of a stalled transfer without logging paths, payloads or credentials.
+  const { Client: SshClient } = require('ssh2');
+  const openSftp = SshClient.prototype.sftp;
+  SshClient.prototype.sftp = function (callback) {
+    console.log('[sftp] Opening subsystem');
+    return openSftp.call(this, (error, sftp) => {
+      console.log('[sftp] Subsystem ' + (error ? 'failed' : 'ready'));
+      if (sftp) for (const name of ['realpath','mkdir','writeFile','unlink','rmdir']) {
+        const operation = sftp[name];
+        sftp[name] = function (...args) {
+          const done = args.pop();
+          console.log('[sftp] Starting ' + name);
+          return operation.call(this, ...args, (...values) => {
+            console.log('[sftp] Finished ' + name + (values[0] ? ' with error' : ''));
+            done(...values);
+          });
+        };
+      }
+      callback(error, sftp);
+    });
+  };
   const agentRoute = require('../../app/api/server-agent/[action]/route.ts');
   const { redact } = require('../../scripts/manager-agent.cjs');
   const secrets = [process.env.SSH_LAB_PASSWORD];

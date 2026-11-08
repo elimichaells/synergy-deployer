@@ -2,6 +2,12 @@ name: SSH onboarding lab
 
 on:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Disposable platform to validate
+        type: choice
+        default: both
+        options: [both, windows-2025, ubuntu-24.04]
   push:
     branches: [main, codex/ssh-onboarding-tests]
     paths:
@@ -23,7 +29,7 @@ jobs:
       fail-fast: false
       max-parallel: 1
       matrix:
-        os: [windows-2025, ubuntu-24.04]
+        os: ${{ fromJSON(inputs.platform == 'windows-2025' && '["windows-2025"]' || inputs.platform == 'ubuntu-24.04' && '["ubuntu-24.04"]' || '["windows-2025","ubuntu-24.04"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     env:
