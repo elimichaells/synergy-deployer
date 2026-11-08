@@ -221,7 +221,9 @@ async function bounded<T>(operation: Promise<T>, milliseconds = 15000): Promise<
   try { return await Promise.race([operation, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('SSH file transfer timed out')), milliseconds) })]) }
   finally { clearTimeout(timer) }
 }
-export async function sftpSession(connection: Client) { return bounded(new Promise<SFTPWrapper>((resolve,reject) => connection.sftp((error,sftp) => error ? reject(error) : resolve(sftp)))) }
+// Starting the Windows subsystem on a new account can outlast a small file
+// transfer. Allow one minute to open it; individual transfers remain bounded.
+export async function sftpSession(connection: Client) { return bounded(new Promise<SFTPWrapper>((resolve,reject) => connection.sftp((error,sftp) => error ? reject(error) : resolve(sftp))),60000) }
 export async function writeRemote(sftp: SFTPWrapper, filename: string, content: string) {
   return bounded(new Promise<void>((resolve,reject) => sftp.writeFile(filename,content,{ mode: 0o600 },error => error ? reject(error) : resolve())))
 }
