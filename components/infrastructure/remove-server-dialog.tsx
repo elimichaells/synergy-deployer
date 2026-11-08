@@ -3,13 +3,14 @@
 import * as AlertDialog from '@radix-ui/react-alert-dialog'
 import { AlertTriangle, Loader2, Trash2 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { useServerDirectory } from '@/components/infrastructure/server-directory'
 import type { ServerRemovalReview } from '@/lib/server-removal-types'
 
 export function RemoveServerDialog({ serverId, serverName, leaveWorkspace = false, disabled = false, onRemoved }: { serverId: string; serverName: string; leaveWorkspace?: boolean; disabled?: boolean; onRemoved?: () => void }) {
   const router = useRouter(), { refresh } = useServerDirectory(), inputId = useId()
+  const title = useRef<HTMLHeadingElement>(null)
   const [open, setOpen] = useState(false), [revision, setRevision] = useState(0)
   const [review, setReview] = useState<ServerRemovalReview | null>(null)
   const [name, setName] = useState(''), [acknowledged, setAcknowledged] = useState(false)
@@ -47,8 +48,8 @@ export function RemoveServerDialog({ serverId, serverName, leaveWorkspace = fals
     <AlertDialog.Trigger asChild><Button variant="outline" size="sm" disabled={disabled} aria-label={`Remove ${serverName}`} className="text-destructive hover:text-destructive"><Trash2 className="mr-1.5 h-3.5 w-3.5" />Remove server</Button></AlertDialog.Trigger>
     <AlertDialog.Portal>
       <AlertDialog.Overlay className="fixed inset-0 z-[70] bg-black/50 backdrop-blur-sm" />
-      <AlertDialog.Content className="fixed left-1/2 top-1/2 z-[71] max-h-[90dvh] w-[calc(100%-32px)] max-w-xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-border bg-popover p-6 shadow-2xl">
-        <AlertDialog.Title className="flex items-center gap-2 text-lg font-semibold"><AlertTriangle className="h-5 w-5 shrink-0 text-destructive" />Remove server from Manager?</AlertDialog.Title>
+      <AlertDialog.Content onOpenAutoFocus={event => { event.preventDefault(); title.current?.focus() }} className="fixed left-1/2 top-1/2 z-[71] max-h-[90dvh] w-[calc(100%-32px)] max-w-2xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-border bg-popover p-6 shadow-2xl">
+        <AlertDialog.Title ref={title} tabIndex={-1} className="flex items-center gap-2 text-lg font-semibold outline-none"><AlertTriangle className="h-5 w-5 shrink-0 text-destructive" />Remove server from Manager?</AlertDialog.Title>
         <AlertDialog.Description className="mt-2 break-words text-sm leading-6 text-muted-foreground">Remove <strong className="text-foreground">{review?.server.name || serverName}</strong> and permanently delete its records in Manager. This cannot be undone.</AlertDialog.Description>
         {loading && <p role="status" className="mt-4 flex items-center gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin" />Checking applications and active work…</p>}
         {review && <div className="mt-4 space-y-4 text-sm">
