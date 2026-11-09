@@ -36,7 +36,10 @@ async function execute(root,input,h,driver){
   const expected=await engine.counts(input.connection,driver,tables,'source');checkCancelled();
   tx={...input,tables,marker,expected,phase:'copying'};await fs.mkdir(path.dirname(file),{recursive:true,mode:0o700});await h.atomicJson(file,tx);
   try{
-    const config=path.join(path.dirname(file),'replication.json'),streams=Object.fromEntries(tables.map(t=>[engine.object(input.connection,t.sourceSchema,t.sourceTable),{object:engine.object(input.target,t.targetSchema,t.stage)}]));
+    // Sling parses its own quoted table syntax before generating provider SQL.
+    // SQL Server brackets would become literal characters in the object name.
+    const slingObject=(provider,schema,table)=>{const q=['mysql','mariadb'].includes(provider)?'`':'"';return[schema,table].map(value=>{if(value.includes(q))throw Error('This table name contains a quote delimiter unsupported by the migration runtime');return q+value+q;}).join('.');};
+    const config=path.join(path.dirname(file),'replication.json'),streams=Object.fromEntries(tables.map(t=>[slingObject(input.connection.provider,t.sourceSchema,t.sourceTable),{object:slingObject(input.target.provider,t.targetSchema,t.stage)}]));
     await h.atomicJson(config,{source:'MANAGER_MIGRATION_SOURCE',target:'MANAGER_MIGRATION_TARGET',defaults:{mode:'full-refresh',target_options:{column_casing:'source'}},streams});
     // Foreign keys are recreated against final table names, never staging
     // copies. This also avoids Sling's quoted-name FK sorter ambiguity.
