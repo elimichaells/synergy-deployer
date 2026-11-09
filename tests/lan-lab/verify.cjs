@@ -12,7 +12,7 @@ async function start(config,env){const child=cp.spawn(binary,['run','--config',c
 async function run(){
   await fs.mkdir(root+'/results',{recursive:true});await fs.mkdir(root+'/logs',{recursive:true});
   const ip=Object.values(os.networkInterfaces()).flat().map(x=>x?.address).find(a=>{try{return lan.lanAddress(a).family===4}catch{return false}});assert.ok(ip,'Disposable VM has a private LAN interface');
-  const backend=await listen(http.createServer((req,res)=>res.end('institution app'))),peerPort=await freePort(),admin=await freePort(),httpPort=await freePort(),tlsPort=await freePort();
+  const backend=await listen(http.createServer((req,res)=>{const url=new URL(req.url,'http://127.0.0.1');res.end(url.pathname==='/api/manager-health'?JSON.stringify({ready:true,version:'2.31.0',nonce:url.searchParams.get('nonce')}):'institution app')})),peerPort=await freePort(),admin=await freePort(),httpPort=await freePort(),tlsPort=await freePort();
   const env={...process.env,XDG_DATA_HOME:root+'/data',XDG_CONFIG_HOME:root+'/config'},storage=root+'/storage';
   process.env.CADDY_EXE=binary;process.env.CADDYFILE_PATH=root+'/Caddyfile';process.env.CADDY_PATH=root;
   const peer=`http://127.0.0.1:${peerPort} {\n respond "existing site preserved"\n}\n`;
@@ -31,6 +31,10 @@ async function run(){
   const certificateResponse=await certificateRoute.GET();assert.equal(certificateResponse.status,200);assert.match(certificateResponse.headers.get('Content-Disposition'),/attachment/);
   const downloadedCa=await certificateResponse.text();assert.equal(new(require('node:crypto').X509Certificate)(downloadedCa).fingerprint256,new(require('node:crypto').X509Certificate)(ca).fingerprint256);assert.ok(!downloadedCa.includes('PRIVATE KEY'));
   await until(async()=>assert.deepEqual(await request('https://'+address,downloadedCa),{status:200,body:'institution app'}));
+  const {verifyProxy}=require('../../scripts/verify-manager-installation.cjs');
+  const proxyOptions={origin:'https://'+address,caFile:storage+'/pki/authorities/local/root.crt',version:'2.31.0',timeoutMs:1500,pollMs:100};
+  assert.deepEqual(await verifyProxy(proxyOptions),{httpsVerified:true});
+  await assert.rejects(verifyProxy({...proxyOptions,version:'0.0.0'}),/expected ready Manager/);
   assert.equal((await request(`http://127.0.0.1:${peerPort}`)).body,'existing site preserved');
   const before=await fs.readFile(root+'/Caddyfile','utf8');assert.ok(before.includes(peer.trim()));
   const occupied=await listen(net.createServer(socket=>socket.end()));
@@ -44,6 +48,7 @@ async function run(){
   config=config.replace('admin 127.0.0.1:2029',`admin 127.0.0.1:${remoteAdmin}\n auto_https disable_redirects`);
   await fs.writeFile(path.join(remoteRoot,'Caddyfile'),config);await start(path.join(remoteRoot,'Caddyfile'),env);
   const remoteCa=await until(()=>fs.readFile(remoteStorage+'/pki/authorities/local/root.crt'));
+  await assert.rejects(verifyProxy({...proxyOptions,caFile:path.join(remoteStorage,'pki/authorities/local/root.crt')}),/HTTPS verification failed/);
   await until(async()=>assert.deepEqual(await request('https://'+remoteAddress,remoteCa),{status:200,body:'institution app'}));
   assert.equal((await request('https://'+address,ca)).body,'institution app');assert.equal((await request(`http://127.0.0.1:${peerPort}`)).body,'existing site preserved');
   await agent.proxyConfig(remoteRoot,config,{caddy:binary,tools:{caddy:true},pm:async()=> '[]'});

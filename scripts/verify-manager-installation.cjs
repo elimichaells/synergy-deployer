@@ -33,12 +33,39 @@ async function verifyInstallation({ baseUrl, version, email, password, timeoutMs
   return {ready:true,version,administratorLogin:true,serverManagement:true};
 }
 
-module.exports = { verifyInstallation };
+async function verifyProxy({origin,caFile,version,timeoutMs=60000,pollMs=1000}) {
+  const target=new URL(origin),hostname=target.hostname.replace(/^\[|\]$/g,'');
+  if(target.protocol!=='https:'||target.username||target.password||target.pathname!=='/'||target.search||target.hash)throw Error('Proxy verification requires an HTTPS origin');
+  const https=require('node:https'),tls=require('node:tls'),fs=require('node:fs/promises'),{isIP}=require('node:net');
+  const deadline=Date.now()+timeoutMs;let last='No HTTPS response';
+  while(Date.now()<deadline){
+    const nonce=randomUUID();
+    try {
+      const ca=await fs.readFile(caFile);
+      const health=await new Promise((resolve,reject)=>{
+        // Use the selected certificate identity while always connecting locally.
+        // A newly installed institution hostname may not have a DNS record yet.
+        const request=https.get({hostname:'127.0.0.1',port:Number(target.port||443),servername:isIP(hostname)?undefined:hostname,
+          ca,rejectUnauthorized:true,checkServerIdentity:(_name,certificate)=>tls.checkServerIdentity(hostname,certificate),
+          path:'/api/manager-health?nonce='+nonce,headers:{Host:target.host},signal:AbortSignal.timeout(Math.max(1,Math.min(5000,deadline-Date.now())))},response=>{
+          let body='';response.on('data',chunk=>{body+=chunk;if(body.length>65536)request.destroy(Error('HTTPS readiness response was too large'))});
+          response.on('error',reject);response.on('end',()=>{try{if(response.statusCode!==200)throw Error('HTTPS readiness HTTP '+response.statusCode);resolve(JSON.parse(body))}catch(error){reject(error)}});
+        });request.on('error',reject);
+      });
+      if(health.ready===true&&health.version===version&&health.nonce===nonce)return {httpsVerified:true};
+      last='HTTPS did not return the expected ready Manager';
+    }catch(error){last=error.code||error.message;}
+    if(Date.now()<deadline)await new Promise(r=>setTimeout(r,Math.min(pollMs,deadline-Date.now())));
+  }
+  throw Error('Manager HTTPS verification failed: '+last);
+}
+
+module.exports = { verifyInstallation, verifyProxy };
 if (require.main === module) {
   const path = require('node:path');
   const root = path.resolve(process.argv[2] || process.cwd());
   const version = require(path.join(root,'package.json')).version;
   verifyInstallation({baseUrl:'http://127.0.0.1:'+Number(process.argv[3] || 4000),version,email:process.env.ADMIN_EMAIL,password:process.env.ADMIN_PASSWORD})
-    .then(result=>console.log(JSON.stringify(result)))
+    .then(async result=>{if(process.argv[4])Object.assign(result,await verifyProxy({origin:process.argv[4],caFile:process.argv[5],version}));console.log(JSON.stringify(result))})
     .catch(error=>{console.error('Manager verification failed: '+error.message);process.exitCode=1});
 }

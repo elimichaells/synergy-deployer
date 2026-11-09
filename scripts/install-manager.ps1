@@ -665,7 +665,9 @@ $status = Wait-Http ('http://127.0.0.1:' + $managerPort + '/login')
 Add-Result 'Manager health' 'pass' ('Local login returned HTTP ' + $status)
 try {
     $env:ADMIN_EMAIL=$adminEmail; $env:ADMIN_PASSWORD=$adminPassword
-    Invoke-Native 'node.exe' @((Join-Path $managerRoot 'scripts\verify-manager-installation.cjs'),$managerRoot,[string]$managerPort) 'Verify release readiness, administrator sign-in and server management'
+    $verifyArguments=@((Join-Path $managerRoot 'scripts\verify-manager-installation.cjs'),$managerRoot,[string]$managerPort)
+    if($network.TlsMode -eq 'internal'){$verifyArguments+=@($managerUrl,$localCaCertificate)}
+    Invoke-Native 'node.exe' $verifyArguments 'Verify release readiness, administrator sign-in, HTTPS and server management'
 } finally { Remove-Item Env:ADMIN_PASSWORD -ErrorAction SilentlyContinue }
 Add-Result 'Administrator and server management' 'pass' 'Expected release, database readiness, administrator session and server schema verified'
 $publicManagerListener = @(Get-NetTCPConnection -State Listen -LocalPort $managerPort -ErrorAction Stop | Where-Object { $_.LocalAddress -notin @('127.0.0.1','::1') })
