@@ -2,7 +2,7 @@ const fs=require('node:fs'),path=require('node:path'),https=require('node:https'
 const root='C:/ManagerAcceptanceLab',read=file=>JSON.parse(fs.readFileSync(file,'utf8').replace(/^\uFEFF/,''));
 async function verify(mode){
   const config=read(root+'/private/install.json'),identity=read(root+'/private/identity.json');
-  assert.equal(process.env.COMPUTERNAME,identity.computer);assert.equal(identity.root,root.replaceAll('/','\\'));assert.ok(['before','after'].includes(mode));
+  assert.equal(process.env.COMPUTERNAME,identity.computer);assert.equal(identity.root,root.replaceAll('/','\\'));assert.ok(['before','after','system-recovery'].includes(mode));
   const installed=read('C:/ProgramData/Manager/install-report.json'),version=read(config.ManagerRoot+'/package.json').version;
   const ps=code=>cp.execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from("$ProgressPreference='SilentlyContinue';"+code,'utf16le').toString('base64')],{windowsHide:true,encoding:'utf8',timeout:30000});
   const boot=ps("(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')").trim();
@@ -36,10 +36,10 @@ async function verify(mode){
   const services=JSON.parse(ps("@(Get-CimInstance Win32_Service | Where-Object {$_.Name -in @('ManagerPostgreSQLControl','ManagerPostgreSQLApplications')} | Select-Object Name,State,StartMode) | ConvertTo-Json -Compress"));assert.equal(services.length,2);assert.ok(services.every(s=>s.State==='Running'&&s.StartMode==='Auto'));
   const listeners=JSON.parse(ps("@(Get-NetTCPConnection -State Listen | Where-Object {$_.LocalPort -in @(4000,5432,5433)} | Select-Object LocalAddress,LocalPort) | ConvertTo-Json -Compress"));assert.ok(listeners.length>=3);assert.ok(listeners.every(l=>['127.0.0.1','::1'].includes(l.LocalAddress)));
   const task=JSON.parse(ps("$task=Get-ScheduledTask -TaskName 'Manager PM2 Startup';$info=$task|Get-ScheduledTaskInfo;[pscustomobject]@{user=$task.Principal.UserId;result=$info.LastTaskResult;lastRun=$info.LastRunTime.ToUniversalTime().ToString('o');startup=@($task.Triggers|Where-Object {$_.CimClass.CimClassName -eq 'MSFT_TaskBootTrigger'}).Count} | ConvertTo-Json -Compress"));assert.ok(['SYSTEM','S-1-5-18'].includes(task.user));assert.equal(task.startup,1);
-  if(mode==='after'){const old=read(root+'/private/before.json');assert.equal(caHash,old.caHash,'Caddy CA persists across SYSTEM startup');assert.deepEqual(snapshot,old.snapshot,'accounts and encrypted database credentials persist');assert.equal(task.result,0);assert.ok(new Date(task.lastRun)>=new Date(boot));}
-  const result={status:'passed',version,sourceCommit:read(config.ManagerRoot+'/release-source.json').sourceCommit,computer:identity.computer,runId:identity.runId,bootAfter:boot,httpsLogin:true,localCaStable:true,privateDatabaseListeners:true,databasesHealthy:true,automaticStartup:mode==='after',...ready};
+  if(mode!=='before'){const old=read(root+'/private/before.json');assert.equal(caHash,old.caHash,'Caddy CA persists across SYSTEM startup');assert.deepEqual(snapshot,old.snapshot,'accounts and encrypted database credentials persist');assert.equal(task.result,0);assert.ok(new Date(task.lastRun)>=new Date(boot));}
+  const result={status:'passed',version,sourceCommit:read(config.ManagerRoot+'/release-source.json').sourceCommit,computer:identity.computer,runId:identity.runId,bootAfter:boot,httpsLogin:true,localCaStable:true,privateDatabaseListeners:true,databasesHealthy:true,automaticStartup:mode==='after',systemTaskRecovery:mode==='system-recovery',...ready};
   if(mode==='before')fs.writeFileSync(root+'/private/before.json',JSON.stringify({caHash,snapshot}));
-  fs.writeFileSync(root+'/results/'+(mode==='after'?'reboot-result.json':'fresh-verification.json'),JSON.stringify(result,null,2));return result;
+  fs.writeFileSync(root+'/results/'+(mode==='after'?'reboot-result.json':mode==='system-recovery'?'system-recovery.json':'fresh-verification.json'),JSON.stringify(result,null,2));return result;
 }
 module.exports={verify};
 if(require.main===module)verify(process.argv[2]).then(r=>console.log(JSON.stringify(r))).catch(e=>{console.error(e.message);process.exitCode=1});

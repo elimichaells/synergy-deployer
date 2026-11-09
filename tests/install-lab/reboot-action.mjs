@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
+import {createRequire} from 'node:module';
 const root='C:/ManagerAcceptanceLab',read=file=>JSON.parse(fs.readFileSync(file,'utf8').replace(/^\uFEFF/,''));
 if(process.env.GITHUB_ACTIONS!=='true'||process.env.RUNNER_ENVIRONMENT!=='github-hosted'||process.env.MANAGER_INSTALL_LAB!=='1'||process.platform!=='win32')throw Error('Reboot is restricted to the disposable hosted Windows lab');
 const identity=read(root+'/private/identity.json'),before=read(root+'/results/install-result.json');
@@ -20,6 +21,13 @@ while(!fs.existsSync(root+'/private/probe-success.json')&&Date.now()<probeDeadli
 if(!fs.existsSync(root+'/private/probe-success.json'))throw Error('SYSTEM upload probe failed before reboot: '+(fs.existsSync(root+'/private/upload-error.txt')?fs.readFileSync(root+'/private/upload-error.txt','utf8'):'no success receipt'));
 const probe=read(root+'/private/probe-success.json');if(probe.status!=='ready'||probe.user!=='S-1-5-18'||probe.runId!==identity.runId)throw Error('Independent SYSTEM verifier identity check failed');
 console.log('SYSTEM verifier successfully uploaded its pre-reboot proof.');
+// Rehearse the installed recovery task while this runner can still collect logs.
+// This is separate evidence and must never stand in for a real OS reboot receipt.
+const recovery=`$ErrorActionPreference='Stop';$env:PM2_HOME='C:\\ProgramData\\Manager\\pm2';$config=Get-Content -LiteralPath 'C:\\ProgramData\\Manager\\pm2-startup.json' -Raw|ConvertFrom-Json;$env:Path=(Split-Path -Parent $config.node)+';'+(Split-Path -Parent $config.pm2)+';'+$config.path;& $config.pm2 kill;if($LASTEXITCODE){throw 'Could not stop the disposable Manager processes'};$requested=(Get-Date).AddSeconds(-2);Start-ScheduledTask -TaskName 'Manager PM2 Startup';$deadline=(Get-Date).AddSeconds(90);$complete=$false;while((Get-Date)-lt $deadline){$task=Get-ScheduledTask -TaskName 'Manager PM2 Startup';$info=$task|Get-ScheduledTaskInfo;if($info.LastRunTime-ge $requested-and $task.State-eq 'Ready'){if($info.LastTaskResult-ne 0){throw ('SYSTEM recovery task failed: '+$info.LastTaskResult)};$complete=$true;break};Start-Sleep -Seconds 1};if(!$complete){throw 'SYSTEM recovery task did not complete'};`;
+execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(recovery,'utf16le').toString('base64')],{stdio:'inherit',windowsHide:true,timeout:120000});
+await createRequire(import.meta.url)('./verify.cjs').verify('system-recovery');
+const {DefaultArtifactClient}=await import('@actions/artifact');
+await new DefaultArtifactClient().uploadArtifact('manager-system-recovery',[root+'/results/system-recovery.json'],root+'/results',{retentionDays:7});
 const code=`$ErrorActionPreference='Stop';$action=New-ScheduledTaskAction -Execute ${q(node)} -Argument ${q('"'+script+'"')};$trigger=New-ScheduledTaskTrigger -AtStartup;$trigger.Delay='PT30S';$principal=New-ScheduledTaskPrincipal -UserId SYSTEM -LogonType ServiceAccount -RunLevel Highest;$settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 10);Register-ScheduledTask -TaskName 'Manager Isolated Reboot Verification' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null;`;
 execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(code,'utf16le').toString('base64')],{stdio:'inherit',windowsHide:true});
 console.log('Independent startup verifier registered. Rebooting only this disposable GitHub-hosted VM.');
