@@ -11,6 +11,8 @@ build/
 packages/
 installer/ManagerSetup/bin/
 installer/ManagerSetup/obj/
+tests/installer-process/bin/
+tests/installer-process/obj/
 installer/ManagerSetup/Assets/manager-package.zip
 installer/ManagerSetup/Assets/manager-package.sha256.json
 

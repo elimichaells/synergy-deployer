@@ -54,6 +54,8 @@ jobs:
         if: github.event_name == 'push' || inputs.candidatePackage
         shell: pwsh
         run: |
+          dotnet run --project tests/installer-process -- (Get-Command node).Source
+          if($LASTEXITCODE){throw 'Desktop installer process completion verification failed'}
           $version=(Get-Content package.json -Raw | ConvertFrom-Json).version
           $packageDirectory=Join-Path $env:RUNNER_TEMP 'manager-candidate-package'
           ./scripts/package-manager-exe.ps1 -Version $version -OutputDirectory $packageDirectory

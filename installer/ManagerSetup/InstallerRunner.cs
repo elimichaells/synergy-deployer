@@ -101,12 +101,10 @@ internal static class InstallerRunner
                 }
             });
 
-            var standardOutput = PumpAsync(process.StandardOutput, output, cancellationToken);
-            var standardError = PumpAsync(process.StandardError, line => output("ERROR: " + line), cancellationToken);
-            await Task.WhenAll(standardOutput, standardError, process.WaitForExitAsync(cancellationToken));
-            if (process.ExitCode != 0)
+            var exitCode = await InstallerProcess.CaptureAsync(process, output, cancellationToken);
+            if (exitCode != 0)
             {
-                throw new InvalidOperationException($"Manager provisioning exited with code {process.ExitCode}.");
+                throw new InvalidOperationException($"Manager provisioning exited with code {exitCode}.");
             }
         }
         finally
@@ -115,11 +113,4 @@ internal static class InstallerRunner
         }
     }
 
-    private static async Task PumpAsync(StreamReader reader, Action<string> output, CancellationToken cancellationToken)
-    {
-        while (await reader.ReadLineAsync(cancellationToken) is { } line)
-        {
-            output(line);
-        }
-    }
 }
