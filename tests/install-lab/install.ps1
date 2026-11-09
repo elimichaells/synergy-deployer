@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][ValidatePattern('^\d+\.\d+\.\d+$')][string]$Release)
+param([Parameter(Mandatory=$true)][ValidatePattern('^\d+\.\d+\.\d+$')][string]$Release,[switch]$CandidateInstaller)
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:RUNNER_OS -ne 'Windows' -or $env:MANAGER_INSTALL_LAB -ne '1') {
@@ -41,6 +41,10 @@ try {
   $source=Join-Path $root 'package'
   Expand-Archive -LiteralPath (Join-Path $root $zip[0].name) -DestinationPath $source
   if(!(Test-Path -LiteralPath (Join-Path $source 'scripts\install-manager.ps1'))){throw 'Installer engine absent from package'}
+  if($CandidateInstaller){
+    foreach($file in @('install-manager.ps1','installer-preflight.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot ('..\..\scripts\'+$file)) -Destination (Join-Path $source ('scripts\'+$file)) -Force}
+    $record.candidateInstaller=$env:GITHUB_SHA
+  }
   $config=[ordered]@{
     ManagerDomain='localhost';ManagerAccessMode='local';ManagerAllowedNetworks=@('127.0.0.1');ManagerPort=4000
     ManagerRoot='C:\ManagerAcceptanceLab\web\manager';WebRoot='C:\ManagerAcceptanceLab\web'

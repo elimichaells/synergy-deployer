@@ -2,7 +2,7 @@ name: Isolated Manager installation and reboot
 on:
   push:
     branches: [codex/isolated-install-validation]
-    paths: ['.github/workflows/manager-install-lab.yml', '.github/actions/manager-lab-reboot/**', 'tests/install-lab/**']
+    paths: ['.github/workflows/manager-install-lab.yml', '.github/actions/manager-lab-reboot/**', 'tests/install-lab/**', 'scripts/install-manager.ps1', 'scripts/installer-preflight.ps1']
   workflow_dispatch:
     inputs:
       release:
@@ -17,6 +17,10 @@ on:
         description: Reboot the disposable hosted VM and require a post-boot receipt
         type: boolean
         default: true
+      candidateInstaller:
+        description: Test installer engine fixes from this checkout against the published payload
+        type: boolean
+        default: false
 permissions:
   contents: read
   actions: read
@@ -40,7 +44,7 @@ jobs:
       - run: npm ci --prefix tests/install-lab --ignore-scripts --no-audit --no-fund
       - name: Install published package on a disposable Windows machine
         shell: pwsh
-        run: ./tests/install-lab/install.ps1 -Release $env:LAB_RELEASE
+        run: ./tests/install-lab/install.ps1 -Release $env:LAB_RELEASE -CandidateInstaller:([bool]::Parse('${{ github.event_name == 'push' || inputs.candidateInstaller }}'))
       - name: Save sanitized pre-boot results
         if: always()
         uses: actions/upload-artifact@v4

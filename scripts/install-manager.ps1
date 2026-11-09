@@ -458,8 +458,9 @@ if ([IO.Path]::GetFullPath($packageRoot).TrimEnd('\') -ne [IO.Path]::GetFullPath
     & robocopy.exe $packageRoot $managerRoot /E /XD .git node_modules .next packages offline /XF .env.local *.log /NFL /NDL /NJH /NJS
     if ($LASTEXITCODE -ge 8) { throw ('Application copy failed: ' + $LASTEXITCODE) }
 }
-$installedCaddy = (Get-Command caddy.exe).Source
+$installedCaddy = Resolve-PortableCaddyPath (Get-Command caddy.exe).Source
 if ([IO.Path]::GetFullPath($installedCaddy) -ne [IO.Path]::GetFullPath($caddyExe)) { Copy-Item $installedCaddy $caddyExe -Force }
+Invoke-Native $caddyExe @('version') 'Verify standalone Caddy executable'
 
 Write-Step 'Creating the Manager control database'
 $psql = Find-PostgresTool 'psql'
