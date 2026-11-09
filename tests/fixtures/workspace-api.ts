@@ -3,6 +3,7 @@ import { dataServiceRemovalReason, migrationRemovalReason } from '@/lib/data-rem
 import { resourceWorkspacesFixture } from './resource-workspaces-api'
 import { remoteServersFixture } from './remote-servers-api'
 import { releaseCleanupFixture } from './release-cleanup-api'
+import { lanAddress } from '../../scripts/lan-address.cjs'
 
 // Synthetic preview API. Never copied into the production application.
 const initialProject = { id: 'fixture-app', name: 'Payments API', slug: 'payments-api', repo_url: 'https://github.com/example/payments-api', default_branch: 'staging', project_type: 'go', root_path: 'C:\\web\\production\\payments-api', pm2_name: 'payments-api', port: 3117, url: null, auto_deploy: false, runtime_versions: {}, install_cmd: null, build_cmd: null, start_cmd: null, deploy_script: null, environment: 'production', production_id: null, component_role: 'backend', is_active: true, github_connection_id: 'github-one', github_connection_name: 'Engineering', github_account_login: 'example', setup_required: true, step: 'repository', decisions: {}, completed_at: null }
@@ -104,7 +105,11 @@ export async function POST(request: Request) {
   if (pathname.endsWith('/env')) { state.env = body.content; return result({ ok: true }) }
   if (pathname.endsWith('/console')) return new Response('[fixture] Command preview\n[exit] Command finished with code 0\n')
   if (pathname.endsWith('/data-services')) { state.services.push({ id: 'service-one', name: body.name, provider: 'postgresql', connection_name: 'Shared PostgreSQL host', database_name: 'payments_db', username: 'payments_user', env_prefix: 'PRIMARY', application_primary: body.applicationPrimary, options: { ownership: 'manager' } }); return result({ service: state.services[0] }, 201) }
-  if (pathname === '/api/domains') { state.domains.push({ id: 'domain-one', hostname: body.hostname, record_content: body.recordContent, dns_status: body.mode === 'manual' ? 'manual' : 'active', ssl_status: 'pending', cloudflare_connection_id: body.mode === 'manual' ? null : body.cloudflareConnectionId }); state.project.url = 'https://' + body.hostname; return result({ domain: state.domains[0] }, 201) }
+  if (pathname === '/api/domains') {
+    const lan=body.mode==='lan'?lanAddress(body.lanIp,body.lanPort):null
+    const domain={id:crypto.randomUUID(),project_id:body.projectId,project_name:state.project.name,environment:'production',is_primary:body.isPrimary,hostname:lan?.authority||body.hostname,record_content:lan?.ip||body.recordContent,dns_status:lan?'lan':body.mode==='manual'?'manual':'active',ssl_status:lan?'Local CA':'pending',cloudflare_connection_id:body.mode==='cloudflare'?body.cloudflareConnectionId:null}
+    state.domains.push(domain);state.project.url='https://'+domain.hostname;return result({domain},201)
+  }
   return result({ ok: true })
 }
 export async function PATCH(request: Request) {

@@ -69,9 +69,11 @@ function Wait-DatabaseReady {
     $running = Get-Service -Name $ServiceName
     $running.WaitForStatus('Running', [TimeSpan]::FromSeconds(90))
     for ($attempt = 0; $attempt -lt 60; $attempt++) {
-        if (Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue) { return $true }
         $refreshed = Get-CimInstance Win32_Service -Filter "Name='$($ServiceName.Replace("'", "''"))'"
         if ($refreshed.State -ne 'Running') { return $false }
+        $owners = @(Get-DatabaseListenerProcessIds ([int]$refreshed.ProcessId) $executable @(Get-CimInstance Win32_Process))
+        $listeners = @(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue | Where-Object { $owners -contains [int]$_.OwningProcess })
+        if ($listeners.Count) { return $true }
         Start-Sleep -Seconds 1
     }
     return $false

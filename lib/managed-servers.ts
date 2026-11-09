@@ -10,6 +10,7 @@ import { createHash, randomBytes, X509Certificate } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ManagedServer, RemoteApp } from './managed-server-types'
+import { parseLanAddress } from '../scripts/lan-address.cjs'
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 const token = () => randomBytes(32).toString('base64url')
@@ -245,7 +246,7 @@ export async function queueRemoteDeploy(serverId: string, appId: string, userId:
     const database = app.database_config?.status === 'ready' && app.database_ciphertext ? JSON.parse(decryptSecret(app.database_ciphertext)) : null
     const environment = { ...JSON.parse(decryptSecret(app.env_ciphertext)), ...(database ? databaseEnvironment(database) : {}) }
     try{validateRuntimeSelection(app.runtime_versions||{},server.metrics)}catch(error){throw new ApiError((error as Error).message,409)}
-    const payload = { ...validateApp({ ...app, environment }), id: app.id, git, project_type: app.project_type, requiredCapability: /^\[|^[0-9.]+(?::[0-9]+)?$/.test(app.hostname)?LAN_CAPABILITY:Object.keys(app.runtime_versions||{}).length?RUNTIME_CAPABILITY:app.guided_setup ? REMOTE_SETUP_CAPABILITY : null }
+    const payload = { ...validateApp({ ...app, environment }), id: app.id, git, project_type: app.project_type, requiredCapability: parseLanAddress(app.hostname)?LAN_CAPABILITY:Object.keys(app.runtime_versions||{}).length?RUNTIME_CAPABILITY:app.guided_setup ? REMOTE_SETUP_CAPABILITY : null }
     const result = await client.query(`insert into remote_jobs (server_id,app_id,user_id,payload_ciphertext) values ($1,$2,$3,$4) returning id`,
       [serverId, appId, userId, encryptSecret(JSON.stringify(payload))])
     jobId = result.rows[0].id

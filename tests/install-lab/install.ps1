@@ -58,8 +58,21 @@ try {
   $secrets=@($config.AdminPassword,$config.DbAdminPassword,$config.DbAppPassword,$config.AppDbAdminPassword)
   Save-Json $config (Join-Path $private 'install.json')
   Save-Json @{runId=$env:GITHUB_RUN_ID;computer=$env:COMPUTERNAME;sourceCommit=$env:GITHUB_SHA;root=$root;node=(Get-Command node).Source;workspace=$env:GITHUB_WORKSPACE} (Join-Path $private 'identity.json')
-  & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $source 'scripts\install-manager.ps1') -Unattended -ConfigPath (Join-Path $private 'install.json') *> (Join-Path $private 'installer.log')
-  if($LASTEXITCODE){throw "Real installer failed with exit code $LASTEXITCODE"}
+  # Direct file handles avoid waiting for EOF on a pipe inherited by PM2's daemon.
+  $installerArgs=@('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+(Join-Path $source 'scripts\install-manager.ps1')+'"'),'-Unattended','-ConfigPath',('"'+(Join-Path $private 'install.json')+'"'))
+  $installer=Start-Process powershell.exe -ArgumentList $installerArgs -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $private 'installer.log') -RedirectStandardError (Join-Path $private 'installer-error.log')
+  $deadline=(Get-Date).AddMinutes(35)
+  while(-not $installer.HasExited){
+    if((Get-Date) -gt $deadline){throw 'Installer exceeded 35 minutes on the disposable VM'}
+    Start-Sleep -Seconds 20
+    foreach($file in @('installer.log','installer-error.log')){
+      $tail=(Get-Content -LiteralPath (Join-Path $private $file) -Tail 4 -ErrorAction SilentlyContinue) -join "`n"
+      foreach($secret in $secrets){$tail=$tail.Replace($secret,'[redacted]')}
+      Write-Host $tail
+    }
+    $installer.Refresh()
+  }
+  if($installer.ExitCode){throw "Real installer failed with exit code $($installer.ExitCode)"}
   $env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User')
   $env:PM2_HOME='C:\ProgramData\Manager\pm2'
   & node (Join-Path $PSScriptRoot 'verify.cjs') before
@@ -70,6 +83,7 @@ try {
 finally {
   if(Test-Path -LiteralPath (Join-Path $private 'installer.log')){
     $log=[IO.File]::ReadAllText((Join-Path $private 'installer.log'))
+    if(Test-Path -LiteralPath (Join-Path $private 'installer-error.log')){$log+="`n"+[IO.File]::ReadAllText((Join-Path $private 'installer-error.log'))}
     foreach($secret in $secrets){$log=$log.Replace($secret,'[redacted]')}
     [IO.File]::WriteAllText((Join-Path $results 'installer.log'),$log,[Text.UTF8Encoding]::new($false))
     Get-Content -LiteralPath (Join-Path $results 'installer.log') -Tail 35

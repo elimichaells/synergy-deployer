@@ -1,12 +1,16 @@
 export async function register() {
-  if (process.env.MANAGER_PREVIEW === '1' || process.env.NEXT_RUNTIME !== 'nodejs') return
-  const { maintenance } = await import('@/lib/update-maintenance')
-  if (!maintenance()) { await initialize(); return }
-  // Start HTTP readiness while the independent worker checks the new release.
-  // Schedulers, migrations and proxy changes wait until activation is committed.
-  const timer=setInterval(() => {
-    if (!maintenance()) { clearInterval(timer); void initialize() }
-  },2000)
+  if (process.env.MANAGER_PREVIEW === '1') return
+  // Keep Node-only imports inside the runtime branch so Next can omit them
+  // when compiling its Edge instrumentation entry point.
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    const { maintenance } = await import('@/lib/update-maintenance')
+    if (!maintenance()) { await initialize(); return }
+    // Start HTTP readiness while the independent worker checks the new release.
+    // Schedulers, migrations and proxy changes wait until activation is committed.
+    const timer=setInterval(() => {
+      if (!maintenance()) { clearInterval(timer); void initialize() }
+    },2000)
+  }
 }
 
 async function initialize() {

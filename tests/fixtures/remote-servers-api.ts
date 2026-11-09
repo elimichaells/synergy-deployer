@@ -54,7 +54,7 @@ export async function remoteServersFixture(request: Request) {
   }
   if(parts[1]==='console')return NextResponse.json({jobs:[{id:'fixture-console',kind:'console',status:'success',log:'Synthetic preview: command completed.\n',created_at:new Date().toISOString(),result:{cwd:'/var/lib/manager-agent/console'}}]})
   if(parts[1]==='services')return NextResponse.json({operations:[]})
-  if(parts[1]==='domains')return NextResponse.json({domains:[{id:appId,project_id:appId,project_name:app.name,environment:'production',hostname:app.hostname,record_type:'A',record_content:'192.0.2.10',dns_status:'manual',ssl_status:'Route loaded',application_route:true,proxied:false,is_primary:true}]})
+  if(parts[1]==='domains')return NextResponse.json({domains:[{id:appId,project_id:appId,project_name:app.name,environment:'production',hostname:app.hostname,record_type:'A',record_content:'192.168.10.20',dns_status:'manual',ssl_status:'Route loaded',application_route:true,proxied:false,is_primary:true}]})
   if(parts[1]==='runtimes') {
     if(parts[2]==='versions')return NextResponse.json({installed:['22.23.4'],available:[{version:'22.23.4',label:'Node.js 22.23.4 LTS'},{version:'24.22.2',label:'Node.js 24.22.2 LTS'}]})
     return NextResponse.json({runtimes:[{id:'node',name:'Node.js',purpose:'JavaScript runtime',installed:true,version:'v24.22.1',canInstall:true,canUpdate:true,canConfigure:true,versioned:true,installedVersions:['22.23.4'],updateAvailable:true,latestVersion:'24.22.2',updateMode:'project-version',installSource:'Selected remote server'},{id:'postgresql',name:'PostgreSQL',purpose:'Database server',installed:false,version:null,canInstall:true,installedVersions:[],versioned:false}]})

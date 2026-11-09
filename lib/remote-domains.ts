@@ -15,7 +15,7 @@ export async function listRemoteDomains(serverId:string){
     j.status as operation_status,j.log as operation_log from remote_domains d join remote_apps a on a.id=d.project_id left join cloudflare_connections c on c.id=d.cloudflare_connection_id left join remote_jobs j on j.id=d.job_id where d.server_id=$1 order by d.hostname`,[serverId])).rows
   // Existing application hostnames remain visible even before DNS is connected.
   const {apps}=await serverDetail(serverId)
-  return [...rows,...apps.filter(a=>a.hostname&&!a.hostname.endsWith('.invalid')&&!rows.some(d=>d.hostname===a.hostname)).map(a=>({id:a.id,project_id:a.id,project_name:a.name,environment:a.environment_name,hostname:a.hostname,record_type:'',record_content:'Configured in application',dns_status:'manual',ssl_status:'Application route',proxied:false,is_primary:true,application_route:true}))]
+  return [...rows,...apps.filter(a=>a.hostname&&!a.hostname.endsWith('.invalid')&&!rows.some(d=>d.hostname===a.hostname)).map(a=>({id:a.id,project_id:a.id,project_name:a.name,environment:a.environment_name,hostname:a.hostname,record_type:'',record_content:'Configured in application',dns_status:parseLanAddress(a.hostname)?'lan':'manual',ssl_status:parseLanAddress(a.hostname)?'Local CA':'Application route',proxied:false,is_primary:true,application_route:true}))]
 }
 async function waitRoute(serverId:string,id:string){
   const until=Date.now()+45000
@@ -33,12 +33,15 @@ async function queueRoute(row:Record<string,any>,userId:string,remove=false){
 async function createDomain(serverId:string,input:Record<string,unknown>,userId:string){
   await ensureCloudflareSchema();const {apps}=await serverDetail(serverId),projectId=uuid(input.projectId),app=apps.find(a=>a.id===projectId)
   if(!app?.live_commit)throw new ApiError('Deploy the selected application before adding a domain',409)
-  const lan=input.mode==='lan'?lanAddress(input.lanIp,input.lanPort||8443):null
+  let lan = null
+  try { lan=input.mode==='lan'?lanAddress(input.lanIp,input.lanPort??8443):null }
+  catch(error){throw new ApiError((error as Error).message,400)}
   const name=lan?lan.authority:hostname(input.hostname),type=lan?(lan.family===6?'AAAA':'A'):String(input.recordType||'A'),content=lan?lan.ip:String(input.recordContent||'').trim(),manual=input.mode==='manual'||!!lan
   if(lan&&apps.some(a=>a.port===lan.port||a.ip_port===lan.port&&a.hostname!==name))throw new ApiError('This LAN HTTPS port is already assigned on the server',409)
   if(!['A','AAAA','CNAME'].includes(type)||type==='A'&&isIP(content)!==4||type==='AAAA'&&isIP(content)!==6||!content)throw new ApiError('Enter a valid DNS record target',400)
   if(type==='CNAME')hostname(content)
-  if(apps.some(a=>a.id!==projectId&&a.hostname===name)||(await query('select id from project_domains where hostname=$1 union all select id from remote_domains where hostname=$1',[name])).rowCount)throw new ApiError('This hostname is already assigned',409)
+  const conflicts=lan?await query('select id from remote_domains where server_id=$1 and hostname=$2',[serverId,name]):await query('select id from project_domains where hostname=$1 union all select id from remote_domains where hostname=$1',[name])
+  if(apps.some(a=>a.id!==projectId&&a.hostname===name)||conflicts.rowCount)throw new ApiError('This address is already assigned',409)
   const connection=manual?null:await secretConnection(uuid(input.cloudflareConnectionId)),zone=connection?await getZone(connection,name):null
   if(zone&&(await cfRequest<any[]>(zone.token,`/zones/${zone.zone.id}/dns_records?name=${encodeURIComponent(name)}`)).length)throw new ApiError('This DNS name already exists. Select manual DNS to preserve its existing records.',409)
   const row=(await query(`insert into remote_domains(server_id,project_id,hostname,cloudflare_connection_id,cloudflare_zone_id,record_type,record_content,proxied,is_primary,previous_hostname,previous_access_mode) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning *`,[serverId,projectId,name,connection?.id||null,zone?.zone.id||null,type,content,!manual&&input.proxied!==false,input.isPrimary===true,app.hostname,app.access_mode])).rows[0]

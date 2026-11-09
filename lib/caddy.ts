@@ -269,11 +269,13 @@ async function wakeEnabledFor(domain: string) {
 
 /** Re-renders the sites for these hosts that Caddy already serves; hosts it does not serve are left alone. */
 export async function refreshCaddyHosts(hosts: string[], port: number) {
+  return exclusiveCaddyUpdate(async () => {
     const content = await readFile(CADDYFILE_PATH, 'utf8')
     for (const host of hosts) {
         const domain = sanitizeDomain(host)
         if (content.includes(`${siteAddress(domain)} {`)) await applyCaddyUpdate(domain, port)
     }
+  })
 }
 
 export async function updateCaddyStrict(domain: string, port: number) {

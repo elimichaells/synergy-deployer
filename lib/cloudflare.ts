@@ -90,6 +90,10 @@ export function ensureCloudflareSchema() {
         ssl_mode text,dns_status text not null default 'pending',ssl_status text not null default 'pending',last_error text,
         job_id uuid references remote_jobs(id),deleting boolean not null default false,created_at timestamptz not null default now()
       );
+      create unique index if not exists remote_domains_server_hostname_idx on remote_domains(server_id,hostname);
+      create unique index if not exists remote_domains_public_hostname_idx on remote_domains(hostname)
+        where hostname !~ '^([0-9.]+(:[0-9]+)?|\\[[0-9a-f:]+\\](:[0-9]+)?)$';
+      alter table remote_domains drop constraint if exists remote_domains_hostname_key;
       create table if not exists remote_domain_operations (server_id uuid primary key references managed_servers(id),owner uuid not null,expires_at timestamptz not null)
     `)).then(() => undefined).catch((error) => { schemaPromise = null; throw error })
   }
@@ -217,7 +221,9 @@ export async function listProjectDomains(projectId?: string) {
 
 export async function createProjectDomain(projectId: string, input: Record<string, unknown>, createdBy?: string | null) {
   await ensureCloudflareSchema()
-  const lan = input.mode === 'lan' ? lanAddress(input.lanIp, input.lanPort || 8443) : null
+  let lan = null
+  try { lan = input.mode === 'lan' ? lanAddress(input.lanIp, input.lanPort ?? 8443) : null }
+  catch (error) { throw new ApiError((error as Error).message, 400) }
   if(lan)try{assertLanInterface(lan.authority,networkInterfaces())}catch(error){throw new ApiError((error as Error).message,400)}
   const name = lan ? lan.authority : hostname(input.hostname)
   const manual = input.mode === 'manual' || !!lan

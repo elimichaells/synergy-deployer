@@ -29,7 +29,7 @@ export async function queueInfrastructure(serverId:string,appId:string|null,acti
     if(appId&&!(await client.query('select 1 from remote_apps where server_id=$1 and id=$2 and live_commit is not null',[serverId,appId])).rowCount)throw new ApiError('Deploy this application before controlling its process',409)
     if(!appId&&server.metrics.caddy?.mode==='shared'&&['start','stop','restart'].includes(action))throw new ApiError('Shared Caddy serves existing sites. Use Reload Config to update only managed routes.',409)
     if((await client.query("select 1 from remote_jobs where server_id=$1 and status in ('queued','running') union all select 1 from remote_service_operations where server_id=$1 and status in ('running','interrupted') union all select 1 from remote_agent_updates where server_id=$1 and status in ('queued','installing','recovery_required')",[serverId])).rowCount)throw new ApiError('Wait for the current server operation to finish',409)
-    if(domain)validateLanSelection(domain.hostname,server.metrics)
+    if(domain)try{validateLanSelection(domain.hostname,server.metrics)}catch(error){throw new ApiError((error as Error).message,409)}
     const payload={id:appId,action,domain,expiresAt:Date.now()+60000,requiredCapability:parseLanAddress(domain?.hostname)?LAN_CAPABILITY:INFRASTRUCTURE_CAPABILITY}
     id=(await client.query("insert into remote_jobs(server_id,app_id,user_id,kind,operation_type,payload_ciphertext) values($1,$2,$3,'console','infrastructure',$4) returning id",[serverId,appId,userId,encryptSecret(JSON.stringify(payload))])).rows[0].id
     await client.query('commit')
