@@ -35,4 +35,10 @@ function assertLanInterface(address,interfaces){
   const addresses=Object.values(interfaces).flat().filter(Boolean).map(x=>{try{return lanAddress(x.address).ip}catch{return null}});
   if(!addresses.includes(local.ip))throw Error('The selected LAN IP is not assigned to this server. Use a fixed IP from its network interfaces.');
 }
-module.exports={parseLanAddress,lanAddress,lanCaddyDirectives,assertLanInterface};
+function lanProxyHeaders(address,indent='\t\t'){
+  if(!parseLanAddress(address))return '';
+  // Cookies are shared across ports. Reserve Manager's HttpOnly cookie so a LAN
+  // application on the same IP cannot receive or overwrite the admin session.
+  return `${indent}header_up Cookie "(^|;[[:space:]]*)manager_session=[^;]*" "$1"\n${indent}header_down Set-Cookie "^[[:space:]]*manager_session=.*$" ""\n`;
+}
+module.exports={parseLanAddress,lanAddress,lanCaddyDirectives,lanProxyHeaders,assertLanInterface};

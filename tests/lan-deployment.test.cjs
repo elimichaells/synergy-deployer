@@ -34,6 +34,15 @@ test('LAN creation never calls Cloudflare and preserves a separate existing proj
   assert.ok(calls.filter(c=>c.sql?.startsWith('update project_domains')).every(c=>c.sql.includes('where project_id=$1')&&c.args[0]===projectId));
   await assert.rejects(cf.createProjectDomain(projectId,{mode:'lan',lanIp:'10.0.0.9',lanPort:8443}),/not assigned/);
 });
+
+test('LAN application proxies protect Manager cookies on every stack route and retain the Host port',()=>{
+  const caddy=load('lib/caddy.ts',{'./exec':{},'./paths':{webRoot:()=>'/fixture',caddyLogDir:()=>'/fixture/logs'},'./manager-address':require('../lib/manager-address.ts')});
+  const text=caddy.renderCaddyBlock(app.hostname,3000,[{path_prefix:'/api',port:3001,strip_prefix:true}]);
+  assert.equal((text.match(/header_up Cookie/g)||[]).length,2);
+  assert.equal((text.match(/header_down Set-Cookie/g)||[]).length,2);
+  assert.equal((text.match(/header_up Host \{http.request.hostport\}/g)||[]).length,2);
+  assert.doesNotMatch(caddy.renderCaddyBlock('app.example.com',3000),/manager_session/);
+});
 test('rejected Caddy reload restores exact file bytes and leaves other sites present',async()=>{
   let file='existing.example.com {\r\n\treverse_proxy 127.0.0.1:9000\r\n}\r\n';const before=file;let reloads=0;
   const caddy=load('lib/caddy.ts',{'../scripts/lan-listener.cjs':{checkLanListeners:async()=>{}},'./exec':{runCommand:async(command)=>command.includes(' reload ')?(reloads++,{code:1,output:'address already in use'}):{code:0,output:'valid'}},'./paths':{webRoot:()=>'/fixture',caddyLogDir:()=>'/fixture/logs'},'./manager-address':require('../lib/manager-address.ts'),'./db':{query:async()=>({rows:[]})},'fs/promises':{mkdtemp:async()=>'/candidate',rm:async()=>{},readFile:async()=>file,writeFile:async(name,content)=>{if(!name.includes('candidate'))file=content}}});

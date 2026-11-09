@@ -6,7 +6,7 @@ const path = require('node:path');
 async function agentBundle(root = process.cwd()) {
   let source = await fs.readFile(path.join(root, 'scripts/manager-agent.cjs'), 'utf8');
   const lan=await fs.readFile(path.join(root,'scripts/lan-address.cjs'),'utf8');
-  source=source.replace("const { parseLanAddress, lanCaddyDirectives, assertLanInterface } = require('./lan-address.cjs');",`const { parseLanAddress, lanCaddyDirectives, assertLanInterface } = (()=>{const module={exports:{}};\n${lan}\nreturn module.exports;})();`);
+  source=source.replace("const { parseLanAddress, lanCaddyDirectives, lanProxyHeaders, assertLanInterface } = require('./lan-address.cjs');",`const { parseLanAddress, lanCaddyDirectives, lanProxyHeaders, assertLanInterface } = (()=>{const module={exports:{}};\n${lan}\nreturn module.exports;})();`);
   const listeners=(await fs.readFile(path.join(root,'scripts/lan-listener.cjs'),'utf8')).replace("const { parseLanAddress } = require('./lan-address.cjs');",'');
   source=source.replace("const { checkLanListeners } = require('./lan-listener.cjs');",`const { checkLanListeners } = (()=>{const module={exports:{}};\n${listeners}\nreturn module.exports;})();`);
   let resources = await fs.readFile(path.join(root, 'scripts/manager-agent-resources.cjs'), 'utf8');

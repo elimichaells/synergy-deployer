@@ -4,7 +4,7 @@ import path from 'path'
 import { runCommand } from './exec'
 import { caddyLogDir, webRoot } from './paths'
 import { isManagerAddress, managerSiteAddress, managerUsesLocalTls, normalizeManagerAddress } from './manager-address'
-import { parseLanAddress, lanCaddyDirectives } from '../scripts/lan-address.cjs'
+import { parseLanAddress, lanCaddyDirectives, lanProxyHeaders } from '../scripts/lan-address.cjs'
 import { checkLanListeners } from '../scripts/lan-listener.cjs'
 
 const siteAddress = (address: string) => parseLanAddress(address)?.authority || managerSiteAddress(address)
@@ -69,15 +69,15 @@ function sanitizeDomain(domain: string) {
     return value
 }
 
-function renderReverseProxy(port: number, indent = '\t') {
+function renderReverseProxy(port: number, indent = '\t', applicationAddress = '') {
     return `${indent}reverse_proxy 127.0.0.1:${port} {
-${indent}\theader_up Host {host}
+${indent}\theader_up Host {http.request.hostport}
 ${indent}\theader_up X-Real-IP {remote}
 ${indent}\theader_up X-Forwarded-Proto {scheme}
-${indent}}`
+${lanProxyHeaders(applicationAddress, indent + '\t')}${indent}}`
 }
 
-function renderProxyRoute(route: CaddyProxyRoute) {
+function renderProxyRoute(route: CaddyProxyRoute, applicationAddress = '') {
     const lines = [
         `\t@${route.matcher} path ${route.paths.join(' ')}`,
         '',
@@ -95,7 +95,7 @@ function renderProxyRoute(route: CaddyProxyRoute) {
     if (route.stripPrefix) {
         lines.push(`\t\turi strip_prefix ${route.stripPrefix}`, '')
     }
-    lines.push(renderReverseProxy(route.port, '\t\t'), '\t}')
+    lines.push(renderReverseProxy(route.port, '\t\t', applicationAddress), '\t}')
     return lines.join('\n')
 }
 
@@ -147,13 +147,14 @@ export function renderCaddyBlock(domain: string, port: number, stackRoutes: Stac
             stripPrefix: route.strip_prefix ? route.path_prefix : undefined,
         }))
     const routes = [...appProxyRoutes(domain), ...stack]
+    const applicationAddress = isManagerAddress(domain) ? '' : domain
     const proxyBlock = routes.length
-        ? `${routes.map(renderProxyRoute).join('\n\n')}
+        ? `${routes.map(route => renderProxyRoute(route, applicationAddress)).join('\n\n')}
 
 \thandle {
-${renderReverseProxy(port, '\t\t')}
+${renderReverseProxy(port, '\t\t', applicationAddress)}
 \t}`
-        : renderReverseProxy(port)
+        : renderReverseProxy(port, '\t', applicationAddress)
 
     return `# ${domain}
 ${address} {

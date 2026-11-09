@@ -15,7 +15,7 @@ const PROTOCOL_VERSION = 1;
 const AGENT_VERSION = '1.8.0';
 const LAN_CAPABILITY = 'lan-ip-v1';
 const resources = require('./manager-agent-resources.cjs');
-const { parseLanAddress, lanCaddyDirectives, assertLanInterface } = require('./lan-address.cjs');
+const { parseLanAddress, lanCaddyDirectives, lanProxyHeaders, assertLanInterface } = require('./lan-address.cjs');
 const { checkLanListeners } = require('./lan-listener.cjs');
 const INFRASTRUCTURE_CAPABILITY = 'remote-infrastructure-v1';
 const CONSOLE_CAPABILITY = 'remote-console-v1';
@@ -228,7 +228,8 @@ function caddyConfig(apps, storageRoot) {
     const app = validateApp(raw);
     const block = (address, internal) => {
       const lan=lanCaddyDirectives(address.replace(/^https:\/\//,''));
-      return `${address} {\n${internal ? '\ttls internal\n' : ''}${lan}${lan?'\thandle {\n':''}\treverse_proxy 127.0.0.1:${app.port}\n${lan?'\t}\n':''}}\n`;
+      const headers=lanProxyHeaders(address.replace(/^https:\/\//,''));
+      return `${address} {\n${internal ? '\ttls internal\n' : ''}${lan}${lan?'\thandle {\n':''}\treverse_proxy 127.0.0.1:${app.port}${headers?' {\n'+headers+'\t}':''}\n${lan?'\t}\n':''}}\n`;
     };
     const ip = net.isIP(app.ip_address) === 6 ? `[${app.ip_address}]` : app.ip_address;
     return block(`https://${app.hostname}`, app.access_mode === 'lan') + (ip ? block(`https://${ip}:${app.ip_port}`, true) : '');
