@@ -28,7 +28,10 @@ export function WorkspaceBar({ title, context, onNew, onHashChange }: { title: s
     sync(); window.addEventListener('hashchange', sync); window.addEventListener('popstate', sync); document.addEventListener('click', click)
     return () => { clearTimeout(timer); window.removeEventListener('hashchange', sync); window.removeEventListener('popstate', sync); document.removeEventListener('click', click) }
   }, [pathname, params])
-  useEffect(() => { onHashChange(hash) }, [hash, onHashChange])
+  // A newly mounted shared workspace starts with an empty React hash. Do not
+  // publish that placeholder to the parent before the browser hash is sampled:
+  // it would replace the selected screen, remount us and repeat indefinitely.
+  useEffect(() => { if(hash===window.location.hash)onHashChange(hash) }, [hash, onHashChange])
   const href = workspaceHref(`${pathname}${params.size ? `?${params}` : ''}${hash}`)
   const activeId = href ? workspaceTabId(href) : ''
   const serverId = href ? workspaceServer(href) : 'fleet'

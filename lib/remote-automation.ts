@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { CronExpressionParser } from 'cron-parser'
+import path from 'node:path'
 import type { PoolClient } from 'pg'
 import { ApiError } from './api'
 import { query } from './db'
@@ -28,7 +29,13 @@ export async function changeAutomation(serverId:string,kind:'cron'|'worker',id:s
     if(id&&!row)throw new ApiError('Job or worker not found on this server',404)
     if(action==='save'){
       const config=validate({...row?.config,...body},kind,server.platform),key=id||randomUUID()
+      const paths=server.platform==='win32'?path.win32:path.posix
+      const within=(base:string,value:string)=>{const relative=paths.relative(base,value);return !relative||!relative.startsWith('..')&&!paths.isAbsolute(relative)}
+      const live=(server.metrics?.resources?.apps||[]) as {id:string;cwd:string}[]
+      if(kind==='worker'&&!config.projectId){const found=live.find(a=>a.cwd&&within(a.cwd,config.workingDirectory));if(found)config.projectId=found.id}
       if(config.projectId&&!(await client.query('select 1 from remote_apps where server_id=$1 and id=$2',[serverId,uuid(config.projectId)])).rowCount)throw new ApiError('Application does not belong to this server',400)
+      delete config.projectRoot
+      if(config.projectId){const current=live.find(a=>a.id===config.projectId)?.cwd,previous=row?.config?.projectId===config.projectId?row.config.projectRoot:null;if(previous&&within(previous,config.workingDirectory))config.projectRoot=previous;else if(current&&within(current,config.workingDirectory))config.projectRoot=current}
       if(kind==='worker') {
         const job=await enqueueResource(client,serverId,{action:'worker-save',id:key,config},actor,key)
         // Reserve the identity before dispatch. A process started just before an

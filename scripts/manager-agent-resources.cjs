@@ -357,15 +357,20 @@ async function setBusy(root,value){if(value){busyRoots.add(root);await Promise.a
 async function stop(root){for(const [key,s] of gateways)if(key.startsWith(root+'|')){for(const socket of s.sockets)socket.destroy();await new Promise(resolve=>s.server.close(resolve));gateways.delete(key);}busyRoots.delete(root);cache.delete(root);}
 async function automationContext(root,config,h) {
   if(!config||typeof config.command!=='string'||!config.command.trim()||config.command.length>4000||/[\0\r\n]/.test(config.command)||typeof config.workingDirectory!=='string'||!path.isAbsolute(config.workingDirectory))throw Error('Invalid automation configuration');
-  const cwd=await fs.realpath(config.workingDirectory);
-  if(!(await fs.stat(cwd)).isDirectory())throw Error('Working directory must exist on this server');
+  let directory=config.workingDirectory;
   let env=h.baseEnv();
   const saved=await h.readJson(path.join(root,'apps.json'),{});
   if(config.projectId&&!saved[config.projectId])throw Error('Deploy the selected application before running its scheduled job');
   for(const [id,app] of Object.entries(saved)) {
     const launch=await h.readJson(path.join(path.dirname(app.ecosystem),'launch.json'));
-    if(launch&&(config.projectId===id||path.resolve(launch.cwd).toLowerCase()===cwd.toLowerCase())){env={...env,...launch.env};break;}
+    if(launch&&(config.projectId===id||path.resolve(launch.cwd).toLowerCase()===path.resolve(directory).toLowerCase())){
+      env={...env,...launch.env};
+      if(config.projectId===id&&typeof config.projectRoot==='string'&&path.isAbsolute(config.projectRoot)){const relative=path.relative(config.projectRoot,directory);if(!relative||!relative.startsWith('..')&&!path.isAbsolute(relative))directory=path.join(launch.cwd,relative);}
+      break;
+    }
   }
+  const cwd=await fs.realpath(directory);
+  if(!(await fs.stat(cwd)).isDirectory())throw Error('Working directory must exist on this server');
   return {cwd,env};
 }
 async function automation(root,input,tools,h) {
@@ -387,6 +392,7 @@ async function automation(root,input,tools,h) {
   if(input.action==='worker-delete') {if(list.some(p=>p.name===name))await tools.pm(['delete',name]);delete saved[input.id];await tools.pm(['save','--force']);await h.atomicJson(file,saved);invalidate(root);return {ok:true};}
   if(['worker-start','worker-stop','worker-restart'].includes(input.action)){
     const action=input.action.slice(7),ecosystem=await h.contained(root,'workers',input.id,'ecosystem.config.js');
+    if(action==='restart'||action==='start'&&!list.some(p=>p.name===name&&p.pm2_env?.status==='online'))return automation(root,{action:'worker-save',id:input.id,config:{...saved[input.id],enabled:true}},tools,h);
     if(action==='start'&&!list.some(p=>p.name===name))await tools.pm(['start',ecosystem]);else await tools.pm([action,name]);
     await tools.pm(['save','--force']);invalidate(root);return {ok:true};
   }

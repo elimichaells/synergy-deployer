@@ -54,6 +54,9 @@ test('scheduled commands execute in the selected application environment and red
   const {root,id,ecosystem,launch}=await application(t);launch.env={...process.env,RESOURCE_FIXTURE_SECRET:'private-fixture-credential'};await h.atomicJson(path.join(path.dirname(ecosystem),'launch.json'),launch);
   const tools={pm:async()=> '[]'},result=await resources.execute(root,{payload:{resource:{action:'cron-run',id:randomUUID(),config:{projectId:id,command:'node -p "process.env.RESOURCE_FIXTURE_SECRET"',workingDirectory:launch.cwd,timeoutSeconds:10}}}},tools,h);
   assert.match(result.output,/redacted/);assert.doesNotMatch(result.output,/private-fixture-credential/);
+  const previous=path.join(root,'releases',id,randomUUID());
+  const retargeted=await resources.execute(root,{payload:{resource:{action:'cron-run',id:randomUUID(),config:{projectId:id,projectRoot:previous,command:'node -p "process.cwd()"',workingDirectory:previous,timeoutSeconds:10}}}},tools,h);
+  assert.equal(retargeted.output.trim(),h.redact(await fs.realpath(launch.cwd),Object.values(launch.env)));
   await assert.rejects(resources.execute(root,{payload:{resource:{action:'cron-run',id:randomUUID(),config:{projectId:randomUUID(),command:'node --version',workingDirectory:launch.cwd,timeoutSeconds:10}}}},tools,h),/Deploy the selected/);
 });
 test('reviewed recovery rechecks live readiness and never restarts a healthy app or database dependency failure',async t=>{
@@ -89,6 +92,9 @@ test('real database resource operations isolate servers, serialize admission, re
   const res=load('lib/remote-resources.ts',{'./api':api,'./db':db,'./secret-crypto':secret,'./managed-servers':managed,'./server-memory-policy':policy,'@/scripts/manager-agent-resources.cjs':resources});
   const automation=load('lib/remote-automation.ts',{'./api':api,'./db':db,'./managed-servers':managed,'./remote-resources':res});mocks['@/lib/remote-automation']=automation;
   const a=await managed.addServer({name:'Resource A',platform:'win32'},user),b=await managed.addServer({name:'Resource B',platform:'win32'},user);
+  const ai=load('lib/ai-operations-store.ts',{'@/lib/db':db,'@/lib/secret-crypto':secret,'@/lib/api':api});await ai.ensureAiSchema();
+  const transaction=await pool.connect();try{await transaction.query('begin');await ai.saveAiSettings({enabled:false,model:'',recoveryEnabled:false},a.id,transaction);await transaction.query('commit')}finally{transaction.release()}
+  assert.equal((await ai.aiSettings(a.id)).recoveryEnabled,false);assert.equal((await ai.aiSettings(b.id)).recoveryEnabled,true);assert.equal((await ai.aiSettings()).recoveryEnabled,true);
   const sample={...metrics(),capabilities:[resources.CAPABILITY,agent.INFRASTRUCTURE_CAPABILITY,agent.CONSOLE_CAPABILITY],resources:resources.sanitize({at:new Date().toISOString(),root:'C:\\fixture',processes:[],apps:[],workers:[]})};
   await query('update managed_servers set enrolled_at=now(),last_seen_at=now(),metrics=$2 where id=any($1::uuid[])',[[a.id,b.id],JSON.stringify(sample)]);
   const app=await managed.saveRemoteApp(a.id,null,{name:'App A',repo_url:'https://github.com/example/test',branch:'main',port:31234,start_cmd:'node app.cjs',access_mode:'lan',hostname:'a.example.test'},user);await query('update remote_apps set live_commit=$2 where id=$1',[app.id,'a'.repeat(40)]);
