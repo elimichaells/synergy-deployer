@@ -132,6 +132,11 @@ async function main() {
     assert.equal(detail.server.metrics.proxyError, null);
     check('SSH/SFTP installer completed and real agent reported healthy tools and metrics over verified HTTPS');
     result.tools = detail.server.metrics.tools;
+    let memory=detail.server.metrics.resources;
+    for(let n=0;n<45&&(!memory||memory.error||!memory.processes?.length);n++){await wait(2000);memory=(await managed.serverDetail(server.id)).server.metrics.resources;}
+    assert.equal(memory?.error,null,'Dedicated agent account could not collect process memory');assert.ok(memory?.processes?.length>0);
+    result.resourceTelemetry={processes:memory.processes.length,commitLimitMb:memory.commitLimitMb,error:memory.error};
+    check('Dedicated service account collected process memory without exposing commands or environment');
 
     connection = await ssh.connectSsh(target, process.env.SSH_LAB_PASSWORD, observed.fingerprint);
     const left = await ssh.sshExec(connection, process.platform === 'win32'
