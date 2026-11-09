@@ -21,7 +21,7 @@ export async function GET() {
       try {
         const response=await fetch(`${admin.startsWith('http://')?'':'http://'}${admin}/pki/ca/local`,{cache:'no-store',redirect:'error',signal:AbortSignal.timeout(3000)})
         if(response.ok){const ca=await response.json();if(typeof ca.root_certificate==='string')return download(ca.root_certificate)}
-      } catch { /* An offline proxy can still have an explicitly stored public CA. */ }
+      } catch (error) { console.warn('[Caddy] Could not read the active public CA:',(error as Error).message) }
     }
     const candidates = [
       process.env.CADDY_CA_CERTIFICATE,
