@@ -57,7 +57,7 @@ try{
   Write-Json $receipt @{status='running';service=$plan.service;operationId=$plan.operationId;pid=$PID;processStartedAt=(Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')}
   $savedPaths=Get-Content -LiteralPath $pathsFile -Raw;$paths=@{};($savedPaths|ConvertFrom-Json).PSObject.Properties|ForEach-Object{$paths[$_.Name]=$_.Value}
   [IO.File]::WriteAllText((Join-Path $stage 'previous-paths.json'),$savedPaths,$utf8)
-  $tool=@{postgresql='psql';mysql='mysql';mariadb='mariadb'}[$plan.service];if(-not $tool){$tool=$plan.service}
+  $tool=@{postgresql='psql';mysql='mysql';mariadb='mariadb';angular='ng'}[$plan.service];if(-not $tool){$tool=$plan.service}
   $result=@{status='success';operationId=$plan.operationId;service=$plan.service;mode=$plan.mode;port=$plan.port;host='127.0.0.1';managed=($plan.mode -eq 'install')}
   if($plan.mode -eq 'install-version'){
     if($plan.service -notin @('node','go','php') -or $plan.version -notmatch '^\d+\.\d+\.\d+$'){throw 'Invalid runtime version'}
@@ -140,11 +140,9 @@ try{
       }
       $result.serviceName=$createdService;$result.password=$plan.databasePassword
       Remove-Item -LiteralPath $zip -Force
-    }elseif($plan.service -eq 'sling'){
+    }elseif($plan.service -in @('sling','angular')){
       Run $paths.node @((Join-Path $stage 'install-remote-tool.cjs'),$PlanFile,$target)
-      $paths.sling=Join-Path $target 'sling.exe'
-      $env:AWS_EC2_METADATA_DISABLED='true'
-      Run $paths.sling @('--version')
+      $paths[$tool]=if($plan.service -eq 'sling'){Join-Path $target 'sling.exe'}else{Join-Path $target 'node_modules\.bin\ng.cmd'}
     }elseif($plan.service -in @('node','git','caddy')){
       $zip=Join-Path $target 'package.zip';Fetch-Verified $plan.downloads.($plan.service) $zip;Expand-Archive -LiteralPath $zip -DestinationPath (Join-Path $target 'binaries')
       if($plan.service -eq 'node'){$paths.node=(Get-ChildItem (Join-Path $target 'binaries\node-*\node.exe')|Select-Object -First 1).FullName}else{$paths[$tool]=Join-Path $target $(if($plan.service -eq 'git'){'binaries\cmd\git.exe'}else{'binaries\caddy.exe'})}

@@ -20,6 +20,10 @@ async function officialAsset(url:string){
 }
 export async function serviceDownloads(service:string,platform:string,arch:string){
   if(!['win32','linux'].includes(platform)||!['x64','arm64'].includes(arch)||platform==='win32'&&arch!=='x64')throw new ApiError('Automatic service installation supports Windows x64 and Linux x64/ARM64',400)
+  if(service==='angular'){
+    const core=platform==='linux'?await installerDownloads(platform,arch,['node']):{}
+    return{...core,...(platform==='linux'?{privilegedNode:(core as {node:unknown}).node}:{}),angularVersion:'21.2.29'}
+  }
   if(service==='sling'){
     // Pinned official release assets; GitHub release digests and the release's
     // per-platform checksum manifests agree. Never take URLs from browser input.

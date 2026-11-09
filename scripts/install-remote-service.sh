@@ -23,6 +23,7 @@ cleanup(){
 }
 trap cleanup EXIT
 tool="$service"; [ "$service" != postgresql ] || tool=psql
+[ "$service" != angular ] || tool=ng
 target="$files/$service"; config=''; data=''; username=''
 if [ "$mode" = install-version ]; then
   version="$("$node_exe" -p 'require(process.argv[1]).version' "$plan_file")"
@@ -108,7 +109,7 @@ else
       install_package "$package"
       command_name="$service"; [ "$service" != python ] || command_name=python3; selected="$(command -v "$command_name")"
       ;;
-    node|caddy|pm2|sling)
+    node|caddy|pm2|sling|angular)
       "$node_exe" "$stage/install-remote-tool.cjs" "$plan_file" "$target"
       selected="$(cat "$target/executable.txt")"
       ;;

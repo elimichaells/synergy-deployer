@@ -35,7 +35,7 @@ jobs:
         with:
           node-version: '24'
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: node --require ./tests/register.cjs --test tests/remote-sling-install.test.cjs
+      - run: node --require ./tests/register.cjs --test tests/remote-sling-install.test.cjs tests/remote-angular-install.test.cjs
         env:
           MANAGER_RUNTIME_INSTALL_LAB: '1'
       - run: node tests/fixtures/prepare-sling-lab.cjs

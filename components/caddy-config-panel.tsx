@@ -27,6 +27,7 @@ export function CaddyConfigPanel({ canView, configPath,endpoint='/api/system/cad
       const res = await fetch(jobEndpoint?endpoint:endpoint+'?includeConfig=1',jobEndpoint?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'read-config'})}:{cache:'no-store'})
       const data = await infrastructureResponse(res,jobEndpoint)
       if (!res.ok) throw new Error(data.error || 'Failed to load Caddyfile')
+      if(typeof data.config!=='string'||typeof data.configSize!=='number'||!Number.isFinite(Date.parse(data.configReadAt||data.configModifiedAt)))throw new Error('The proxy returned an incomplete configuration response. Refresh its inventory and try again.')
       setConfig(data)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load Caddyfile')

@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $paths = '__MANAGER_PATHS__' | ConvertFrom-Json
-$ids = @('node','git','caddy','pm2','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer','sling')
+$ids = @('node','git','caddy','pm2','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer','sling','ng')
 $tools = @{}
 $serviceRows = @()
 $processes = @(Get-Process node,caddy,php,python,python3 -ErrorAction SilentlyContinue | Where-Object { $_.Path } | Select-Object ProcessName,Path -Unique)
@@ -19,7 +19,7 @@ foreach ($s in $services) {
 foreach ($id in $ids) {
   $candidates = @()
   if ($paths.$id) { $candidates += [string]$paths.$id }
-  $command = Get-Command $(if($id -eq 'composer'){'composer.bat'}else{$id + '.exe'}) -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  $command = Get-Command $(if($id -eq 'composer'){'composer.bat'}elseif($id -eq 'ng'){'ng.cmd'}else{$id + '.exe'}) -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
   if ($command) { $candidates += $command.Source }
   $processNames = if ($id -eq 'python') { @('python','python3') } else { @($id) }
   $candidates += @($processes | Where-Object { $_.ProcessName -in $processNames } | ForEach-Object { $_.Path })
@@ -52,9 +52,10 @@ foreach ($id in $ids) {
         if ($metadata.name -ne 'pm2') { throw 'Not a PM2 package' }
         $version = [string]$metadata.version
       } else {
-        $arg = if ($id -in @('go','caddy')) { 'version' } else { '--version' }
+        $arg = if ($id -in @('go','caddy','ng')) { 'version' } else { '--version' }
         $info = New-Object Diagnostics.ProcessStartInfo
-        $info.FileName = $exe; $info.Arguments = $arg; if($id -eq 'composer' -and $exe -match '\.(bat|cmd)$'){$info.FileName=$env:ComSpec; $info.Arguments='/d /s /c ""'+$exe+'" --version"'}; $info.UseShellExecute = $false; $info.CreateNoWindow = $true
+        $info.EnvironmentVariables['FORCE_COLOR']='0';$info.EnvironmentVariables['NO_COLOR']='1';$info.EnvironmentVariables['NG_CLI_ANALYTICS']='false'
+        $info.FileName = $exe; $info.Arguments = $arg; if($id -in @('composer','ng') -and $exe -match '\.(bat|cmd)$'){$info.FileName=$env:ComSpec; $info.Arguments='/d /s /c ""'+$exe+'" '+$arg+'"'}; $info.UseShellExecute = $false; $info.CreateNoWindow = $true
         $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true
         $proc = New-Object Diagnostics.Process; $proc.StartInfo = $info
         try {
@@ -62,6 +63,7 @@ foreach ($id in $ids) {
           if (-not $proc.WaitForExit(5000)) { $proc.Kill(); throw 'Version check timed out' }
           if ($proc.ExitCode -ne 0) { throw 'Version check failed' }
           $version = (($stdout.Result + $stderr.Result) -split '[\r\n]+' | Where-Object { $_ } | Select-Object -First 1)
+          if($id -eq 'ng'){$match=[regex]::Match(($stdout.Result+$stderr.Result),'Angular CLI\s*:\s*\d+\.\d+\.\d+');if(-not $match.Success){throw 'Angular CLI version check failed'};$version=$match.Value -replace '\s*:\s*',': '}
         } finally { $proc.Dispose() }
       }
     } catch { $problem = 'File missing, inaccessible, or version check failed' }

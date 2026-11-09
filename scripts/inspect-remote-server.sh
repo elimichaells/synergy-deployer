@@ -11,7 +11,7 @@ if command -v ss >/dev/null 2>&1; then
     while read -r port; do [ -z "$port" ] || emit port "$port"; done < <(printf '%s\n' "$listeners" | awk '{print $4}' | sed 's/.*://' | sort -un)
   else emit ports unknown; fi
 else emit ports unknown; fi
-for id in node git caddy pm2 psql pg_dump pg_restore mysql mariadb go php python composer sling; do
+for id in node git caddy pm2 psql pg_dump pg_restore mysql mariadb go php python composer sling ng; do
   var="TOOL_$id"; custom="${!var:-}"
   candidates=(); [ -z "$custom" ] || candidates+=("$custom")
   cmd="$id"; [ "$id" != python ] || cmd=python3
@@ -36,8 +36,10 @@ for id in node git caddy pm2 psql pg_dump pg_restore mysql mariadb go php python
         # Persist the actual script, not a shell wrapper or PATH alias.
       else problem='Not a PM2 package'; fi
     elif [ -x "$exe" ]; then
-      arg=--version; case "$id" in go|caddy) arg=version;; esac
-      if output="$(timeout 5 "$exe" "$arg" 2>&1)"; then version="$(printf '%s\n' "$output" | head -1 | cut -c1-200)"; else problem='Version check failed'; fi
+      arg=--version; case "$id" in go|caddy|ng) arg=version;; esac
+      if output="$(NG_CLI_ANALYTICS=false timeout 10 "$exe" "$arg" 2>&1)"; then
+        if [ "$id" = ng ]; then version="$(printf '%s\n' "$output" | grep -Eo 'Angular CLI[[:space:]]*:[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+' | head -1)"; else version="$(printf '%s\n' "$output" | head -1 | cut -c1-200)"; fi
+      else problem='Version check failed'; fi
     else problem='Not executable'; fi
     emit tool "$id" "$exe" "$version" "$problem"
   done

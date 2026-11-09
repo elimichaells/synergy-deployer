@@ -20,7 +20,7 @@ export function toolCompatible(id: ServerToolId, version: string) {
   if (id === 'caddy') return /^v?2\./.test(version)
   if (id === 'git') return /^git version 2\./.test(version)
   if (id === 'pm2') return /^\d+\.\d+\.\d+/.test(version) && major >= 5
-  const signatures: Record<string, RegExp> = { psql: /^psql .*PostgreSQL/i, pg_dump: /^pg_dump .*PostgreSQL/i, pg_restore: /^pg_restore .*PostgreSQL/i, mysql: /mysql.*(?:Ver|Distrib)/i, mariadb: /mariadb.*(?:Ver|Distrib)|mysql.*MariaDB/i, go: /^go version go\d/i, php: /^PHP \d/i, python: /^Python 3\./i, composer: /^Composer version /i, sling: /^(?:sling )?version:? v?1\./i }
+  const signatures: Record<string, RegExp> = { psql: /^psql .*PostgreSQL/i, pg_dump: /^pg_dump .*PostgreSQL/i, pg_restore: /^pg_restore .*PostgreSQL/i, mysql: /mysql.*(?:Ver|Distrib)/i, mariadb: /mariadb.*(?:Ver|Distrib)|mysql.*MariaDB/i, go: /^go version go\d/i, php: /^PHP \d/i, python: /^Python 3\./i, composer: /^Composer version /i, sling: /^(?:sling )?version:? v?1\./i, ng: /^Angular CLI\s*:\s*\d+\./i }
   return !!signatures[id]?.test(version)
 }
 

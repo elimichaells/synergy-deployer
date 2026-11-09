@@ -23,6 +23,7 @@ export function HealthHistoryPanel({endpoint='/api/server/health/history'}:{endp
         const response = await fetch(`${endpoint}?${parameters}`, { cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]) })
         if (!response.ok) throw new Error('History unavailable')
         const next = await response.json()
+        if (!Array.isArray(next?.services) || !Array.isArray(next?.points) || !next?.summary || !['passed','failed','unknown','paused'].every(key => typeof next.summary[key] === 'number' && Number.isFinite(next.summary[key]))) throw new Error('History response is incomplete')
         if (active) { setData(next); setError(false) }
       } catch { if (active) setError(true) }
       finally { inFlight = false; if (active) setLoading(false) }

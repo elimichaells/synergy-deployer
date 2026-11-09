@@ -24,6 +24,7 @@ export async function GET(request: Request) {
   const remote = await remoteServersFixture(request); if (remote) return remote
   const url = new URL(request.url); const pathname = url.pathname
   if(pathname==='/api/manager-updates') return result(url.searchParams.get('check')==='1'?{version:'2.22.0',newer:true,available:true,url:'https://github.com/elimichaells/synergy-deployer/releases',notes:'Example release notes for the isolated UI preview.'}:{version:updateState.version,configured:true,assetName:'manager-update-win32-x64-node24.tar',recoveryDirectory:'C:\\ProgramData\\Manager\\updates',job:updateState.job,history:updateState.job?[updateState.job]:[]})
+  if (pathname === '/api/server/health/history') return result({range:'24h',from:Date.now()-86400000,to:Date.now(),intervalMs:300000,summary:{passed:1400,failed:2,unknown:1,paused:0,successPercent:99.86,averageMs:26},services:[],points:[],unavailable:false,stale:false,startedAt:Date.now()-86400000,checkedAt:Date.now()})
   if (pathname === '/api/server/health') return result({ checkedAt: new Date().toISOString(), stale: false, unavailable: false, incidents: [], snapshot: null })
   if (pathname === '/api/auth/me') return result({ user: { id: 'fixture-user', name: 'Alex Morgan', email: 'alex@example.test', role: state.role } })
   if (pathname === '/api/settings') return state.failure === 'settings-load' ? result({ error: 'Fixture settings service unavailable' }, 503) : result({ ...settingsState.values, GITHUB_TOKEN: 'fixture-legacy-secret' })
