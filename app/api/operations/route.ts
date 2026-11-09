@@ -47,7 +47,7 @@ export async function POST(request: Request) {
     if (body.action === 'cancel-recovery') return NextResponse.json(await cancelRecovery(uuid(body.reviewId), user!.id))
     if (body.action === 'acknowledge') {
       const changed = await query(`update manager_ai_events set status='reviewed',details=details || jsonb_build_object('reviewedBy',$2::text,'reviewedAt',now())
-        where id=$1 and kind='recovery' and (status='failed' or status='running' and created_at<now()-interval '10 minutes') returning id`, [uuid(body.eventId), user!.id])
+        where id=$1 and server_id is null and kind='recovery' and (status='failed' or status='running' and created_at<now()-interval '10 minutes') returning id`, [uuid(body.eventId), user!.id])
       if (!changed.rowCount) throw new ApiError('This recovery is not awaiting review', 409)
       return NextResponse.json({ acknowledged: true })
     }

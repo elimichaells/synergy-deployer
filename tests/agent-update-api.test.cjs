@@ -4,7 +4,7 @@ const {randomUUID,randomBytes}=require('node:crypto');
 const load=require('./server-module.cjs');
 const agent=require('../scripts/manager-agent.cjs');
 class ApiError extends Error {constructor(message,status){super(message);this.status=status;}}
-const mocks={'@/lib/db':{},'@/lib/api':{ApiError},'@/lib/audit':{},'@/lib/managed-servers':{},'@/scripts/manager-agent.cjs':agent};
+const mocks={'@/lib/db':{},'@/lib/api':{ApiError},'@/lib/audit':{},'@/lib/managed-servers':{},'@/scripts/agent-bundle.cjs':require('../scripts/agent-bundle.cjs'),'@/scripts/manager-agent.cjs':agent};
 test('server version comparison is numeric and rejects ambiguous/downgrade versions',()=>{
   const {newerAgent}=load('lib/remote-agent-updates.ts',mocks);
   assert.equal(newerAgent('1.12.0','1.9.0'),true);assert.equal(newerAgent('1.2.0','1.2.0'),false);
@@ -19,7 +19,7 @@ test('update API requires admin, same origin and a server-scoped action',async()
     '@/lib/rbac':load('lib/rbac.ts',{'./api':{ApiError}}),'@/lib/api':api,
     '@/lib/request-body':load('lib/request-body.ts',{'@/lib/api':{ApiError}}),
     '@/lib/managed-servers':{},'@/lib/remote-app-setup':{},
-    '@/lib/remote-agent-updates':{queueAgentUpdate:async()=>{called++;return{id:randomUUID()};},cancelAgentUpdate:async()=>{called++;return{ok:true};}},
+    '@/scripts/agent-bundle.cjs':require('../scripts/agent-bundle.cjs'),'@/lib/remote-agent-updates':{queueAgentUpdate:async()=>{called++;return{id:randomUUID()};},cancelAgentUpdate:async()=>{called++;return{ok:true};}},
   });
   const context={params:Promise.resolve({path:[randomUUID(),'agent-update']})};
   const request=(origin='https://manager')=>new Request('https://manager/api/servers/id/agent-update',{method:'POST',headers:{host:'manager',origin,'Content-Type':'application/json'},body:'{"action":"update"}'});
@@ -33,7 +33,7 @@ test('real PostgreSQL serializes updates with app claims, restricts scope, cance
   await query('create extension if not exists pgcrypto; create table if not exists users(id uuid primary key); create table if not exists github_connections(id uuid primary key)');
   const userId=randomUUID();await query('insert into users(id) values($1)',[userId]);
   const previous=process.env.MANAGER_ENCRYPTION_KEY;process.env.MANAGER_ENCRYPTION_KEY='isolated-agent-update-fixture';t.after(()=>{if(previous===undefined)delete process.env.MANAGER_ENCRYPTION_KEY;else process.env.MANAGER_ENCRYPTION_KEY=previous;});
-  const managed=load('lib/managed-servers.ts',{'@/lib/db':{db:pool,query},'@/lib/api':{ApiError},'@/lib/audit':{audit:async()=>{}},'@/lib/secret-crypto':load('lib/secret-crypto.ts',{}),'@/lib/github-connections':{},'@/lib/git-provider-policy':{},'@/scripts/manager-agent.cjs':agent,'@/lib/remote-setup-policy':require('../lib/remote-setup-policy.ts')});
+  const managed=load('lib/managed-servers.ts',{'@/lib/db':{db:pool,query},'@/lib/api':{ApiError},'@/lib/audit':{audit:async()=>{}},'@/lib/secret-crypto':load('lib/secret-crypto.ts',{}),'@/lib/github-connections':{},'@/lib/git-provider-policy':{},'@/scripts/agent-bundle.cjs':require('../scripts/agent-bundle.cjs'),'@/scripts/manager-agent.cjs':agent,'@/lib/remote-setup-policy':require('../lib/remote-setup-policy.ts')});
   const updates=load('lib/remote-agent-updates.ts',{...mocks,'@/lib/db':{db:pool,query},'@/lib/audit':{audit:async()=>{}},'@/lib/managed-servers':managed});
   const server=await managed.addServer({name:'Update lab',platform:process.platform},userId);
   const enrollment={serverId:server.id,enrollmentToken:server.enrollmentToken,agentToken:randomBytes(32).toString('base64url'),platform:process.platform,protocol:1};await managed.enroll(enrollment);

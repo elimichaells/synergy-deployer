@@ -5,3 +5,4 @@ export interface UptimeService {
 }
 export interface UptimeReport { range: string; from: number; to: number; startedAt: number | null; checkedAt: number | null; services: UptimeService[] }
 export function summarizeUptime(history: unknown, range?: string, now?: number): UptimeReport
+export function recordUptime(history:unknown,sample:unknown):unknown

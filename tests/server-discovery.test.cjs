@@ -10,7 +10,7 @@ const agent=require('../scripts/manager-agent.cjs');
 const catalog=load('lib/server-tool-catalog.ts',{});
 const policy=load('lib/server-discovery.ts',{'./server-tool-catalog':catalog});
 class ApiError extends Error {constructor(message,status){super(message);this.status=status}}
-const mocks={'@/lib/db':{},'@/lib/api':{ApiError},'@/lib/audit':{},'@/lib/managed-servers':{},'@/scripts/manager-agent.cjs':agent,'@/lib/server-tool-catalog':catalog,'@/lib/server-discovery':policy};
+const mocks={'@/lib/db':{},'@/lib/api':{ApiError},'@/lib/audit':{},'@/lib/managed-servers':{},'@/scripts/agent-bundle.cjs':require('../scripts/agent-bundle.cjs'),'@/scripts/manager-agent.cjs':agent,'@/lib/server-tool-catalog':catalog,'@/lib/server-discovery':policy};
 
 test('custom database client is the executable used for database queries, and survives config reload',async t=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'agent-tools-test-'));

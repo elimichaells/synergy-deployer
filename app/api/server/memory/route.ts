@@ -11,6 +11,6 @@ export async function GET() {
   try {
     const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator', 'viewer'])
-    return NextResponse.json(await memoryOverview(), { headers: { 'Cache-Control': 'no-store' } })
+    return NextResponse.json({ ...await memoryOverview(), role:user!.role }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (error) { return jsonError(error) }
 }

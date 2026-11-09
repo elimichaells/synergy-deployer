@@ -35,6 +35,7 @@ async function snapshot(client: PoolClient, id: string): Promise<ServerRemovalRe
   const jobs = (await client.query('select id,status from remote_jobs where server_id=$1 order by id', [id])).rows
   const updates = (await client.query('select id,status from remote_agent_updates where server_id=$1 order by id', [id])).rows
   const services = (await client.query('select id,status from remote_service_operations where server_id=$1 order by id', [id])).rows
+  const automation = (await client.query('select id,kind,config from remote_automations where server_id=$1 order by id', [id])).rows
   // Domain tables are lazy and need not exist on a new installation.
   const tables = (await client.query("select to_regclass('remote_domains') is not null as domains, to_regclass('remote_domain_operations') is not null as leases")).rows[0]
   const domains = tables.domains ? (await client.query('select id,hostname from remote_domains where server_id=$1 order by id', [id])).rows : []
@@ -48,13 +49,14 @@ async function snapshot(client: PoolClient, id: string): Promise<ServerRemovalRe
     server: { id: server.id, name: server.name, platform: server.platform, enrolled: !!server.enrolled_at, enabled: server.enabled },
     applications: apps, domains,
     queuedOperations: jobs.filter(job => job.status === 'queued').length + updates.filter(update => update.status === 'queued').length,
+    automation: { schedules:automation.filter(a=>a.kind==='cron').length, workers:automation.filter(a=>a.kind==='worker').length },
     history: { jobs: jobs.length, agentUpdates: updates.length, serviceOperations: services.length },
-    requiresConfirmation: !!server.enrolled_at || !!apps.length || !!jobs.length || !!updates.length || !!services.length || !!domains.length,
+    requiresConfirmation: !!server.enrolled_at || !!apps.length || !!jobs.length || !!updates.length || !!services.length || !!domains.length || !!automation.length,
     blockers,
   }
   // Include record identities and statuses so equal counts cannot hide changed work.
   // Heartbeats and health samples deliberately do not invalidate a review.
-  const reviewToken = createHash('sha256').update(JSON.stringify({ review, jobs, updates, services })).digest('hex')
+  const reviewToken = createHash('sha256').update(JSON.stringify({ review, jobs, updates, services, automation })).digest('hex')
   return { ...review, reviewToken }
 }
 
@@ -76,6 +78,9 @@ export function removeServer(id: string, body: Record<string, unknown>, userId: 
     const tables = (await client.query("select to_regclass('remote_domains') is not null as domains, to_regclass('remote_domain_operations') is not null as leases")).rows[0]
     if (tables.domains) await client.query('delete from remote_domains where server_id=$1', [id])
     if (tables.leases) await client.query('delete from remote_domain_operations where server_id=$1', [id])
+    const ai=(await client.query("select to_regclass('remote_ai_settings') is not null as settings, to_regclass('manager_ai_events') is not null as events")).rows[0]
+    if(ai.settings)await client.query('delete from remote_ai_settings where server_id=$1',[id])
+    if(ai.events)await client.query('delete from manager_ai_events where server_id=$1',[id])
     await client.query('delete from remote_jobs where server_id=$1', [id])
     await client.query('delete from remote_agent_updates where server_id=$1', [id])
     await client.query('delete from remote_service_operations where server_id=$1', [id])

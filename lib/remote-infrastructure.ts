@@ -11,8 +11,9 @@ export async function remoteProcesses(serverId:string) {
 }
 export async function remoteInfrastructureJob(serverId:string,jobId:string,admin:boolean) {
   await ensureManagedServers();uuid(serverId);uuid(jobId)
-  const job=(await query("select id,app_id,status,log,result from remote_jobs where server_id=$1 and id=$2 and operation_type='infrastructure'",[serverId,jobId])).rows[0]
-  if(!job||!admin&&!job.app_id)throw new ApiError('Operation not found',404)
+  const job=(await query("select id,app_id,status,log,result,resource_action from remote_jobs where server_id=$1 and id=$2 and operation_type='infrastructure'",[serverId,jobId])).rows[0]
+  if(!job||!admin&&!job.app_id&&!['worker-save','worker-start','worker-stop','worker-restart','worker-delete','worker-logs','cron-run','database-inspect'].includes(job.resource_action))throw new ApiError('Operation not found',404)
+  if(job.resource_action==='database-inspect'&&job.result)job.result=(await import('./remote-databases')).decorateDatabaseResult(job.result,admin)
   return {job}
 }
 export async function queueInfrastructure(serverId:string,appId:string|null,action:unknown,userId:string,domain?:{id:string;hostname:string;remove:boolean;restoreHostname?:string;restoreAccessMode?:string}) {

@@ -13,7 +13,7 @@ export async function POST(request: Request, context: { params: Promise<{ action
     if (action === 'enroll') return NextResponse.json(await enroll(await readBody(request, 4096)), { headers: { 'Cache-Control': 'no-store' } })
     const server = await authenticateAgent(request)
     let result
-    if (action === 'heartbeat') result = await heartbeat(server, await readBody(request))
+    if (action === 'heartbeat') result = await heartbeat(server, await readBody(request, 1_200_000))
     else if (action === 'claim') result = await claimJob(server.id)
     else if (action === 'report') result = await reportJob(server.id, await readBody(request, 800_000))
     else if (action === 'update-claim') result = await claimAgentUpdate(server.id, await readBody(request,4096))

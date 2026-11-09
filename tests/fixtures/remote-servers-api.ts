@@ -6,7 +6,7 @@ const serverId = '11111111-1111-4111-8111-111111111111'
 const windowsId = '22222222-2222-4222-8222-222222222222'
 const appId = '33333333-3333-4333-8333-333333333333'
 const app: Record<string, any> = { id: appId, server_id: serverId, name: 'Campus Library', repo_url: 'https://github.com/example/library', branch: 'main', install_cmd: 'npm ci --include=dev', build_cmd: 'npm run build', start_cmd: 'npm start -- --hostname 127.0.0.1', port: 3100, health_path: '/health', access_mode: 'lan', hostname: 'library.campus.example.edu', ip_address: '192.168.10.20', ip_port: 8443, git_connection_id: null, env_names: ['DATABASE_URL'], live_commit: 'a'.repeat(40), deployed_at: new Date().toISOString() }
-const metrics = { hostname: 'campus-linux', platform: 'linux', version: '1.6.0', capabilities: ['guided-setup-v1','remote-infrastructure-v1','remote-console-v1','runtime-versions-v1','agent-update-v1'], cpuPercent: 23, memoryTotal: 16 * 1024 ** 3, memoryFree: 10 * 1024 ** 3, diskTotal: 500 * 1024 ** 3, diskFree: 350 * 1024 ** 3, uptime: 864000, addresses: ['192.168.10.20'], tools: { node: 'v24.13.0', git: 'git version 2.50', pm2: '6.0', caddy: 'v2.10' }, apps: [{ id: appId, status: 'online', cpu: 4, memory: 256 * 1024 ** 2 }], proxyError: null }
+const metrics = { hostname: 'campus-linux', platform: 'linux', version: '1.7.0', capabilities: ['guided-setup-v1','remote-infrastructure-v1','remote-resources-v1','remote-console-v1','runtime-versions-v1','agent-update-v1'], cpuPercent: 23, memoryTotal: 16 * 1024 ** 3, memoryFree: 10 * 1024 ** 3, diskTotal: 500 * 1024 ** 3, diskFree: 350 * 1024 ** 3, uptime: 864000, addresses: ['192.168.10.20'], tools: { node: 'v24.13.0', git: 'git version 2.50', pm2: '6.0', caddy: 'v2.10' }, apps: [{ id: appId, status: 'online', cpu: 4, memory: 256 * 1024 ** 2 }], proxyError: null }
 const initial = { role: 'admin', servers: [
   { id: serverId, name: 'Main campus', location: 'Accra · institution LAN', platform: 'linux', enabled: true, enrolled_at: new Date().toISOString(), last_seen_at: new Date().toISOString(), metrics, status: 'online', app_count: 2, has_ca: true },
   { id: windowsId, name: 'Regional office', location: 'Kumasi · private network', platform: 'win32', enabled: true, enrolled_at: null, last_seen_at: null, metrics: null, status: 'pending', app_count: 0, has_ca: false },
@@ -62,10 +62,10 @@ export async function remoteServersFixture(request: Request) {
   if (parts.length===2 && parts[1]==='agent-update') {
     const server = state.servers.find(item=>item.id===parts[0])
     if(!server)return NextResponse.json({error:'Server not found'},{status:404})
-    if(request.method==='GET')return NextResponse.json({installed:server.metrics?.version,available:'1.6.0',supported:!!server.enrolled_at,updateAvailable:server.metrics?.version!=='1.6.0',latest:updateFixture[server.id] || null})
+    if(request.method==='GET')return NextResponse.json({installed:server.metrics?.version,available:'1.7.0',supported:!!server.enrolled_at,updateAvailable:server.metrics?.version!=='1.7.0',latest:updateFixture[server.id] || null})
     const body=await request.json()
     if(body.action==='cancel'){if(updateFixture[server.id])updateFixture[server.id].status='cancelled';return NextResponse.json({ok:true})}
-    updateFixture[server.id]={id:crypto.randomUUID(),from_version:server.metrics?.version,target_version:'1.6.0',status:'queued',message:'Preview only: waiting for the agent to become idle. No server will be updated.',updated_at:new Date().toISOString()}
+    updateFixture[server.id]={id:crypto.randomUUID(),from_version:server.metrics?.version,target_version:'1.7.0',status:'queued',message:'Preview only: waiting for the agent to become idle. No server will be updated.',updated_at:new Date().toISOString()}
     return NextResponse.json({id:updateFixture[server.id].id},{status:202})
   }
   if (request.method === 'GET') {

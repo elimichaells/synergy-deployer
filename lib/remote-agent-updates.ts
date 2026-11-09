@@ -6,6 +6,7 @@ import { ApiError } from '@/lib/api'
 import { audit } from '@/lib/audit'
 import { ensureManagedServers, uuid } from '@/lib/managed-servers'
 import { AGENT_VERSION, UPDATE_CAPABILITY } from '@/scripts/manager-agent.cjs'
+import { agentBundle } from '@/scripts/agent-bundle.cjs'
 
 const active = "('queued','installing','recovery_required')"
 const columns = 'id,from_version,target_version,status,message,created_at,started_at,finished_at,updated_at'
@@ -26,7 +27,7 @@ export async function agentUpdateStatus(serverId: string) {
     updateAvailable: newerAgent(AGENT_VERSION, server.metrics?.version || ''), latest }
 }
 async function bundledAgent() {
-  const source = await readFile(path.join(process.cwd(), 'scripts/manager-agent.cjs'), 'utf8')
+  const source = await agentBundle()
   if (Buffer.byteLength(source) > 2_000_000 || !source.includes(`const AGENT_VERSION = '${AGENT_VERSION}';`)) throw new ApiError('Agent package does not match this Manager build', 503)
   return { source, sha256: createHash('sha256').update(source).digest('hex') }
 }

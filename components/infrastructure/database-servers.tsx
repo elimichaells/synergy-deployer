@@ -5,6 +5,7 @@ import { AlertTriangle, Check, Database, Loader2, RefreshCw } from 'lucide-react
 import { Section } from '@/components/app/section'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { scopedInfrastructureFetch } from '@/lib/infrastructure-client'
 
 interface Recommendation { key: string; current: string; recommended: string; savingMb: number; measured: boolean; title: string; why: string }
 interface Server {
@@ -17,7 +18,7 @@ interface TuneResult { ok: boolean; settings: string; before: number | null; aft
 const gb = (mb: number | null | undefined) => mb === null || mb === undefined ? '—' : mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`
 const engineName: Record<string, string> = { postgresql: 'PostgreSQL', mysql: 'MySQL', mariadb: 'MariaDB' }
 
-function ServerCard({ server, canTune, onTuned }: { server: Server; canTune: boolean; onTuned: () => void }) {
+function ServerCard({ server, canTune, onTuned, serverId }: { server: Server; canTune: boolean; onTuned: () => void; serverId?:string }) {
   const [chosen, setChosen] = useState<string[]>(() => server.recommendations.map(item => item.key))
   const [tuning, setTuning] = useState(false)
   const [result, setResult] = useState<TuneResult | null>(null)
@@ -30,7 +31,7 @@ function ServerCard({ server, canTune, onTuned }: { server: Server; canTune: boo
     if (!window.confirm(`Apply ${chosen.length} change${chosen.length === 1 ? '' : 's'} and restart ${engine}?\n\n${affected} for about 10 to 30 seconds while it restarts. The new settings are checked first, and the old ones are put back if ${engine} does not start.`)) return
     setTuning(true); setError(''); setResult(null)
     try {
-      const response = await fetch('/api/server/databases/tune', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ connectionId: server.connectionId, keys: chosen }) })
+      const response = await scopedInfrastructureFetch(serverId, '/api/server/databases/tune', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ connectionId: server.connectionId, keys: chosen }) })
       const body = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(body.error || 'Could not apply the changes')
       setResult(body.result)
@@ -89,19 +90,19 @@ function ServerCard({ server, canTune, onTuned }: { server: Server; canTune: boo
 }
 
 /** Each database server on this machine, what it holds, and memory settings worth changing. */
-export function DatabaseServers() {
+export function DatabaseServers({serverId}:{serverId?:string}) {
   const [servers, setServers] = useState<Server[] | null>(null)
   const [canTune, setCanTune] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const load = useCallback(() => {
     setLoading(true)
-    void fetch('/api/server/databases', { cache: 'no-store' }).then(async response => {
+    void scopedInfrastructureFetch(serverId, '/api/server/databases', { cache: 'no-store' }).then(async response => {
       const body = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(body.error || 'Could not read the database servers')
       setServers(body.servers); setCanTune(!!body.canTune); setError('')
     }).catch(err => setError((err as Error).message)).finally(() => setLoading(false))
-  }, [])
+  }, [serverId])
   useEffect(load, [load])
   const total = (servers ?? []).reduce((sum, server) => sum + (server.memoryMb ?? 0), 0)
 
@@ -112,7 +113,7 @@ export function DatabaseServers() {
       {error && <p role="alert" className="notice-error">{error}</p>}
       {!servers && !error && <div className="h-32 animate-pulse rounded-lg border border-border" />}
       {servers && servers.length === 0 && <p className="text-sm text-muted-foreground">No database servers on this machine are connected to the manager.</p>}
-      {servers && <div className="space-y-3">{servers.map(server => <ServerCard key={server.connectionId} server={server} canTune={canTune} onTuned={load} />)}</div>}
+      {servers && <div className="space-y-3">{servers.map(server => <ServerCard key={server.connectionId} server={server} canTune={canTune} onTuned={load} serverId={serverId} />)}</div>}
     </Section>
   )
 }

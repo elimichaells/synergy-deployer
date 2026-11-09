@@ -33,6 +33,7 @@ export function ensureManagedServers() {
       await client.query(await readFile(path.join(process.cwd(), 'db/migrations/027_remote_agent_updates.sql'), 'utf8'))
       await client.query(await readFile(path.join(process.cwd(), 'db/migrations/028_remote_operations.sql'), 'utf8'))
       await client.query(await readFile(path.join(process.cwd(), 'db/migrations/029_remote_infrastructure.sql'), 'utf8'))
+      await client.query(await readFile(path.join(process.cwd(), 'db/migrations/030_remote_resources.sql'), 'utf8'))
       await client.query('commit')
     } catch (error) { await client.query('rollback'); throw error } finally { client.release() }
   })().catch(error => { schema = null; throw error })
@@ -164,6 +165,7 @@ export async function heartbeat(server: { id: string; platform: string }, body: 
   }
   await query('update managed_servers set last_seen_at=now(),metrics=$2::jsonb,ca_pem=coalesce($3,ca_pem) where id=$1 and enabled=true', [server.id, JSON.stringify(metrics), certificate])
   if(metrics.capabilities?.includes(INFRASTRUCTURE_CAPABILITY))await (await import('@/lib/remote-health')).recordRemoteHealth(server.id,metrics)
+  if(metrics.resources)await (await import('@/lib/remote-resources')).recordRemoteMemory(server.id,metrics)
   return { ok: true }
 }
 
@@ -322,6 +324,7 @@ export async function reportJob(serverId: string, body: Record<string, unknown>)
     if (finished && kind === 'database') await client.query(`update remote_apps set database_config=jsonb_set(database_config,'{status}',to_jsonb($2::text)),
       setup_decisions=setup_decisions||jsonb_build_object('database',case when $2='ready' then 'configured' else 'pending' end),setup_completed_at=null where id=$1`,[job.app_id,body.status === 'success' ? 'ready' : 'failed'])
     if (body.status === 'success' && kind === 'validate') await client.query("update remote_apps set setup_completed_at=now(),setup_step='review' where id=$1",[job.app_id])
+    if(finished&&job.resource_action)await (await import('@/lib/remote-automation')).finishResource(client,serverId,job,payload,body.status==='success',result)
     await client.query('commit')
     return { ok: true, cancelRequested:job.cancel_requested===true }
   } catch (error) { await client.query('rollback'); throw error } finally { client.release() }
