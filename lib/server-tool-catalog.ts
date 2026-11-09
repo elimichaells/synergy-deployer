@@ -12,6 +12,7 @@ export const SERVER_TOOLS = [
   { id: 'php', name: 'PHP', required: false },
   { id: 'python', name: 'Python', required: false },
   { id: 'composer', name: 'Composer', required: false },
+  { id: 'sling', name: 'Sling migration engine', required: false },
 ] as const
 export type ServerToolId = typeof SERVER_TOOLS[number]['id']
 export type ToolSelection = { mode: 'reuse' | 'install' | 'skip'; path: string }

@@ -6,6 +6,7 @@ export const REMOTE_SERVICES=[
   {id:'caddy',name:'Caddy',tool:'caddy'}, {id:'pm2',name:'PM2',tool:'pm2'},
   {id:'go',name:'Go',tool:'go'}, {id:'php',name:'PHP',tool:'php'},
   {id:'python',name:'Python',tool:'python'}, {id:'composer',name:'Composer',tool:'composer'},
+  {id:'sling',name:'Sling migration engine',tool:'sling'},
 ] as const
 export type RemoteServiceId=typeof REMOTE_SERVICES[number]['id']
 export type RemoteServicePlan={service:RemoteServiceId;mode:'reuse'|'install'|'install-version';version:string;path:string;port:number;agentRoot:string;dataRoot:string}

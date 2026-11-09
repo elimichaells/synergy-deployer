@@ -28,6 +28,7 @@ test('migration DELETE enforces administrator role and retains a nonsecret audit
   let role = 'viewer'; let deleted = 0; const audits = [];
   const { requireRole } = load('lib/rbac.ts', { './api': { ApiError } });
   const route = load('app/api/data/migrations/[id]/route.ts', {
+    '@/lib/request-body':load('lib/request-body.ts',{'@/lib/api':{ApiError}}),
     '@/lib/api': { ApiError, jsonError }, '@/lib/auth': { getSessionFromCookie: async () => role ? { id: 'user', role } : null },
     '@/lib/rbac': { requireRole }, '@/lib/audit': { audit: async (...args) => audits.push(args) },
     '@/lib/data-migrations': { deleteDataMigration: async () => { deleted++; return { project_id: 'project', source_service_id: 'source', target_service_id: 'target', status: 'failed' }; } },
@@ -39,7 +40,9 @@ test('migration DELETE enforces administrator role and retains a nonsecret audit
   }
   assert.equal(deleted, 0);
   role = 'admin';
-  assert.equal((await route.DELETE(new Request('http://fixture'), context)).status, 200);
+  assert.equal((await route.DELETE(new Request('http://fixture',{method:'DELETE',headers:{origin:'http://other',host:'fixture'}}), context)).status, 403);
+  assert.equal(deleted,0);
+  assert.equal((await route.DELETE(new Request('http://fixture',{method:'DELETE',headers:{origin:'http://fixture',host:'fixture'}}), context)).status, 200);
   assert.equal(deleted, 1);
   assert.deepEqual(audits[0], ['user', 'data.migration.delete', 'project', { migrationId: 'job', sourceServiceId: 'source', targetServiceId: 'target', status: 'failed' }]);
 });

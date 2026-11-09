@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $paths = '__MANAGER_PATHS__' | ConvertFrom-Json
-$ids = @('node','git','caddy','pm2','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer')
+$ids = @('node','git','caddy','pm2','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer','sling')
 $tools = @{}
 $serviceRows = @()
 $processes = @(Get-Process node,caddy,php,python,python3 -ErrorAction SilentlyContinue | Where-Object { $_.Path } | Select-Object ProcessName,Path -Unique)

@@ -44,6 +44,7 @@ export function ensureManagedServers() {
       await client.query(await readFile(path.join(process.cwd(), 'db/migrations/033_remote_application_controls.sql'), 'utf8'))
       await client.query(await readFile(path.join(process.cwd(), 'db/migrations/034_remote_storage.sql'), 'utf8'))
       await client.query(await readFile(path.join(process.cwd(), 'db/migrations/035_remote_storage_changes.sql'), 'utf8'))
+      await client.query(await readFile(path.join(process.cwd(), 'db/migrations/036_remote_storage_migrations.sql'), 'utf8'))
       await client.query('commit')
     } catch (error) { await client.query('rollback'); throw error } finally { client.release() }
   })().catch(error => { schema = null; throw error })

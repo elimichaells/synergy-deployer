@@ -45,7 +45,7 @@ const toolVersion = id => {
 };
 async function loadToolPaths(root) {
   const paths = await readJson(path.join(root,'tool-paths.json'),{});
-  const allowed = ['node','git','caddy','pm2','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer'];
+  const allowed = ['node','git','caddy','pm2','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer','sling'];
   if(!paths || typeof paths!=='object' || Array.isArray(paths))throw new Error('Invalid tool path configuration');
   for(const [id,file] of Object.entries(paths)) {
     if(!allowed.includes(id)||typeof file!=='string'||!path.isAbsolute(file)||/[\x00-\x1f\x7f]/.test(file)||(process.platform==='win32'?file.slice(2):file).includes(path.delimiter))throw new Error('Invalid configured tool path: '+id);
@@ -68,7 +68,7 @@ async function checkConfiguredTools(root) {
       const version = await run(executable(id),args,{timeout:10000});
       if(!signature.test(version))throw new Error('Unsupported '+id+' executable');
     }
-    for(const id of ['psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer']) {
+    for(const id of ['psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer','sling']) {
       if(configuredTools[id])await toolVersion(id);
     }
     const pm2 = configuredTools.pm2 || path.join(root,'tools','node_modules','pm2','bin','pm2');
@@ -185,7 +185,7 @@ function sanitizeMetrics(raw) {
     cpuPercent: number(raw.cpuPercent, 100), memoryTotal: number(raw.memoryTotal), memoryFree: number(raw.memoryFree),
     diskTotal: optional(raw.diskTotal), diskFree: optional(raw.diskFree), uptime: number(raw.uptime),
     addresses: (Array.isArray(raw.addresses) ? raw.addresses : []).filter(x => typeof x === 'string' && net.isIP(x)).slice(0, 30),
-    tools: Object.fromEntries(['node','git','pm2','caddy','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer'].filter(key => ['node','git','pm2','caddy'].includes(key) || Object.hasOwn(raw.tools || {},key)).map(key => [key, str(raw.tools?.[key]) || null])),
+    tools: Object.fromEntries(['node','git','pm2','caddy','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer','sling'].filter(key => ['node','git','pm2','caddy'].includes(key) || Object.hasOwn(raw.tools || {},key)).map(key => [key, str(raw.tools?.[key]) || null])),
     apps: (Array.isArray(raw.apps) ? raw.apps : []).slice(0, 200).filter(x => ID.test(x.id)).map(x => ({ id: x.id,
       status: ['online','stopped','errored','launching','stopping','missing'].includes(x.status) ? x.status : 'unknown', cpu: number(x.cpu, 10000), memory: number(x.memory),
       uptime:optional(x.uptime),restarts:number(x.restarts??0),pid:optional(x.pid),logBytes:number(x.logBytes??0),
@@ -379,7 +379,7 @@ async function findTools(root) {
   tools.pm2 = (await pm(['--version'])).split('\n').pop();
   const caddy = configuredTools.caddy || process.env.MANAGER_AGENT_CADDY || (process.platform === 'win32' ? 'caddy.exe' : 'caddy');
   tools.caddy = await run(caddy,['version']).catch(() => null);
-  for(const id of ['psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer']) {
+  for(const id of ['psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer','sling']) {
     if(configuredTools[id])tools[id] = await toolVersion(id).then(text=>text.split(/\r?\n/)[0]).catch(()=>null);
   }
   return { pm, caddy, tools, sharedProxy:await sharedProxySettings(root) };
@@ -822,7 +822,7 @@ async function sampleApplications(saved,list,pm2Error) {
   }));return result;
 }
 
-async function infrastructureJob(root,job,tools,log) {
+async function infrastructureJob(root,job,tools,log,signal) {
   const {action,id,expiresAt}=job.payload;
   if(!Number.isFinite(expiresAt)||Date.now()>expiresAt)throw Error('Operation expired; review the current server state and retry');
   if(action==='detach')return detachApplication(root,id,log);
@@ -834,7 +834,7 @@ async function infrastructureJob(root,job,tools,log) {
     saved[id].app={...saved[id].app,health_path:profile.path,health_profile:profile};
     await atomicJson(path.join(root,'apps.json'),saved);return{ok:true,profile};
   }
-  if(action==='resource')return resources.execute(root,job,tools,resourceHelpers());
+  if(action==='resource')return resources.execute(root,job,tools,{...resourceHelpers(),log,signal});
   const saved=await readJson(path.join(root,'apps.json'),{});
   if(action==='domain'){
     const domain=job.payload.domain;
@@ -1074,7 +1074,7 @@ async function runAgent(root) {
         try{
           if (!job.kind || job.kind==='deploy') {consoleAbort=new AbortController();lastConsoleReport=Date.now();journal.commitSha=await deploy(root,job,journal,tools,persist,log,{signal:consoleAbort.signal});}
           else if (job.kind==='inspect') { journal.result=await inspectRepository(root,job,tools,log); journal.commitSha=journal.result.commit; }
-          else if (job.kind==='infrastructure') journal.result=await infrastructureJob(root,job,tools,log);
+          else if (job.kind==='infrastructure') {if(job.payload.resource?.operation==='migration-run'){consoleAbort=new AbortController();lastConsoleReport=Date.now();}journal.result=await infrastructureJob(root,job,tools,log,consoleAbort?.signal);}
           else if (job.kind==='database') journal.result=await setupDatabase(root,job,log);
           else if (job.kind==='validate') journal.result=await validateSetup(root,job,tools);
           else if (['console','logs'].includes(job.kind)) { consoleAbort=new AbortController();lastConsoleReport=Date.now();journal.result=await consoleJob(root,job,tools,log,consoleAbort.signal); }
@@ -1133,7 +1133,7 @@ function serveStatic(root,portNumber) {
 function jobSecrets(payload) {
   const database = payload.database || {};
   const values = [...Object.values(payload.environment || {}),payload.git?.token,database.password,database.adminPassword,
-    payload.resource?.connection?.password,payload.resource?.administrator?.password,payload.resource?.password,payload.resource?.owner?.password,...Object.values(payload.resource?.environment||{}),...(Array.isArray(payload.resource?.connections)?payload.resource.connections.flatMap(d=>[d.password,d.adminPassword,d.connection?.password]):[]),
+    payload.resource?.connection?.password,payload.resource?.target?.password,payload.resource?.administrator?.password,payload.resource?.password,payload.resource?.owner?.password,...Object.values(payload.resource?.environment||{}),...(Array.isArray(payload.resource?.connections)?payload.resource.connections.flatMap(d=>[d.password,d.adminPassword,d.connection?.password]):[]),
     payload.git?.token ? Buffer.from(`${payload.git.username}:${payload.git.token}`).toString('base64') : ''].filter(x=>typeof x==='string' && x);
   return [...values,...values.flatMap(value=>{try{return [encodeURIComponent(value)];}catch{return [];}}),...values.map(x=>x.replace(/'/g,"''"))];
 }

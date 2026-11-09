@@ -180,4 +180,4 @@ async function execute(root,input,h){
     throw error;
   }finally{await client.end().catch(()=>{});}
 }
-module.exports={execute,queryResult,readStatement,connection,postgres};
+module.exports={execute,queryResult,readStatement,connection,postgres,driver};

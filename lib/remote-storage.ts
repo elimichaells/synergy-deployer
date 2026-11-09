@@ -51,7 +51,9 @@ export async function remoteStorageServices(serverId:string,appId?:string){
   if(appId&&!(await query('select 1 from remote_apps where server_id=$1 and id=$2',[serverId,appId])).rowCount)throw new ApiError('Application not found on this server',404)
   return (await query(`select s.id,s.app_id as project_id,a.name as project_name,a.environment_name as environment,a.application_group_id as group_id,
     s.name,s.database_name,s.username,s.env_prefix,s.application_primary,s.options,s.status,s.pending_password_ciphertext is not null as credential_recovery,s.connection_id,c.name as connection_name,c.provider,c.host,c.port,c.tls_enabled,
-    case when s.status='pending' then 'Wait for the database operation to finish' else null end as removal_blocked_reason,
+    case when s.status='pending' then 'Wait for the database operation to finish'
+      when exists(select 1 from remote_storage_changes c where c.server_id=s.server_id and c.kind='migration' and (c.service_id=s.id or c.target_service_id=s.id)) then 'Remove this service’s migration history first. Database data will be preserved.'
+      else null end as removal_blocked_reason,
     b.last_status as backup_status
     from remote_storage_services s join remote_apps a on a.id=s.app_id and a.server_id=s.server_id join remote_storage_connections c on c.id=s.connection_id and c.server_id=s.server_id
     left join remote_storage_schedules b on b.service_id=s.id where s.server_id=$1 and ($2::uuid is null or s.app_id=$2) order by s.created_at`,[serverId,appId||null])).rows
@@ -162,6 +164,7 @@ export async function changeRemoteStorageService(serverId:string,appId:string,id
   await ensureRemoteStorage(serverId);return resourceTransaction(serverId,async client=>{
     await idle(client,serverId);const app=await application(client,serverId,appId),item=await service(client,serverId,id);if(item.app_id!==appId)throw new ApiError('Database not found in this application',404)
     if(remove){
+      if((await client.query("select 1 from remote_storage_changes where server_id=$1 and kind='migration' and (service_id=$2 or target_service_id=$2) and status not in ('reviewing','preview','preview_failed')",[serverId,id])).rowCount)throw new ApiError('Finish or verify the linked migrations, then remove their history records before disconnecting this database',409)
       if((await client.query("select 1 from remote_storage_services where server_id=$1 and options->>'sharedFrom'=$2",[serverId,id])).rowCount)throw new ApiError('Disconnect the other applications sharing this database first',409)
       // Preserve its current effective values for the next deploy as well as the
       // running release. Removing tracking never deletes the underlying database.
@@ -217,6 +220,7 @@ export async function remoteStorageOperation(serverId:string,id:string,operation
 export async function finishStorageOperation(client:PoolClient,serverId:string,job:{id:string;resource_target:string},payload:Record<string,any>,success:boolean,result:Record<string,any>|null){
   const resource=payload.resource
   if((parseServerDatabaseId(resource?.serviceId||'')?.connectionId||resource?.serviceId)!==job.resource_target)throw new ApiError('Database receipt does not match this operation',400)
+  if(['migration-preview','migration-run','migration-reconcile'].includes(resource.operation)){await(await import('./remote-storage-migrations')).finishRemoteMigration(client,serverId,resource,success,result);return}
   if(['dedicated-plan','dedicated-user','dedicated-reconcile'].includes(resource.operation)){await(await import('./remote-storage-changes')).finishRemoteStorageChange(client,serverId,resource,success,result);return}
   if(['move-plan','move','move-reconcile'].includes(resource.operation)){await(await import('./remote-storage-move')).finishRemoteStorageMove(client,serverId,resource,success,result);return}
   if(['inventory','server-create','server-drop','restrict'].includes(resource.operation)){await(await import('./remote-storage-servers')).finishRemoteStorageServerOperation(client,serverId,resource,success,result);return}

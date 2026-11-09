@@ -37,7 +37,9 @@ export async function enqueueResource(client:PoolClient,serverId:string,resource
   const payload={action:'resource',id:appId,resource,requiredCapability:resource.action==='storage'?'storage-control-v1':applicationControl?'application-control-v1':CAPABILITY,expiresAt:Date.now()+60000}
   if(resource.action==='storage'){
     const provider=(resource.connection as {provider?:string}|undefined)?.provider,driver=provider&&({mysql:'mysql2',mariadb:'mysql2',sqlserver:'mssql',mongodb:'mongodb',redis:'redis'} as Record<string,string>)[provider]
-    if(driver)resource.driverArchive=await (await import('../scripts/agent-postgres-runtime.cjs')).packagePostgresRuntime(process.cwd(),[driver])
+    const targetProvider=(resource.target as {provider?:string}|undefined)?.provider,targetDriver=targetProvider&&({mysql:'mysql2',mariadb:'mysql2',sqlserver:'mssql'} as Record<string,string>)[targetProvider]
+    const drivers=[...new Set([driver,...(String(resource.operation).startsWith('migration-')?[targetDriver]:[])].filter(Boolean))] as string[]
+    if(drivers.length)resource.driverArchive=await (await import('../scripts/agent-postgres-runtime.cjs')).packagePostgresRuntime(process.cwd(),drivers)
   }
   const job=(await client.query("insert into remote_jobs(server_id,app_id,user_id,kind,operation_type,resource_action,resource_target,payload_ciphertext) values($1,$2,$3,'console','infrastructure',$4,$5,$6) returning id",[serverId,appId,actor,resource.action,target,encryptSecret(JSON.stringify(payload))])).rows[0]
   await client.query('insert into audit_logs(user_id,action,resource,details) values($1,$2,$3,$4)',[actor,'remote.resource.'+resource.action,serverId,JSON.stringify({jobId:job.id,appId,target})])

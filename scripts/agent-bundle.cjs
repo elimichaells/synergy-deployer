@@ -34,6 +34,9 @@ async function agentBundle(root = process.cwd()) {
   const copyCode=(await fs.readFile(path.join(root,'scripts/postgres-copy.cjs'),'utf8')).replace("require('./postgres-ownership.cjs')",ownershipFactory);
   const moveCode=(await fs.readFile(path.join(root,'scripts/remote-storage-move.cjs'),'utf8')).replace("require('./remote-storage-switch.cjs')",'storageSwitch').replace("require('./postgres-ownership.cjs')",ownershipFactory).replace("require('./postgres-copy.cjs')",`(()=>{const module={exports:{}};\n${copyCode}\nreturn module.exports;})()`);
   resources=resources.replace("const storageMove = require('./remote-storage-move.cjs');",`const storageMove=(()=>{const module={exports:{}};\n${moveCode}\nreturn module.exports;})();`);
+  const migrationEngine=await fs.readFile(path.join(root,'scripts/relational-migration.cjs'),'utf8');
+  const migrationCode=(await fs.readFile(path.join(root,'scripts/remote-storage-migration.cjs'),'utf8')).replace("require('./relational-migration.cjs')",`(()=>{const module={exports:{}};\n${migrationEngine}\nreturn module.exports;})()`);
+  resources=resources.replace("const storageMigration = require('./remote-storage-migration.cjs');",`const storageMigration=(()=>{const module={exports:{}};\n${migrationCode}\nreturn module.exports;})();`);
   resources=resources.replace("require('./manager-agent-windows-memory.cjs')",JSON.stringify(require('./manager-agent-windows-memory.cjs')));
   const diagnostics=await fs.readFile(path.join(root,'scripts/health-diagnostics.cjs'),'utf8');
   const health=(await fs.readFile(path.join(root,'scripts/http-health.cjs'),'utf8')).replace("const { readDiagnostics } = require('./health-diagnostics.cjs');",`const { readDiagnostics } = (()=>{const module={exports:{}};\n${diagnostics}\nreturn module.exports;})();`);

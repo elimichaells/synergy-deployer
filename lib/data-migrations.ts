@@ -500,6 +500,8 @@ export async function startDataMigration(input: Record<string, unknown>, created
   const selected = requestedTables.length ? preview.tables.filter((item) => requestedTables.includes(item.sourceObject)) : preview.tables
   if (!selected.length) throw new ApiError('Select at least one source table', 400)
   const replaceTarget = input.replaceTarget === true
+  if (input.backupConfirmed !== true || input.writesPaused !== true) throw new ApiError('Confirm a backup and pause source and target writers first', 400)
+  if (selected.some(item => item.targetExists) && input.confirmTarget !== preview.target.database) throw new ApiError('Type the target database name to confirm replacement', 400)
   if (!replaceTarget && selected.some((item) => item.targetExists)) throw new ApiError('Target tables already exist. Confirm replacement or choose an empty target service.', 409)
   if (preview.target.applicationPrimary && (input.backupConfirmed !== true || input.writesPaused !== true)) {
     throw new ApiError('Active application databases can only be migrated from the project wizard after backups and paused writes are confirmed.', 409)

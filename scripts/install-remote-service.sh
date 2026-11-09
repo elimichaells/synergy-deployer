@@ -108,7 +108,7 @@ else
       install_package "$package"
       command_name="$service"; [ "$service" != python ] || command_name=python3; selected="$(command -v "$command_name")"
       ;;
-    node|caddy|pm2)
+    node|caddy|pm2|sling)
       "$node_exe" "$stage/install-remote-tool.cjs" "$plan_file" "$target"
       selected="$(cat "$target/executable.txt")"
       ;;

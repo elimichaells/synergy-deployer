@@ -1,3 +1,4 @@
+import {readBody,requireSameOrigin} from '@/lib/request-body'
 import { NextResponse } from 'next/server'
 import { jsonError } from '@/lib/api'
 import { getSessionFromCookie } from '@/lib/auth'
@@ -7,8 +8,8 @@ import { requireRole } from '@/lib/rbac'
 export async function POST(request: Request) {
   try {
     const user = await getSessionFromCookie()
-    requireRole(user, ['admin'])
-    const body = await request.json()
+    requireRole(user, ['admin']); requireSameOrigin(request)
+    const body = await readBody(request,100000)
     return NextResponse.json({ preview: await previewDataMigration(String(body.sourceServiceId || ''), String(body.targetServiceId || '')) })
   } catch (error) { return jsonError(error) }
 }

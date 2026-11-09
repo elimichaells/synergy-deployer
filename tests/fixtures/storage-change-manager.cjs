@@ -13,7 +13,7 @@ module.exports=async function fixture(t,applications,connection,administrator=co
   const storageMocks={'./api':api,'./db':db,'./secret-crypto':secret,'./managed-servers':managed,'./remote-resources':res,'./remote-environment':environment,'./environment-text':envText,'./server-database-policy':load('lib/server-database-policy.ts',{}),'./database-discovery-policy':load('lib/database-discovery-policy.ts',{}),'./cron-jobs':{}};
   const storage=load('lib/remote-storage.ts',storageMocks);storageMocks['./remote-storage']=storage;
   const changes=load('lib/remote-storage-changes.ts',storageMocks);storageMocks['./remote-storage-changes']=changes;mocks['@/lib/remote-storage']=storage;mocks['./remote-storage']=storage;
-  const moves=load('lib/remote-storage-move.ts',storageMocks);storageMocks['./remote-storage-move']=moves;
+  const migrations=load('lib/remote-storage-migrations.ts',storageMocks);storageMocks['./remote-storage-migrations']=migrations;const moves=load('lib/remote-storage-move.ts',storageMocks);storageMocks['./remote-storage-move']=moves;
   const removal=load('lib/application-removal.ts',mocks),serverRemoval=load('lib/server-removal.ts',mocks);mocks['@/lib/application-removal']=removal;
   storageMocks['./remote-storage-discovery']={discoverRemoteStorage:async()=>[]};
   const servers=load('lib/remote-storage-servers.ts',storageMocks);
@@ -28,5 +28,5 @@ module.exports=async function fixture(t,applications,connection,administrator=co
     const service=(await query("insert into remote_storage_services(server_id,app_id,connection_id,name,database_name,username,password_ciphertext,env_prefix,application_primary,status) values($1,$2,$3,'primary',$4,$5,$6,'PRIMARY',true,'ready') returning id",[server.id,app.id,connectionId,connection.database,connection.username,secret.encryptSecret(connection.password)])).rows[0];services.push(service.id);
   }
   const report=async(job,status,result)=>managed.reportJob(server.id,{id:job.id,claimToken:job.claimToken,status,sequence:1,log:'Isolated storage operation',result});
-  return {query,managed,changes,moves,storage,servers,environment,removal,serverRemoval,server,actor,services,secret,report,claim:async()=>{const {job}=await managed.claimJob(server.id);assert.ok(job);return job;}};
+  return {query,managed,changes,moves,migrations,storage,servers,environment,removal,serverRemoval,server,actor,services,secret,report,claim:async()=>{const {job}=await managed.claimJob(server.id);assert.ok(job);return job;}};
 };

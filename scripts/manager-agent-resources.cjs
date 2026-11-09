@@ -2,6 +2,7 @@
 const storage = require('./remote-storage-agent.cjs');
 const storageSwitch = require('./remote-storage-switch.cjs');
 const storageMove = require('./remote-storage-move.cjs');
+const storageMigration = require('./remote-storage-migration.cjs');
 // Runs only inside the selected agent. Never imports Manager's database, host
 // process manager or host paths. All application changes use its private PM2.
 const fs = require('node:fs/promises');
@@ -244,6 +245,7 @@ async function execute(root,job,tools,h) {
   if(input.action==='database-inspect')return inspectDatabases(root,input,h);
   if(input.action==='database-tune')return tuneDatabase(root,input,h);
   if(input.action==='storage'){
+    if(['migration-preview','migration-run','migration-reconcile'].includes(input.operation))return storageMigration.execute(root,input,h,name=>name==='pg'?storage.postgres(root,h):storage.driver(root,h,name,input.driverArchive));
     if(['move-plan','move','move-reconcile'].includes(input.operation))return storageMove.execute(root,input,tools,h,{pg:await storage.postgres(root,h),connection:storage.connection,applyLaunchSettings});
     if(['dedicated-plan','dedicated-user','dedicated-reconcile'].includes(input.operation))return storageSwitch.execute(root,input,tools,h,{pg:await storage.postgres(root,h),connection:storage.connection,applyLaunchSettings});
     return input.operation==='sync-env'?appChange(root,{...input,action:'database-env',id:input.serviceId},tools,h):storage.execute(root,input,h);

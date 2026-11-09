@@ -15,6 +15,7 @@ import {reviewRemoteStorageRename,renameRemoteStorage,listRemoteStorageRenames,r
 import {remoteStorageEngines,remoteServerDatabases,refreshRemoteStorageInventory,changeRemoteServerDatabase,restrictRemoteStorageServer} from '@/lib/remote-storage-servers'
 import {reviewRemoteDedicatedUser,changeRemoteDedicatedUser} from '@/lib/remote-storage-changes'
 import {reviewRemoteStorageMove,changeRemoteStorageMove,remoteStorageMove} from '@/lib/remote-storage-move'
+import {previewRemoteMigration,startRemoteMigration,listRemoteMigrations,changeRemoteMigration} from '@/lib/remote-storage-migrations'
 export const dynamic='force-dynamic'
 type Context={params:Promise<{id:string;path?:string[]}>}
 export async function GET(request:Request,context:Context){try{
@@ -24,6 +25,8 @@ export async function GET(request:Request,context:Context){try{
   else if(route==='databases/engines')result={engines:await remoteStorageEngines(id),isAdmin:user!.role==='admin'}
   else if(path[0]==='databases'&&path[1]==='servers'&&path.length===4&&path[3]==='databases'){requireRole(user,['admin']);result=await remoteServerDatabases(id,path[2])}
   else if(route==='data/services')result={services:await remoteStorageServices(id)}
+  else if(route==='data/migrations')result={migrations:await listRemoteMigrations(id,new URL(request.url).searchParams.get('project')||undefined)}
+  else if(path[0]==='data'&&path[1]==='migrations'&&path.length===3){const migration=(await listRemoteMigrations(id)).find(m=>m.id===path[2]);if(!migration)throw new ApiError('Migration not found',404);result={migration}}
   else if(route==='databases/discover')result={discovered:await discoverRemoteStorage(id,new URL(request.url).searchParams.get('project')||undefined)}
   else if(route==='databases/renames')result={renames:await listRemoteStorageRenames(id)}
   else if(path[0]==='databases'&&path[1]==='moves'&&path.length===3)result=await remoteStorageMove(id,path[2])
@@ -47,6 +50,9 @@ async function mutate(request:Request,context:Context){try{
   requireRole(user,request.method==='POST'&&path.length===4&&path[0]==='apps'&&path[2]==='data-services'&&path[3]==='sync-env'?['admin','operator']:['admin']);requireSameOrigin(request)
   const route=path.join('/'),body=request.headers.get('content-type')?.includes('application/json')?await readBody(request,100000):{}
   const result=await updateProtected('Remote storage admission',async()=>{
+    if(route==='data/migrations/preview'&&request.method==='POST')return previewRemoteMigration(id,body,user!.id)
+    if(route==='data/migrations'&&request.method==='POST')return startRemoteMigration(id,body,user!.id)
+    if(path[0]==='data'&&path[1]==='migrations'&&(path.length===3&&request.method==='DELETE'||path.length===4&&request.method==='POST'&&['cancel','activate','reconcile'].includes(path[3])))return changeRemoteMigration(id,path[2],request.method==='DELETE'?'delete':path[3],user!.id)
     if(route==='databases/engines/refresh'&&request.method==='POST')return refreshRemoteStorageInventory(id,user!.id)
     if(path[0]==='databases'&&path[1]==='engines'&&path.length===4&&path[3]==='restrict'&&request.method==='POST')return restrictRemoteStorageServer(id,path[2],user!.id)
     if(path[0]==='databases'&&path[1]==='servers'&&path[3]==='databases'&&(path.length===4&&request.method==='POST'||path.length===5&&request.method==='DELETE'))return changeRemoteServerDatabase(id,path[2],path[4],body,user!.id)

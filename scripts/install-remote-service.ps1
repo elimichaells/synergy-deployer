@@ -140,6 +140,11 @@ try{
       }
       $result.serviceName=$createdService;$result.password=$plan.databasePassword
       Remove-Item -LiteralPath $zip -Force
+    }elseif($plan.service -eq 'sling'){
+      Run $paths.node @((Join-Path $stage 'install-remote-tool.cjs'),$PlanFile,$target)
+      $paths.sling=Join-Path $target 'sling.exe'
+      $env:AWS_EC2_METADATA_DISABLED='true'
+      Run $paths.sling @('--version')
     }elseif($plan.service -in @('node','git','caddy')){
       $zip=Join-Path $target 'package.zip';Fetch-Verified $plan.downloads.($plan.service) $zip;Expand-Archive -LiteralPath $zip -DestinationPath (Join-Path $target 'binaries')
       if($plan.service -eq 'node'){$paths.node=(Get-ChildItem (Join-Path $target 'binaries\node-*\node.exe')|Select-Object -First 1).FullName}else{$paths[$tool]=Join-Path $target $(if($plan.service -eq 'git'){'binaries\cmd\git.exe'}else{'binaries\caddy.exe'})}
