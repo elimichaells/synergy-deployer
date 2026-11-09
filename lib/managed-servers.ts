@@ -82,6 +82,21 @@ export async function addServer(body: Record<string, unknown>, userId: string) {
   return { id: rows[0].id, enrollmentToken, expiresInMinutes: 60 }
 }
 
+export async function renameServer(id: string, body: Record<string, unknown>, userId: string) {
+  uuid(id)
+  const name = text(body.name, 'server name')
+  if (typeof body.previousName !== 'string' || body.previousName.length > 100) throw new ApiError('The current server name is required', 400)
+  await ensureManagedServers()
+  // Compare the displayed name to avoid silently overwriting another administrator's rename.
+  const result = await query('update managed_servers set name=$2 where id=$1 and name=$3 returning id,name', [id, name, body.previousName])
+  if (!result.rowCount) {
+    if (!(await query('select id from managed_servers where id=$1', [id])).rowCount) throw new ApiError('Server not found', 404)
+    throw new ApiError('This server was renamed elsewhere. Refresh the page and try again with its current name.', 409)
+  }
+  if (name !== body.previousName) await audit(userId, 'server.rename', id, { previousName: body.previousName, name })
+  return result.rows[0] as { id: string; name: string }
+}
+
 export async function changeServer(id: string, action: unknown, userId: string) {
   await ensureManagedServers(); uuid(id)
   if (action === 'enrollment') {

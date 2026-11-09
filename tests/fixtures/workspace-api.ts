@@ -105,6 +105,7 @@ export async function POST(request: Request) {
   return result({ ok: true })
 }
 export async function PATCH(request: Request) {
+  const remote = await remoteServersFixture(request); if (remote) return remote
   const body = await request.json()
   const map: Record<string, string> = { projectType: 'project_type', runtimeVersions: 'runtime_versions', buildCmd: 'build_cmd', startCmd: 'start_cmd', deployScript: 'deploy_script', autoDeploy: 'auto_deploy' }
   for (const [key, value] of Object.entries(body)) state.project[map[key] || key] = value

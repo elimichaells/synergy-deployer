@@ -8,6 +8,7 @@ import { AppShell } from '@/components/layout/app-shell'
 import { Button } from '@/components/ui/button'
 import type { ManagedServer } from '@/lib/managed-server-types'
 import { RemoveServerDialog } from '@/components/infrastructure/remove-server-dialog'
+import { RenameServerDialog } from '@/components/infrastructure/rename-server-dialog'
 
 const gb = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`
 
@@ -59,7 +60,7 @@ function ServersWorkspace() {
         <p className="mt-2 text-xs">{server.app_count} app{server.app_count === 1 ? '' : 's'}</p>
         {server.metrics && <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted-foreground"><span>CPU {server.metrics.cpuPercent.toFixed(0)}%</span><span>Free memory {gb(server.metrics.memoryFree)}</span><span>Free disk {server.metrics.diskFree === null ? 'unavailable' : gb(server.metrics.diskFree)}</span><span>{server.metrics.hostname}</span></div>}
         <p className="mt-2 text-xs text-muted-foreground">{server.last_seen_at ? `Last seen ${new Date(server.last_seen_at).toLocaleString()}` : 'Waiting for enrollment'}</p>
-      </Link>{role === 'admin' && <div className="border-t border-border px-4 py-2"><RemoveServerDialog serverId={server.id} serverName={server.name} onRemoved={() => void load()} /></div>}</div>)}</div>
+      </Link>{role === 'admin' && <div className="flex flex-wrap gap-2 border-t border-border px-4 py-2"><RenameServerDialog serverId={server.id} serverName={server.name} onRenamed={() => void load()} /><RemoveServerDialog serverId={server.id} serverName={server.name} onRemoved={() => void load()} /></div>}</div>)}</div>
       <p className="text-xs leading-5 text-muted-foreground">Samples refresh every 15 seconds. A server is shown offline after 90 seconds without a heartbeat. Last reported values remain visible while offline. Existing applications continue running if Manager becomes unreachable.</p>
     </div>
   </AppShell>

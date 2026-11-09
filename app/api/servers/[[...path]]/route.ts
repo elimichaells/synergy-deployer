@@ -6,7 +6,8 @@ import { getSessionFromCookie } from '@/lib/auth'
 import { requireRole } from '@/lib/rbac'
 import { ApiError, jsonError } from '@/lib/api'
 import { readBody, requireSameOrigin } from '@/lib/request-body'
-import { addServer, cancelQueuedJob, changeServer, listServers, queueRemoteDeploy, saveRemoteApp, serverCertificate, serverDetail } from '@/lib/managed-servers'
+import { addServer, cancelQueuedJob, changeServer, listServers, queueRemoteDeploy, renameServer, saveRemoteApp, serverCertificate, serverDetail } from '@/lib/managed-servers'
+import { updateProtected } from '@/lib/update-maintenance'
 import { importRemoteApp, remoteSetup, remoteSetupEnvironment, changeRemoteSetup } from '@/lib/remote-app-setup'
 import { agentUpdateStatus, queueAgentUpdate, cancelAgentUpdate } from '@/lib/remote-agent-updates'
 
@@ -43,6 +44,17 @@ export async function GET(_request: Request, context: Context) {
     }
     if (parts.length === 1) return NextResponse.json({ ...await serverDetail(parts[0]), role: user!.role })
     throw new ApiError('Not found', 404)
+  } catch (error) { return jsonError(error) }
+}
+
+export async function PATCH(request: Request, context: Context) {
+  try {
+    const user = await getSessionFromCookie()
+    requireRole(user, ['admin']); requireSameOrigin(request)
+    const parts = (await context.params).path || []
+    if (parts.length !== 1) throw new ApiError('Not found', 404)
+    const body = await readBody(request, 4096)
+    return NextResponse.json(await updateProtected('Rename server', () => renameServer(parts[0], body, user!.id)), { headers: { 'Cache-Control': 'no-store' } })
   } catch (error) { return jsonError(error) }
 }
 

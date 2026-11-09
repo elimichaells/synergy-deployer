@@ -23,6 +23,14 @@ export async function remoteServersFixture(request: Request) {
   const pathname = new URL(request.url).pathname
   if (!pathname.startsWith('/api/servers')) return null
   const parts = pathname.slice('/api/servers'.length).split('/').filter(Boolean)
+  if(request.method==='PATCH' && parts.length===1) {
+    if(state.role!=='admin')return NextResponse.json({error:'Forbidden'},{status:403})
+    const server=state.servers.find(item=>item.id===parts[0]),body=await request.json()
+    if(!server)return NextResponse.json({error:'Server not found'},{status:404})
+    if(server.name!==body.previousName)return NextResponse.json({error:'The server name changed. Refresh and try again.'},{status:409})
+    if(typeof body.name!=='string'||!body.name.trim()||body.name.length>100||/[\x00-\x1f]/.test(body.name))return NextResponse.json({error:'Invalid server name'},{status:400})
+    server.name=body.name.trim();return NextResponse.json({id:server.id,name:server.name})
+  }
   if(parts[1]==='removal') {
     const server=state.servers.find(item=>item.id===parts[0])
     if(!server)return NextResponse.json({error:'Server not found'},{status:404})

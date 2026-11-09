@@ -84,6 +84,7 @@ test('guided setup routes enforce administrator mutations, protected environment
   let role='viewer',calls=0;
   const rbac=load('lib/rbac.ts',{'./api':{ApiError}}),bodyTools=load('lib/request-body.ts',{'@/lib/api':{ApiError}});
   const route=load('app/api/servers/[[...path]]/route.ts',{
+    '@/lib/update-maintenance':{updateProtected:(_name,work)=>work()},
     '@/lib/remote-agent-updates':{},
     '@/lib/auth':{getSessionFromCookie:async()=>role?{id:'fixture-user',role}:null},'@/lib/rbac':rbac,
     '@/lib/api':{ApiError,jsonError:error=>Response.json({error:error.message},{status:error.status||500})},'@/lib/request-body':bodyTools,
