@@ -26,6 +26,7 @@ async function run(){
   process.env.CADDY_ADMIN=`127.0.0.1:${admin}`;
   const caInfo=await fetch(`http://${process.env.CADDY_ADMIN}/pki/ca/local`,{headers:{Origin:`http://${process.env.CADDY_ADMIN}`}});assert.equal(caInfo.status,200,await caInfo.clone().text());
   const caDetails=await caInfo.json();assert.equal(typeof caDetails.root_certificate,'string',JSON.stringify(Object.keys(caDetails)));
+  assert.equal((await require('../../scripts/server-monitor.cjs').checkHttp('Caddy',`http://${process.env.CADDY_ADMIN}/config/`)).ok,true,'Caddy health inspection includes its required local Origin');
   const certificateRoute=load('app/api/system/local-ca/route.ts',{'@/lib/auth':{getSessionFromCookie:async()=>({role:'admin'})},'@/lib/rbac':{requireRole:()=>{}},'@/lib/api':{ApiError:Error,jsonError:error=>{throw error}}});
   const certificateResponse=await certificateRoute.GET();assert.equal(certificateResponse.status,200);assert.match(certificateResponse.headers.get('Content-Disposition'),/attachment/);
   const downloadedCa=await certificateResponse.text();assert.equal(new(require('node:crypto').X509Certificate)(downloadedCa).fingerprint256,new(require('node:crypto').X509Certificate)(ca).fingerprint256);assert.ok(!downloadedCa.includes('PRIVATE KEY'));
