@@ -5,7 +5,7 @@ import { repositoryPath } from '@/lib/git-provider-policy'
 import { getGitConnection, getGitHubConnectionToken } from '@/lib/github-connections'
 import { cleanInspection, REMOTE_SETUP_CAPABILITY } from '@/lib/remote-setup-policy'
 import { decryptSecret, encryptSecret } from '@/lib/secret-crypto'
-import { databaseEnvironment, jobSecrets, INFRASTRUCTURE_CAPABILITY, PROTOCOL_VERSION, CONSOLE_CAPABILITY, RUNTIME_CAPABILITY, validateRuntimeSelection, redact, sanitizeMetrics, validateApp } from '@/scripts/manager-agent.cjs'
+import { databaseEnvironment, jobSecrets, INFRASTRUCTURE_CAPABILITY, PROTOCOL_VERSION, CONSOLE_CAPABILITY, RUNTIME_CAPABILITY, LAN_CAPABILITY, validateLanSelection, validateRuntimeSelection, redact, sanitizeMetrics, validateApp } from '@/scripts/manager-agent.cjs'
 import { createHash, randomBytes, X509Certificate } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -191,7 +191,7 @@ export async function saveRemoteApp(serverId: string, appId: string | null, body
     if (appId && (await client.query('select id from remote_apps where id=$1 and server_id=$2 and guided_setup=true', [appId,serverId])).rowCount) throw new ApiError('Use guided setup to change this application', 409)
     if (appId && (await client.query("select id from remote_jobs where app_id=$1 and status in ('queued','running')", [appId])).rowCount) throw new ApiError('Wait for the active deployment before editing this app', 409)
     if(appId&&body.runtime_versions===undefined)app.runtime_versions=(await client.query('select runtime_versions from remote_apps where id=$1 and server_id=$2',[appId,serverId])).rows[0]?.runtime_versions||{}
-    try{validateRuntimeSelection(app.runtime_versions,server.rows[0].metrics)}catch(error){throw new ApiError((error as Error).message,409)}
+    try{validateRuntimeSelection(app.runtime_versions,server.rows[0].metrics);validateLanSelection(app.hostname,server.rows[0].metrics)}catch(error){throw new ApiError((error as Error).message,409)}
     const collision = await client.query(`select name from remote_apps where server_id=$1 and ($2::uuid is null or id<>$2)
       and (hostname=$3 or port=$4 or port=$5 or ip_port=$4 or ip_port=$5)`, [serverId, appId, app.hostname, app.port, app.ip_port])
     if (collision.rowCount) throw new ApiError('Hostname or port is already assigned to another app on this server', 409)
@@ -237,6 +237,7 @@ export async function queueRemoteDeploy(serverId: string, appId: string, userId:
     const app = (await client.query('select * from remote_apps where id=$1 and server_id=$2', [appId, serverId])).rows[0]
     if (!app) throw new ApiError('App not found', 404)
     if (app.guided_setup && !app.setup_completed_at) throw new ApiError('Complete guided setup and server checks before deploying this environment', 409)
+    validateLanSelection(app.hostname,server.metrics)
     if (app.guided_setup && !server.metrics?.capabilities?.includes(REMOTE_SETUP_CAPABILITY)) throw new ApiError('Update the agent before deploying this guided application',409)
     if ((await client.query("select id from remote_jobs where app_id=$1 and status in ('queued','running')", [appId])).rowCount) throw new ApiError('This app already has a queued or running deployment', 409)
     if (app.git_connection_id !== before.git_connection_id) throw new ApiError('Git connection changed. Retry deployment.', 409)
@@ -244,7 +245,7 @@ export async function queueRemoteDeploy(serverId: string, appId: string, userId:
     const database = app.database_config?.status === 'ready' && app.database_ciphertext ? JSON.parse(decryptSecret(app.database_ciphertext)) : null
     const environment = { ...JSON.parse(decryptSecret(app.env_ciphertext)), ...(database ? databaseEnvironment(database) : {}) }
     try{validateRuntimeSelection(app.runtime_versions||{},server.metrics)}catch(error){throw new ApiError((error as Error).message,409)}
-    const payload = { ...validateApp({ ...app, environment }), id: app.id, git, project_type: app.project_type, requiredCapability: Object.keys(app.runtime_versions||{}).length?RUNTIME_CAPABILITY:app.guided_setup ? REMOTE_SETUP_CAPABILITY : null }
+    const payload = { ...validateApp({ ...app, environment }), id: app.id, git, project_type: app.project_type, requiredCapability: /^\[|^[0-9.]+(?::[0-9]+)?$/.test(app.hostname)?LAN_CAPABILITY:Object.keys(app.runtime_versions||{}).length?RUNTIME_CAPABILITY:app.guided_setup ? REMOTE_SETUP_CAPABILITY : null }
     const result = await client.query(`insert into remote_jobs (server_id,app_id,user_id,payload_ciphertext) values ($1,$2,$3,$4) returning id`,
       [serverId, appId, userId, encryptSecret(JSON.stringify(payload))])
     jobId = result.rows[0].id

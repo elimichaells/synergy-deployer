@@ -21,7 +21,7 @@ export function managerUrl(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 export function isManagerAddress(address: string): boolean {
-  return normalizeManagerAddress(address) === normalizeManagerAddress(process.env.MANAGER_DOMAIN || 'deploy.smartcloudgh.com')
+  try { return normalizeManagerAddress(address) === normalizeManagerAddress(process.env.MANAGER_DOMAIN || 'deploy.smartcloudgh.com') } catch { return false }
 }
 
 export function managerUsesLocalTls(address: string): boolean {

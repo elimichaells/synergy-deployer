@@ -12,8 +12,10 @@ const { randomBytes, X509Certificate, createHash } = require('node:crypto');
 const { rootCertificates } = require('node:tls');
 const { createInterface } = require('node:readline/promises');
 const PROTOCOL_VERSION = 1;
-const AGENT_VERSION = '1.7.0';
+const AGENT_VERSION = '1.8.0';
+const LAN_CAPABILITY = 'lan-ip-v1';
 const resources = require('./manager-agent-resources.cjs');
+const { parseLanAddress, lanCaddyDirectives, assertLanInterface } = require('./lan-address.cjs');
 const INFRASTRUCTURE_CAPABILITY = 'remote-infrastructure-v1';
 const CONSOLE_CAPABILITY = 'remote-console-v1';
 const RUNTIME_CAPABILITY = 'runtime-versions-v1';
@@ -107,11 +109,13 @@ function validateApp(input) {
   const health_path = input.health_path || '/';
   if (typeof health_path !== 'string' || !/^\/(?!\/)[^\s\\#]*$/.test(health_path) || health_path.length > 500) throw new Error('Health path must start with /');
   if (!['lan','wan'].includes(input.access_mode)) throw new Error('Choose LAN or WAN access');
-  const hostname = requireText(input.hostname, 'hostname', 253).toLowerCase();
-  if (!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(hostname)) throw new Error('Use a complete hostname, such as library.campus.example.edu');
+  let hostname = requireText(input.hostname, 'hostname or private LAN address', 253).toLowerCase();
+  const lan = parseLanAddress(hostname);
+  if(lan){if(input.access_mode!=='lan')throw Error('Private IP addresses require LAN access');if(lan.port===appPort)throw Error('LAN HTTPS port must differ from the application port');hostname=lan.authority;}
+  else if (!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(hostname)) throw new Error('Use a complete hostname or private LAN IP with its HTTPS port');
   if (input.access_mode === 'wan' && /\.(local|localhost|internal|test|invalid|example|lan|home|arpa)$/.test(hostname)) throw new Error('WAN mode requires a public DNS domain');
   const ip_address = typeof input.ip_address === 'string' ? input.ip_address.trim() : '';
-  let ip_port = null;
+  let ip_port = lan ? lan.port : null;
   if (ip_address) {
     if (!net.isIP(ip_address) || ip_address.includes('%')) throw new Error('Invalid IP access address');
     ip_port = port(input.ip_port, 'IP HTTPS port');
@@ -142,6 +146,9 @@ function validateRuntimeSelection(value,metrics){
   if(Object.keys(selected).length&&!metrics?.capabilities?.includes(RUNTIME_CAPABILITY))throw new Error('Update this server agent to enable project runtime versions');
   for(const [id,version] of Object.entries(selected))if(!metrics.runtimeVersions?.[id]?.includes(version))throw new Error(`${id} ${version} is not reported as installed on this server`);
   return selected;
+}
+function validateLanSelection(hostname,metrics){
+  if(parseLanAddress(hostname)&&!metrics?.capabilities?.includes(LAN_CAPABILITY))throw Error('Update this server agent to enable private LAN IP deployments');
 }
 async function runtimeEnvironment(root,selection={}) {
   const chosen=validateRuntimeVersions(selection),registry=await readJson(path.join(root,'runtime-versions.json'),{}),dirs=[],env={};
@@ -180,7 +187,7 @@ function sanitizeMetrics(raw) {
     caddy:raw.caddy?{mode:raw.caddy.mode==='shared'?'shared':'pm2',status:['running','stopped','unknown'].includes(raw.caddy.status)?raw.caddy.status:'unknown',configPath:str(raw.caddy.configPath,1024),version:str(raw.caddy.version)}:null,
     proxyError: raw.proxyError ? str(raw.proxyError, 500) : null,
     resources:resources.sanitize(raw.resources),
-    capabilities: [SETUP_CAPABILITY,UPDATE_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY].filter(value => Array.isArray(raw.capabilities) && raw.capabilities.includes(value)) };
+    capabilities: [LAN_CAPABILITY,SETUP_CAPABILITY,UPDATE_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY].filter(value => Array.isArray(raw.capabilities) && raw.capabilities.includes(value)) };
   if (result.memoryFree > result.memoryTotal || (result.diskFree !== null && result.diskTotal !== null && result.diskFree > result.diskTotal)) throw new Error('Invalid capacity');
   return result;
 }
@@ -211,7 +218,10 @@ function caddyConfig(apps, storageRoot) {
   const quotePath = JSON.stringify(storageRoot.replace(/\\/g, '/'));
   const sites = apps.map(raw => {
     const app = validateApp(raw);
-    const block = (address, internal) => `${address} {\n${internal ? '\ttls internal\n' : ''}\treverse_proxy 127.0.0.1:${app.port}\n}\n`;
+    const block = (address, internal) => {
+      const lan=lanCaddyDirectives(address.replace(/^https:\/\//,''));
+      return `${address} {\n${internal ? '\ttls internal\n' : ''}${lan}${lan?'\thandle {\n':''}\treverse_proxy 127.0.0.1:${app.port}\n${lan?'\t}\n':''}}\n`;
+    };
     const ip = net.isIP(app.ip_address) === 6 ? `[${app.ip_address}]` : app.ip_address;
     return block(`https://${app.hostname}`, app.access_mode === 'lan') + (ip ? block(`https://${ip}:${app.ip_port}`, true) : '');
   });
@@ -440,7 +450,8 @@ async function sharedProxyConfig(root,text,tools,settings) {
 async function managedCaddyConfig(root,apps,domains) {
   apps=await resources.proxyApps(root,apps,resourceHelpers());
   domains=domains||await readJson(path.join(root,'domains.json'),{});
-  const aliases=Object.values(domains).flatMap(domain=>{const app=apps.find(a=>a.id===domain.appId);return app&&app.hostname!==domain.hostname?[{...app,hostname:domain.hostname,access_mode:'wan',ip_address:'',ip_port:null}]:[]});
+  const aliases=Object.values(domains).flatMap(domain=>{const app=apps.find(a=>a.id===domain.appId);return app&&app.hostname!==domain.hostname?[{...app,hostname:domain.hostname,access_mode:parseLanAddress(domain.hostname)?'lan':'wan',ip_address:'',ip_port:null}]:[]});
+  for(const app of [...apps,...aliases])assertLanInterface(app.hostname,os.networkInterfaces());
   return caddyConfig([...apps,...aliases],path.join(root,'caddy-storage'));
 }
 
@@ -636,7 +647,7 @@ async function infrastructureJob(root,job,tools,log) {
   const saved=await readJson(path.join(root,'apps.json'),{});
   if(action==='domain'){
     const domain=job.payload.domain;
-    if(!ID.test(id)||!saved[id]||!ID.test(domain?.id)||typeof domain.hostname!=='string'||!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain.hostname))throw Error('Invalid managed domain');
+    if(!ID.test(id)||!saved[id]||!ID.test(domain?.id)||typeof domain.hostname!=='string'||(!parseLanAddress(domain.hostname)&&!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain.hostname)))throw Error('Invalid managed domain');
     const file=path.join(root,'domains.json'),previous=await readJson(file,{}),next={...previous};
     if(previous[domain.id]&&(previous[domain.id].appId!==id||previous[domain.id].hostname!==domain.hostname))throw Error('Domain ownership changed');
     if(domain.remove){
@@ -832,7 +843,7 @@ async function runAgent(root) {
   let heartbeatBusy=false;
   const pulse=async()=>{
     if(heartbeatBusy)return;heartbeatBusy=true;
-    try{const data=await sample(root,tools,prior);prior=data.cpu;data.metrics.capabilities=[SETUP_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY,...(supervised?[UPDATE_CAPABILITY]:[])];await request(config,'heartbeat',{protocol:PROTOCOL_VERSION,metrics:data.metrics,caPem:data.caPem});send({type:'heartbeat',version:AGENT_VERSION,metrics:data.metrics});}
+    try{const data=await sample(root,tools,prior);prior=data.cpu;data.metrics.capabilities=[LAN_CAPABILITY,SETUP_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY,...(supervised?[UPDATE_CAPABILITY]:[])];await request(config,'heartbeat',{protocol:PROTOCOL_VERSION,metrics:data.metrics,caPem:data.caPem});send({type:'heartbeat',version:AGENT_VERSION,metrics:data.metrics});}
     finally{heartbeatBusy=false;}
   };
   const describe=error=>console.error(`[agent] ${redact(error.message,[config.agentToken])}`);
@@ -1098,5 +1109,5 @@ async function main(){
 
 function resourceHelpers(){return {run,readJson,atomicJson,contained,processList,healthy,baseEnv,proxyConfig,managedCaddyConfig,redact};}
 
-module.exports={managedCaddyConfig,sampleApplications,infrastructureJob,INFRASTRUCTURE_CAPABILITY,toolVersion,validateRuntimeSelection,RUNTIME_CAPABILITY,validateRuntimeVersions,runtimeEnvironment,installedRuntimeVersions,CONSOLE_CAPABILITY,consoleJob,PROTOCOL_VERSION,AGENT_VERSION,SETUP_CAPABILITY,UPDATE_CAPABILITY,validateApp,sanitizeMetrics,redact,streamRedactor,caddyConfig,managerAddress,contained,run,request,deploy,restoreActivation,healthy,atomicJson,readJson,enrollCli,detectFramework,inspectRepository,validateDatabase,databaseEnvironment,setupDatabase,validateSetup,jobSecrets,findStaticRoot,serveStatic,loadToolPaths,checkConfiguredTools,privatePm2Environment,findTools,proxyConfig,sharedProxySettings,sharedProxyState,configDigest};
+module.exports={LAN_CAPABILITY,validateLanSelection,managedCaddyConfig,sampleApplications,infrastructureJob,INFRASTRUCTURE_CAPABILITY,toolVersion,validateRuntimeSelection,RUNTIME_CAPABILITY,validateRuntimeVersions,runtimeEnvironment,installedRuntimeVersions,CONSOLE_CAPABILITY,consoleJob,PROTOCOL_VERSION,AGENT_VERSION,SETUP_CAPABILITY,UPDATE_CAPABILITY,validateApp,sanitizeMetrics,redact,streamRedactor,caddyConfig,managerAddress,contained,run,request,deploy,restoreActivation,healthy,atomicJson,readJson,enrollCli,detectFramework,inspectRepository,validateDatabase,databaseEnvironment,setupDatabase,validateSetup,jobSecrets,findStaticRoot,serveStatic,loadToolPaths,checkConfiguredTools,privatePm2Environment,findTools,proxyConfig,sharedProxySettings,sharedProxyState,configDigest};
 if(require.main===module)main().catch(error=>{console.error(error.message);process.exitCode=1;});

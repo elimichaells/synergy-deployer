@@ -8,6 +8,7 @@ import { Switch } from '@/components/ui/switch'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { ChoiceCard, Section, roleLabels } from './section'
 import { cn } from '@/lib/utils'
+import { LanAccessFields } from './lan-access-fields'
 
 interface Domain { id: string; hostname: string; dns_status: string; ssl_status: string; record_type: string; record_content: string; is_primary: boolean; cloudflare_connection_id: string | null }
 interface Route { id: string; domain_id: string; hostname: string; domain_project_id: string; domain_project_name: string; project_id: string; project_name: string; component_role: string; path_prefix: string; strip_prefix: boolean }
@@ -32,7 +33,7 @@ export function DomainsPanel({ projectId, projectName, port, environment, role, 
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
-  const [form, setForm] = useState({ mode: 'manual', hostname: '', cloudflareConnectionId: '', recordType: 'A', recordContent: '', proxied: true, isPrimary: true })
+  const [form, setForm] = useState({ mode: 'manual', hostname: '', lanIp:'',lanPort:'8443',cloudflareConnectionId: '', recordType: 'A', recordContent: '', proxied: true, isPrimary: true })
   const [route, setRoute] = useState({ domainId: '', pathPrefix: '/api', stripPrefix: false })
   const isAdmin = role === 'admin'
 
@@ -102,7 +103,7 @@ export function DomainsPanel({ projectId, projectName, port, environment, role, 
       {error && <div role="alert" className="notice-error">{error}</div>}
       <Section
         title="Domains"
-        description="Public addresses for this application. Synergy routes them to the app and issues HTTPS certificates automatically."
+        description="Public domains or private LAN IPs for this application, with HTTPS on the selected server."
         action={<Button size="sm" onClick={openAdd} disabled={!isAdmin || !port}><Plus className="mr-1.5 h-4 w-4" />Add domain</Button>}
         footer={!port ? <span>Assign a port in Settings before adding a domain.</span> : !isAdmin ? <span>An administrator can add or remove domains.</span> : undefined}
       >
@@ -122,7 +123,7 @@ export function DomainsPanel({ projectId, projectName, port, environment, role, 
                     <a href={`https://${domain.hostname}`} target="_blank" rel="noreferrer" className="flex min-w-0 items-center gap-1.5 truncate text-sm font-medium hover:underline">{domain.hostname}<ArrowUpRight className="h-3.5 w-3.5 shrink-0" /></a>
                     {domain.is_primary && <span className="rounded-full border border-white/15 bg-white/[0.06] px-2 py-px text-[11px] font-medium">Primary</span>}
                     <span className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
-                      <span>{domain.cloudflare_connection_id ? 'Cloudflare' : 'Manual DNS'}</span>
+                      <span>{domain.dns_status==='lan' ? 'Institution LAN · local CA' : domain.cloudflare_connection_id ? 'Cloudflare' : 'Manual DNS'}</span>
                       <span>DNS <span className={statusTone(domain.dns_status)}>{domain.dns_status}</span></span>
                       <span>TLS <span className={statusTone(domain.ssl_status)}>{domain.ssl_status}</span></span>
                       {isAdmin && <button type="button" onClick={() => void removeDomain(domain)} disabled={busy} className="rounded p-1 hover:bg-white/[0.06] hover:text-red-300" aria-label={`Remove ${domain.hostname}`}><Trash2 className="h-3.5 w-3.5" /></button>}
@@ -184,26 +185,27 @@ export function DomainsPanel({ projectId, projectName, port, environment, role, 
 
       <Sheet open={addOpen} onOpenChange={setAddOpen}>
         <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
-          <SheetHeader><SheetTitle>Add a domain</SheetTitle><SheetDescription>{projectName} · HTTPS is set up automatically once DNS points at this server</SheetDescription></SheetHeader>
+          <SheetHeader><SheetTitle>Add an address</SheetTitle><SheetDescription>{projectName} · Choose a private LAN IP or a public domain</SheetDescription></SheetHeader>
           <form className="mt-6 space-y-5" onSubmit={event => { event.preventDefault(); void addDomain() }}>
-            <label className="field-label">Domain<input required className="control-input" value={form.hostname} onChange={event => setForm({ ...form, hostname: event.target.value })} placeholder={suggestedHost || 'app.example.com'} /></label>
+            {form.mode!=='lan'&&<label className="field-label">Domain<input required className="control-input" value={form.hostname} onChange={event => setForm({ ...form, hostname: event.target.value })} placeholder={suggestedHost || 'app.example.com'} /></label>}
             {suggestedHost && <p className="-mt-3 text-xs text-muted-foreground">Suggested from your project: <button type="button" className="font-mono text-foreground hover:underline" onClick={() => setForm({ ...form, hostname: suggestedHost })}>{suggestedHost}</button></p>}
             <div className="grid gap-2" role="radiogroup" aria-label="DNS management">
+              <ChoiceCard selected={form.mode === 'lan'} onSelect={() => setForm({ ...form, mode: 'lan' })} icon={<Globe2 className="h-4 w-4" />} title="Institution LAN / private IP" description="Use a local server IP without a domain or Cloudflare." />
               <ChoiceCard selected={form.mode === 'manual'} onSelect={() => setForm({ ...form, mode: 'manual' })} icon={<Globe2 className="h-4 w-4" />} title="I'll update DNS myself" description="Add the record at your DNS provider. Synergy shows you exactly what to enter." />
               <ChoiceCard selected={form.mode === 'cloudflare'} onSelect={() => setForm({ ...form, mode: 'cloudflare' })} disabled={!connections.length} icon={<Cloud className="h-4 w-4" />} title="Let Synergy manage it in Cloudflare" description={connections.length ? 'Creates the DNS record for you.' : 'Connect a Cloudflare account in Domains first.'} />
             </div>
             {form.mode === 'cloudflare' && <label className="field-label">Cloudflare account<select required className="control-input" value={form.cloudflareConnectionId} onChange={event => setForm({ ...form, cloudflareConnectionId: event.target.value })}><option value="">Select account</option>{connections.map(connection => <option key={connection.id} value={connection.id}>{connection.name}</option>)}</select></label>}
-            <div className="grid gap-4 sm:grid-cols-[110px_minmax(0,1fr)]">
+            {form.mode==='lan'?<LanAccessFields ip={form.lanIp} port={form.lanPort} onChange={value=>setForm({...form,...value})}/>:<div className="grid gap-4 sm:grid-cols-[110px_minmax(0,1fr)]">
               <label className="field-label">Record<select className="control-input" value={form.recordType} onChange={event => setForm({ ...form, recordType: event.target.value })}>{['A', 'AAAA', 'CNAME'].map(type => <option key={type}>{type}</option>)}</select></label>
               <label className="field-label">{form.recordType === 'CNAME' ? 'Points to hostname' : "This server's public IP"}<input required className="control-input font-mono" value={form.recordContent} onChange={event => setForm({ ...form, recordContent: event.target.value })} placeholder={form.recordType === 'CNAME' ? 'origin.example.com' : form.recordType === 'AAAA' ? '2001:db8::1' : '203.0.113.10'} /></label>
-            </div>
+            </div>}
             <div className="divide-y divide-border rounded-lg border border-border">
               <label className="flex items-center justify-between gap-4 px-4 py-3 text-sm"><span><span className="block font-medium">Primary domain</span><span className="block text-xs text-muted-foreground">Shown as this app&apos;s address everywhere in Synergy.</span></span><Switch checked={form.isPrimary} onCheckedChange={isPrimary => setForm({ ...form, isPrimary })} /></label>
               {form.mode === 'cloudflare' && <label className="flex items-center justify-between gap-4 px-4 py-3 text-sm"><span><span className="block font-medium">Cloudflare proxy</span><span className="block text-xs text-muted-foreground">Orange cloud: CDN and DDoS protection in front of this server.</span></span><Switch checked={form.proxied} onCheckedChange={proxied => setForm({ ...form, proxied })} /></label>}
             </div>
-            <p className={cn('rounded-md border border-border bg-white/[0.02] px-3 py-2 text-xs text-muted-foreground')}>Synergy will serve <span className="font-mono text-foreground">{form.hostname || 'your domain'}</span> from port <span className="font-mono text-foreground">{port}</span>{form.mode === 'manual' ? '. No DNS changes are made for you.' : ' and create the DNS record in Cloudflare.'}</p>
+            <p className={cn('rounded-md border border-border bg-white/[0.02] px-3 py-2 text-xs text-muted-foreground')}>Synergy routes this address to application port <span className="font-mono text-foreground">{port}</span>{form.mode === 'cloudflare' ? ' and creates the DNS record in Cloudflare.' : '. No public DNS changes are made.'}</p>
             {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
-            <Button type="submit" className="w-full" disabled={busy || !form.hostname || !form.recordContent || (form.mode === 'cloudflare' && !form.cloudflareConnectionId)}>{busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Globe2 className="mr-2 h-4 w-4" />}Add domain</Button>
+            <Button type="submit" className="w-full" disabled={busy || (form.mode==='lan'? !form.lanIp||!form.lanPort : !form.hostname||!form.recordContent) || (form.mode === 'cloudflare' && !form.cloudflareConnectionId)}>{busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Globe2 className="mr-2 h-4 w-4" />}Add address</Button>
           </form>
         </SheetContent>
       </Sheet>

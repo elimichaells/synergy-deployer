@@ -47,7 +47,7 @@ test('database service discovery, configuration and data preservation guards', {
         $config = Join-Path $base 'custom config.ini'
         [IO.File]::WriteAllText($config, '[mysqld]')
         foreach ($argument in @(('--defaults-file="' + $config + '"'), ('"--defaults-file=' + $config + '"'), ('--defaults-file "' + $config + '"'))) {
-            Check ((Get-DatabaseDefaultsFile 'C:\\mysql\\mysqld.exe' ('"C:\\mysql\\mysqld.exe" ' + $argument + ' CustomService') '') -eq $config) 'Quoted service configuration path was truncated'
+            Check ((Get-DatabaseDefaultsFile 'C:\\mysql\\mysqld.exe' ('"C:\\mysql\\mysqld.exe" ' + $argument + ' CustomService') '') -eq (Get-Item -LiteralPath $config).FullName) 'Quoted service configuration path was truncated'
         }
         Remove-Item -LiteralPath $config
         $marker = Join-Path $base 'existing-user-data.txt'

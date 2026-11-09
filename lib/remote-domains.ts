@@ -6,6 +6,7 @@ import { cfRequest,ensureCloudflareSchema,getZone,hostname,secretConnection,zone
 import { decryptSecret } from './secret-crypto'
 import { serverDetail,uuid } from './managed-servers'
 import { queueInfrastructure } from './remote-infrastructure'
+import { lanAddress, parseLanAddress } from '../scripts/lan-address.cjs'
 
 async function domainRow(serverId:string,id:string){await ensureCloudflareSchema();uuid(serverId);uuid(id);const row=(await query('select * from remote_domains where server_id=$1 and id=$2',[serverId,id])).rows[0];if(!row)throw new ApiError('Domain not found on this server',404);return row}
 export async function listRemoteDomains(serverId:string){
@@ -32,7 +33,9 @@ async function queueRoute(row:Record<string,any>,userId:string,remove=false){
 async function createDomain(serverId:string,input:Record<string,unknown>,userId:string){
   await ensureCloudflareSchema();const {apps}=await serverDetail(serverId),projectId=uuid(input.projectId),app=apps.find(a=>a.id===projectId)
   if(!app?.live_commit)throw new ApiError('Deploy the selected application before adding a domain',409)
-  const name=hostname(input.hostname),type=String(input.recordType||'A'),content=String(input.recordContent||'').trim(),manual=input.mode==='manual'
+  const lan=input.mode==='lan'?lanAddress(input.lanIp,input.lanPort||8443):null
+  const name=lan?lan.authority:hostname(input.hostname),type=lan?(lan.family===6?'AAAA':'A'):String(input.recordType||'A'),content=lan?lan.ip:String(input.recordContent||'').trim(),manual=input.mode==='manual'||!!lan
+  if(lan&&apps.some(a=>a.port===lan.port||a.ip_port===lan.port&&a.hostname!==name))throw new ApiError('This LAN HTTPS port is already assigned on the server',409)
   if(!['A','AAAA','CNAME'].includes(type)||type==='A'&&isIP(content)!==4||type==='AAAA'&&isIP(content)!==6||!content)throw new ApiError('Enter a valid DNS record target',400)
   if(type==='CNAME')hostname(content)
   if(apps.some(a=>a.id!==projectId&&a.hostname===name)||(await query('select id from project_domains where hostname=$1 union all select id from remote_domains where hostname=$1',[name])).rowCount)throw new ApiError('This hostname is already assigned',409)
@@ -49,11 +52,11 @@ async function syncDomain(serverId:string,id:string,userId:string){
     if(!job||['failed','cancelled'].includes(job.status)){await queueRoute(row,userId);row=await domainRow(serverId,id)}
     await waitRoute(serverId,id)
     if(row.is_primary){
-      const changed=await query("update remote_apps set hostname=$3,access_mode='wan' where id=$1 and server_id=$2 and hostname in ($3,$4)",[row.project_id,serverId,row.hostname,row.previous_hostname]);
+      const changed=await query("update remote_apps set hostname=$3,access_mode=$5 where id=$1 and server_id=$2 and hostname in ($3,$4)",[row.project_id,serverId,row.hostname,row.previous_hostname,parseLanAddress(row.hostname)?'lan':'wan']);
       if(!changed.rowCount)throw new ApiError('Application hostname changed during domain setup. Review it before retrying.',409)
       await query('update remote_domains set is_primary=false where project_id=$1 and id<>$2',[row.project_id,id])
     }
-    if(!row.cloudflare_connection_id){await query("update remote_domains set dns_status='manual',ssl_status='Route loaded',last_error=null where id=$1",[id]);return {ok:true}}
+    if(!row.cloudflare_connection_id){await query("update remote_domains set dns_status=$2,ssl_status=$3,last_error=null where id=$1",[id,parseLanAddress(row.hostname)?'lan':'manual',parseLanAddress(row.hostname)?'Local CA':'Route loaded']);return {ok:true}}
     const connection=await secretConnection(row.cloudflare_connection_id),token=decryptSecret(connection.token_ciphertext),base=`/zones/${row.cloudflare_zone_id}/dns_records`
     const comment=`Manager remote domain ${id}`
     let record:any
