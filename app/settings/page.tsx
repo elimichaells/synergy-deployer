@@ -236,14 +236,14 @@ function SettingsWorkspace() {
   </footer>
   const formSubmit = (event: FormEvent) => { event.preventDefault(); void handleSave() }
 
-  return <AppShell title="Settings" subtitle="Your account, your team, connected services and server defaults." user={user || undefined}>
+  return <AppShell title="Settings" subtitle="Your account, your team, shared connections and Manager host defaults." user={user || undefined}>
     <div className="grid min-w-0 gap-6 lg:grid-cols-[210px_minmax(0,1fr)] lg:gap-8">
       <aside className="min-w-0 lg:border-r lg:border-border lg:pr-5">
         <div className="lg:sticky lg:top-0">
           <label className="field-label lg:hidden">Settings section<select className="control-input" value={section} onChange={event => router.push('/settings?section=' + event.target.value, { scroll: false })}>{SETTINGS_SECTIONS.map(item => <option key={item.id} value={item.id}>{item.label}{dirtySections.some(dirty => dirty.id === item.id) ? ' (unsaved)' : ''}</option>)}</select></label>
           <nav aria-label="Settings sections" className="hidden space-y-5 lg:block">
             {(['Personal', 'Workspace', 'Server'] as const).map(group => <div key={group}>
-              <p className="mb-1.5 px-3 text-[11px] font-medium text-muted-foreground/80">{group}</p>
+              <p className="mb-1.5 px-3 text-[11px] font-medium text-muted-foreground/80">{group==='Server'?'Manager host':group}</p>
               <div className="space-y-0.5">{SETTINGS_SECTIONS.filter(item => item.group === group).map(item => { const Icon = icons[item.id]; const dirty = dirtySections.some(value => value.id === item.id); return <Link key={item.id} href={'/settings?section=' + item.id} scroll={false} aria-current={section === item.id ? 'page' : undefined} className={`flex items-center gap-2.5 rounded-md px-3 py-2 text-[13px] transition-colors ${section === item.id ? 'bg-white/[0.07] text-foreground' : 'text-muted-foreground hover:bg-white/[0.04] hover:text-foreground'}`}>
                 <Icon className="h-4 w-4 shrink-0" aria-hidden="true" /><span className="min-w-0 flex-1">{item.label}</span>{dirty && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" title="Unsaved changes"><span className="sr-only">Unsaved changes</span></span>}
               </Link> })}</div>

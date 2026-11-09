@@ -280,7 +280,7 @@ function ScopedDatabaseWorkspace({id}:{id:string}) {
         <TabsContent value="settings" className="mt-0 space-y-6">
           {isPostgres && access.isAdmin && <Section title="Rename database" description="Update this database's name while keeping its data. Review every app sharing it and update their saved environment files and connection settings afterward."
             action={<Button size="sm" variant="outline" onClick={() => setRenameOpen(true)}>Review rename</Button>} />}
-          {isPostgres && database.serverRole !== 'external' && <Section title="Move to another server" description="Make an exact copy on another PostgreSQL server on this machine with its own login, check it, and switch the apps over. The original is kept until you remove it."
+          {isPostgres && database.serverRole !== 'external' && <Section title="Move to another server" description="Make a copy on another registered PostgreSQL server with its own limited login, verify it, and switch the linked apps over. The original is preserved."
             action={<Button size="sm" variant="outline" onClick={() => setMoveOpen(true)}><Truck className="mr-1.5 h-3.5 w-3.5" />Plan the move</Button>} />}
           <Section title="Copy data to another database" description="Move this database to another server or engine, for example from Synergy's system server to the apps server. The copy is checked table by table and nothing here is changed.">
             <Button asChild size="sm" variant="outline"><Link href={appHref(owner.projectId)}>Open {owner.name}&apos;s storage to start</Link></Button>

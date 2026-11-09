@@ -4,14 +4,42 @@ on:
     paths:
       - 'scripts/remote-storage-*.cjs'
       - 'scripts/agent-*.cjs'
+      - 'scripts/postgres-*.cjs'
+      - 'scripts/database-env-rewrite.cjs'
       - 'lib/remote-storage*.ts'
       - 'tests/remote-storage*.test.cjs'
       - 'tests/agent-postgres-runtime.test.cjs'
+      - 'tests/fixtures/postgres-target.cjs'
+      - 'tests/fixtures/storage-change-manager.cjs'
       - '.github/workflows/remote-storage.yml'
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
+  postgres-moves:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y postgresql
+      - if: runner.os == 'Linux'
+        run: node tests/fixtures/run-remote-db.cjs "$(pg_config --bindir)" remote-storage-move remote-storage-switch
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (!$env:PGBIN -or !(Test-Path -LiteralPath (Join-Path $env:PGBIN 'initdb.exe'))) { throw 'PostgreSQL server tools are required for the isolated fixture.' }
+          node tests/fixtures/run-remote-db.cjs "$env:PGBIN" remote-storage-move remote-storage-switch
   providers:
     # MongoDB 8 refuses affected 6.19+ kernels (SERVER-121912). Keep the lab on
     # Ubuntu 22.04 (6.8 kernel) until SERVER-136848 is fixed in the 8.0 image.

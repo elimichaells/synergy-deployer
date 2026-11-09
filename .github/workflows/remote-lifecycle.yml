@@ -10,6 +10,8 @@ on:
       - 'tests/fixtures/*live-agent*.cjs'
       - 'tests/fixtures/manager-removal-lab.cjs'
       - 'tests/fixtures/live-database-switch.cjs'
+      - 'tests/fixtures/live-database-move.cjs'
+      - 'tests/fixtures/postgres-target.cjs'
       - 'tests/fixtures/storage-change-manager.cjs'
       - 'scripts/database-env-rewrite.cjs'
       - 'scripts/postgres-ownership.cjs'
@@ -38,21 +40,11 @@ jobs:
       - run: npm install --prefix "${{ runner.temp }}/manager-live-tools" --ignore-scripts --no-audit --no-fund pm2@${{ matrix.pm2 }}
       - run: node tests/fixtures/prepare-live-agent-lab.cjs
       - run: node --test tests/private-pm2-isolation.test.cjs tests/windows-pidusage.test.cjs
+      - run: node --test tests/pm2-compatibility.test.cjs
       - run: node --test tests/remote-live-lifecycle.test.cjs
   manager-receipt:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
-    services:
-      postgres:
-        image: postgres:18
-        env:
-          POSTGRES_USER: manager_lifecycle_test
-          POSTGRES_PASSWORD: isolated-lifecycle-fixture
-          POSTGRES_DB: manager_remote_test_lifecycle
-        ports: ['55439:5432']
-        options: >-
-          --health-cmd "pg_isready -U manager_lifecycle_test -d manager_remote_test_lifecycle"
-          --health-interval 5s --health-timeout 5s --health-retries 12
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,8 +53,7 @@ jobs:
         with:
           node-version: '24'
       - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: sudo apt-get update && sudo apt-get install -y postgresql
       - run: npm install --prefix "${{ runner.temp }}/manager-live-tools" --ignore-scripts --no-audit --no-fund pm2@7
       - run: node tests/fixtures/prepare-live-agent-lab.cjs
-      - run: node --require ./tests/register.cjs --test tests/remote-live-lifecycle.test.cjs
-        env:
-          MANAGER_REMOTE_TEST_DATABASE_URL: postgresql://manager_lifecycle_test:isolated-lifecycle-fixture@127.0.0.1:55439/manager_remote_test_lifecycle
+      - run: node tests/fixtures/run-remote-db.cjs "$(pg_config --bindir)" remote-live-lifecycle

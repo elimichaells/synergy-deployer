@@ -29,6 +29,11 @@ async function agentBundle(root = process.cwd()) {
     storageSwitch=storageSwitch.replace(`const ${binding}=require('./${file}.cjs');`,`const ${binding}=(()=>{const module={exports:{}};const exports=module.exports;\n${code}\nreturn module.exports;})();`);
   }
   resources=resources.replace("const storageSwitch = require('./remote-storage-switch.cjs');",`const storageSwitch=(()=>{const module={exports:{}};\n${storageSwitch}\nreturn module.exports;})();`);
+  const ownershipCode=await fs.readFile(path.join(root,'scripts/postgres-ownership.cjs'),'utf8');
+  const ownershipFactory=`(()=>{const module={exports:{}};const exports=module.exports;\n${ownershipCode}\nreturn module.exports;})()`;
+  const copyCode=(await fs.readFile(path.join(root,'scripts/postgres-copy.cjs'),'utf8')).replace("require('./postgres-ownership.cjs')",ownershipFactory);
+  const moveCode=(await fs.readFile(path.join(root,'scripts/remote-storage-move.cjs'),'utf8')).replace("require('./remote-storage-switch.cjs')",'storageSwitch').replace("require('./postgres-ownership.cjs')",ownershipFactory).replace("require('./postgres-copy.cjs')",`(()=>{const module={exports:{}};\n${copyCode}\nreturn module.exports;})()`);
+  resources=resources.replace("const storageMove = require('./remote-storage-move.cjs');",`const storageMove=(()=>{const module={exports:{}};\n${moveCode}\nreturn module.exports;})();`);
   resources=resources.replace("require('./manager-agent-windows-memory.cjs')",JSON.stringify(require('./manager-agent-windows-memory.cjs')));
   const diagnostics=await fs.readFile(path.join(root,'scripts/health-diagnostics.cjs'),'utf8');
   const health=(await fs.readFile(path.join(root,'scripts/http-health.cjs'),'utf8')).replace("const { readDiagnostics } = require('./health-diagnostics.cjs');",`const { readDiagnostics } = (()=>{const module={exports:{}};\n${diagnostics}\nreturn module.exports;})();`);

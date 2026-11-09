@@ -1,6 +1,7 @@
 'use strict';
 const storage = require('./remote-storage-agent.cjs');
 const storageSwitch = require('./remote-storage-switch.cjs');
+const storageMove = require('./remote-storage-move.cjs');
 // Runs only inside the selected agent. Never imports Manager's database, host
 // process manager or host paths. All application changes use its private PM2.
 const fs = require('node:fs/promises');
@@ -95,6 +96,7 @@ async function applyLaunchSettings(root,id,ecosystem,h) {
   await fs.writeFile(ecosystem,`module.exports=${JSON.stringify(await definition(root,id,ecosystem,launch,settings,h))};\n`,{mode:0o600});
 }
 async function recover(root,tools,h) {
+  if(await h.readJson(path.join(root,'database-move-active.json')))await storageMove.recover(root,tools,h,{pg:await storage.postgres(root,h),connection:storage.connection,applyLaunchSettings});
   if(await h.readJson(path.join(root,'database-change-active.json')))await storageSwitch.recover(root,tools,h,{pg:await storage.postgres(root,h),connection:storage.connection,applyLaunchSettings});
   const file=path.join(root,'resource-transaction.json'),tx=await h.readJson(file);
   if(!tx)return;
@@ -242,6 +244,7 @@ async function execute(root,job,tools,h) {
   if(input.action==='database-inspect')return inspectDatabases(root,input,h);
   if(input.action==='database-tune')return tuneDatabase(root,input,h);
   if(input.action==='storage'){
+    if(['move-plan','move','move-reconcile'].includes(input.operation))return storageMove.execute(root,input,tools,h,{pg:await storage.postgres(root,h),connection:storage.connection,applyLaunchSettings});
     if(['dedicated-plan','dedicated-user','dedicated-reconcile'].includes(input.operation))return storageSwitch.execute(root,input,tools,h,{pg:await storage.postgres(root,h),connection:storage.connection,applyLaunchSettings});
     return input.operation==='sync-env'?appChange(root,{...input,action:'database-env',id:input.serviceId},tools,h):storage.execute(root,input,h);
   }

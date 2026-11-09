@@ -114,8 +114,8 @@ export function WorkspaceBar({ title, context, onNew, onHashChange }: { title: s
       <div className="mx-auto flex min-h-8 max-w-[1240px] items-center gap-3 px-4 py-1.5 sm:px-6">
         <nav aria-label="Workspace location" className="min-w-0 flex-1"><ol className="flex items-center gap-1.5 overflow-hidden text-[11px] sm:gap-2 sm:text-xs">
           <li className="shrink-0"><Link href="/" className="text-muted-foreground hover:text-primary" aria-label="All servers"><LayoutGrid className="h-3.5 w-3.5" /></Link></li>
-          <li aria-hidden="true" className="shrink-0"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li>
-          <li className="max-w-40 shrink-0 truncate"><Link href={serverId === 'fleet' ? '/' : serverOverview(serverId)} className="font-medium text-primary">{serverTitle}</Link></li>
+          {serverId!=='fleet'&&<><li aria-hidden="true" className="shrink-0"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li>
+          <li className="max-w-40 shrink-0 truncate"><Link href={serverOverview(serverId)} className="font-medium text-primary">{serverTitle}</Link></li></>}
           {context?.project && <><li aria-hidden="true" className="hidden shrink-0 sm:block"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li><li className="hidden min-w-0 truncate sm:block"><Link href={context.project.href} className="text-muted-foreground hover:text-primary">{context.project.name}</Link></li></>}
           <li aria-hidden="true" className="shrink-0"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li><li className="min-w-0 truncate font-medium" aria-current={(isRemote && !hash.startsWith('#app-') && !remoteProject && !isStorage) || !sectionTitle ? 'page' : undefined}>{label}</li>
           {sectionTitle && (!isRemote || hash.startsWith('#app-') || remoteProject || isStorage) && <><li aria-hidden="true" className="shrink-0"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li><li className="shrink-0 text-muted-foreground" aria-current="page">{sectionTitle}</li></>}

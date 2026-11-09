@@ -10,6 +10,7 @@ function replacements(values,from,to){
       const url=new URL(value);
       if(hostKey(url.hostname)!==hostKey(from.host)||(Number(url.port)||5432)!==from.port||decodeURIComponent(url.pathname.slice(1))!==from.database||from.username&&decodeURIComponent(url.username)!==from.username)continue;
       url.hostname=to.host.includes(':')&&!to.host.startsWith('[')?`[${to.host}]`:to.host;url.port=String(to.port);url.pathname='/'+encodeURIComponent(to.database);url.username=to.username;url.password=to.password;
+      if(typeof to.tls==='boolean'&&(hostKey(to.host)!==hostKey(from.host)||to.port!==from.port||to.tls!==from.tls))url.searchParams.set('sslmode',to.tls?'verify-full':'disable');
       changed[key]=url.href;
     }catch{/* Leave non-URL values alone. */}
   }

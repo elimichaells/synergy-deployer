@@ -46,6 +46,7 @@ test('real remote deployment, workers, rollback, TLS routing, Git promotion and 
   const conflictPid=await pid(appId),pushCount=h.pushes();await assert.rejects(deploy({promotion:{stagingId:randomUUID(),sourceCommit:conflict,branch:'staging',mode:'merge'}}),/CONFLICT|merge failed/i);assert.equal(await pid(appId),conflictPid);assert.equal(h.pushes(),pushCount);
   await assert.rejects(action(appId,'detach'),/workers first/);
   if(process.env.MANAGER_REMOTE_TEST_DATABASE_URL)await require('./fixtures/live-database-switch.cjs')(t,h,appId,workerId,stoppedId);
+  if(process.env.MANAGER_REMOTE_TEST_DATABASE_URL&&process.env.MANAGER_REMOTE_TEST_PG_BIN)await require('./fixtures/live-database-move.cjs')(t,h,appId,workerId,stoppedId);
   await resource({action:'worker-delete',id:workerId});await resource({action:'worker-delete',id:stoppedId});
   const detach=process.env.MANAGER_REMOTE_TEST_DATABASE_URL?await require('./fixtures/manager-removal-lab.cjs')(t,[await state(appId),await state(peerId)]):null;
   const detachedPid=await pid(appId),receipt=detach?await detach(appId,job=>agent.infrastructureJob(h.root,job,h.tools,()=>{})):await action(appId,'detach');assert.equal(receipt.preservedResources,true);assert.equal(receipt.detachedAppId,appId);assert.equal(await pid(appId),detachedPid);assert.equal(await state(appId),undefined);

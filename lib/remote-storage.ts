@@ -218,6 +218,7 @@ export async function finishStorageOperation(client:PoolClient,serverId:string,j
   const resource=payload.resource
   if((parseServerDatabaseId(resource?.serviceId||'')?.connectionId||resource?.serviceId)!==job.resource_target)throw new ApiError('Database receipt does not match this operation',400)
   if(['dedicated-plan','dedicated-user','dedicated-reconcile'].includes(resource.operation)){await(await import('./remote-storage-changes')).finishRemoteStorageChange(client,serverId,resource,success,result);return}
+  if(['move-plan','move','move-reconcile'].includes(resource.operation)){await(await import('./remote-storage-move')).finishRemoteStorageMove(client,serverId,resource,success,result);return}
   if(['inventory','server-create','server-drop','restrict'].includes(resource.operation)){await(await import('./remote-storage-servers')).finishRemoteStorageServerOperation(client,serverId,resource,success,result);return}
   if(parseServerDatabaseId(resource.serviceId)&&['tables','rows','sql','rename-plan'].includes(resource.operation))return
   if(['rename','rename-reconcile'].includes(resource.operation)){await(await import('./remote-storage-rename')).finishRemoteStorageRename(client,serverId,resource,success,result);return}

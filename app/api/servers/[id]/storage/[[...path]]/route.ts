@@ -14,6 +14,7 @@ import {discoverRemoteStorage,adoptRemoteStorage} from '@/lib/remote-storage-dis
 import {reviewRemoteStorageRename,renameRemoteStorage,listRemoteStorageRenames,reconcileRemoteStorageRename} from '@/lib/remote-storage-rename'
 import {remoteStorageEngines,remoteServerDatabases,refreshRemoteStorageInventory,changeRemoteServerDatabase,restrictRemoteStorageServer} from '@/lib/remote-storage-servers'
 import {reviewRemoteDedicatedUser,changeRemoteDedicatedUser} from '@/lib/remote-storage-changes'
+import {reviewRemoteStorageMove,changeRemoteStorageMove,remoteStorageMove} from '@/lib/remote-storage-move'
 export const dynamic='force-dynamic'
 type Context={params:Promise<{id:string;path?:string[]}>}
 export async function GET(request:Request,context:Context){try{
@@ -25,6 +26,7 @@ export async function GET(request:Request,context:Context){try{
   else if(route==='data/services')result={services:await remoteStorageServices(id)}
   else if(route==='databases/discover')result={discovered:await discoverRemoteStorage(id,new URL(request.url).searchParams.get('project')||undefined)}
   else if(route==='databases/renames')result={renames:await listRemoteStorageRenames(id)}
+  else if(path[0]==='databases'&&path[1]==='moves'&&path.length===3)result=await remoteStorageMove(id,path[2])
   else if(route==='apps'){const {apps}=await serverDetail(id);result=apps.map(app=>({...app,environment:app.environment_name}))}
   else if(path[0]==='apps'&&path.length===3&&path[2]==='data-services')result={services:await remoteStorageServices(id,path[1])}
   else if(path[0]==='apps'&&path.length===4&&path[2]==='data-services'&&path[3]==='shareable'){
@@ -50,6 +52,7 @@ async function mutate(request:Request,context:Context){try{
     if(path[0]==='databases'&&path[1]==='servers'&&path[3]==='databases'&&(path.length===4&&request.method==='POST'||path.length===5&&request.method==='DELETE'))return changeRemoteServerDatabase(id,path[2],path[4],body,user!.id)
     if(route==='databases/adopt'&&request.method==='POST')return adoptRemoteStorage(id,String(body.projectId),body.source,user!.id)
     if(path[0]==='databases'&&path.length===3&&path[2]==='dedicated-user'&&request.method==='POST')return body.preview===true?reviewRemoteDedicatedUser(id,path[1],user!.id):changeRemoteDedicatedUser(id,path[1],body,user!.id)
+    if(path[0]==='databases'&&path.length===3&&path[2]==='move'&&request.method==='POST')return body.preview===true?reviewRemoteStorageMove(id,path[1],user!.id):changeRemoteStorageMove(id,path[1],body,user!.id)
     if(path[0]==='databases'&&path.length===3&&path[2]==='rename'&&request.method==='POST')return body.preview===true?reviewRemoteStorageRename(id,path[1],user!.id):renameRemoteStorage(id,path[1],body,user!.id)
     if(path[0]==='databases'&&path[1]==='renames'&&path.length===4&&path[3]==='reconcile'&&request.method==='POST')return reconcileRemoteStorageRename(id,path[2],user!.id)
     if(route==='data/connections'&&request.method==='POST')return createRemoteStorageConnection(id,body,user!.id)

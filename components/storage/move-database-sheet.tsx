@@ -8,6 +8,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { cn } from '@/lib/utils'
 
 interface Plan {
+  review?: string
   database: string; sizeBytes: number; targetDatabase: string; roleName: string
   source: { name: string; port: number; version: string | null }; target: { name: string; port: number; version: string | null } | null
   extensions: { name: string; schema: string }[]
@@ -43,39 +44,45 @@ export function MoveDatabaseSheet({ serviceId, open, onOpenChange, onDone }: { s
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState('')
   const [starting, setStarting] = useState(false)
+  const [recovery,setRecovery]=useState<{id:string;status:string}|null>(null)
   const timer = useRef<number | null>(null)
+  const poll=useRef<AbortController|null>(null)
 
   const follow = useCallback((id: string) => {
     if (timer.current) window.clearInterval(timer.current)
+    poll.current?.abort();const abort=new AbortController();poll.current=abort
     timer.current = window.setInterval(() => {
-      void fetch(`/api/storage/moves/${id}`, { cache: 'no-store' }).then(response => response.ok ? response.json() : null).then(body => {
-        if (!body?.move) return
+      void fetch(`/api/storage/moves/${id}`, { cache: 'no-store',signal:abort.signal }).then(response => response.ok ? response.json() : null).then(body => {
+        if (abort.signal.aborted||!body?.move) return
         setMove(body.move)
         if (body.move.status !== 'running') { if (timer.current) window.clearInterval(timer.current); timer.current = null; onDone() }
       }).catch(() => {})
     }, 2000)
-  }, [onDone])
+  }, [onDone,fetch])
 
-  useEffect(() => () => { if (timer.current) window.clearInterval(timer.current) }, [])
+  useEffect(() => () => { poll.current?.abort();if (timer.current) window.clearInterval(timer.current) }, [])
   useEffect(() => {
     if (!open) return
-    setPlan(null); setError(''); setConfirm('')
-    void fetch(`/api/storage/${serviceId}/move`, { cache: 'no-store' }).then(async response => {
+    const abort=new AbortController()
+    setPlan(null); setError(''); setConfirm('');setMove(null);setRecovery(null)
+    void fetch(`/api/storage/${serviceId}/move`, { cache: 'no-store',signal:abort.signal }).then(async response => {
       const body = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(body.error || 'Could not work out the move')
-      setPlan(body.plan); setCanMove(!!body.canMove); setMove(body.latest)
+      setPlan(body.plan); setCanMove(!!body.canMove); setMove(body.latest);setRecovery(body.recovery||null)
       if (body.latest?.status === 'running') follow(body.latest.id)
-    }).catch(err => setError((err as Error).message))
-  }, [open, serviceId, follow])
+    }).catch(err => {if(!abort.signal.aborted)setError((err as Error).message)})
+    return()=>{abort.abort();poll.current?.abort();if(timer.current)window.clearInterval(timer.current);timer.current=null}
+  }, [open, serviceId, follow,fetch])
 
   const start = async () => {
     setStarting(true); setError('')
     try {
-      const response = await fetch(`/api/storage/${serviceId}/move`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm }) })
+      const response = await fetch(`/api/storage/${serviceId}/move`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm,review:plan?.review,...(recovery?{reconcile:recovery.id}:{}) }) })
       const body = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(body.error || 'The move could not start')
-      setMove({ id: body.move.id, status: 'running', log: '', error: null, copy_path: null, started_at: new Date().toISOString(), finished_at: null })
-      follow(body.move.id)
+      setMove({ log: '', error: null, copy_path: null, started_at: new Date().toISOString(), finished_at: null,...body.move })
+      if(body.move.status==='running')follow(body.move.id)
+      else{setRecovery(null);onDone()}
     } catch (err) { setError((err as Error).message) } finally { setStarting(false) }
   }
 
@@ -85,13 +92,14 @@ export function MoveDatabaseSheet({ serviceId, open, onOpenChange, onDone }: { s
       <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
         <SheetHeader>
           <SheetTitle>Move to another server</SheetTitle>
-          <SheetDescription>Copies this database exactly to another PostgreSQL server on this machine, gives it its own login, and switches its apps over.</SheetDescription>
+          <SheetDescription>Copies this database to another registered PostgreSQL server, verifies the copy, gives it a limited login, and switches its linked apps over.</SheetDescription>
         </SheetHeader>
         <div className="mt-6 space-y-5">
-          {!plan && !error && <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Working out the move…</div>}
+          {!plan && !error && !recovery && !move && <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Working out the move…</div>}
           {error && <p role="alert" className="notice-error">{error}</p>}
 
           {move && <MoveLog move={move} />}
+          {recovery?.status==='needs_review'&&<div className="notice-warning space-y-3"><p>The connection ended before the outcome was confirmed. Verify the agent’s saved journal before making another database change.</p><Button disabled={starting} onClick={()=>void start()}>{starting?'Verifying…':'Verify recorded outcome'}</Button></div>}
 
           {plan && !running && move?.status !== 'succeeded' && <>
             <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border p-4 text-sm">
@@ -105,11 +113,11 @@ export function MoveDatabaseSheet({ serviceId, open, onOpenChange, onDone }: { s
             <div>
               <p className="mb-2 text-sm font-medium">What happens</p>
               <ol className="list-decimal space-y-1.5 pl-5 text-xs leading-5 text-muted-foreground">
-                <li>An empty {plan.targetDatabase} is created on {plan.target?.name ?? 'the target'}, owned by a new login that can only reach it{plan.extensions.length ? `, with ${plan.extensions.map(item => item.name).join(', ')}` : ''}.</li>
+                <li>An empty {plan.targetDatabase} is created on {plan.target?.name ?? 'the target'}, owned by a new limited login{plan.extensions.length ? `, with ${plan.extensions.map(item => item.name).join(', ')}` : ''}.</li>
                 <li>{plan.apps.filter(app => app.running).map(app => app.name).join(', ') || 'Its apps'} {plan.apps.filter(app => app.running).length === 1 ? 'is' : 'are'} stopped, with any workers, so nothing writes during the copy. Scheduled jobs wait.</li>
                 <li>An exact copy is made ({mb(plan.sizeBytes)}) and checked: every table&apos;s row count, every sequence, every view, function and index must match.</li>
                 <li>The apps&apos; env files are pointed at the copy (originals are saved), and the apps are started and health-checked.</li>
-                <li>If anything fails, the apps go back to the original, which is never changed, and the unfinished copy is removed.</li>
+                <li>If a step fails, Manager restores the previous app settings and checks that the unfinished copy can be removed safely. An uncertain recovery keeps the copy and asks for review.</li>
               </ol>
             </div>
 

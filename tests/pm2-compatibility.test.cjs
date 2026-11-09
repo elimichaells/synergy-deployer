@@ -14,6 +14,7 @@ test('updater, health monitor and recovery read the selected real PM2 daemon',{s
   await pm(['start',script,'--name','manager-compat-target','--interpreter',process.execPath]);
   await pm(['start',script,'--name','manager-compat-preserved','--interpreter',process.execPath]);
   const rows=await worker.processes(config);assert.equal(rows.length,2);
+  assert.ok(rows.every(p=>p.monit?.memory>0),'The real private daemon must report native process memory');
   const target=rows.find(p=>p.name==='manager-compat-target'),peer=rows.find(p=>p.name==='manager-compat-preserved');assert.ok(target.pid&&peer.pid);
   assert.equal((await monitor.readPm2(config)).find(p=>p.name===peer.name).pid,peer.pid);
   const inventory=await operations.callExisting(config,'inventory');assert.equal(inventory.length,2);assert.ok(inventory.every(p=>!p.pm2_env));

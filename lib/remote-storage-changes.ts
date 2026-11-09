@@ -13,7 +13,7 @@ import {hostKey,rewrite} from '../scripts/database-env-rewrite.cjs'
 type Row=Record<string,any>
 const hash=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const decode=(value:string)=>JSON.parse(decryptSecret(value))
-async function prepare(client:PoolClient,serverId:string,id:string){
+export async function prepareRemoteStorageChange(client:PoolClient,serverId:string,id:string){
   const item=await remoteStorageService(client,serverId,id)
   if(item.provider!=='postgresql'||!item.provisioning_enabled||item.status!=='ready')throw new ApiError('Choose a verified PostgreSQL database with a saved administrator connection',409)
   const services=(await client.query(`select s.*,c.host,c.port,c.provider from remote_storage_services s join remote_storage_connections c on c.id=s.connection_id and c.server_id=s.server_id where s.server_id=$1 order by s.id`,[serverId])).rows
@@ -42,7 +42,7 @@ export async function reviewRemoteDedicatedUser(serverId:string,id:string,actor:
     const pending=(await client.query("select id,status,error from remote_storage_changes where server_id=$1 and service_id=$2 and kind='dedicated-user' and status in ('running','needs_review') order by created_at desc limit 1",[serverId,uuid(id)])).rows[0]
     if(pending)return{plan:null,recovery:pending}
     await admitResource(client,serverId)
-    const {input,metadataHash}=await prepare(client,serverId,id),operationId=randomUUID(),payload={...input,operationId}
+    const {input,metadataHash}=await prepareRemoteStorageChange(client,serverId,id),operationId=randomUUID(),payload={...input,operationId}
     await client.query("insert into remote_storage_changes(id,server_id,service_id,kind,metadata_hash,payload_ciphertext,created_by) values($1,$2,$3,'dedicated-user',$4,$5,$6)",[operationId,serverId,id,metadataHash,encryptSecret(JSON.stringify(payload)),actor])
     const job=await enqueueResource(client,serverId,payload,actor,id)
     await client.query('update remote_storage_changes set job_id=$2 where id=$1',[operationId,job.jobId]);return job
@@ -61,7 +61,7 @@ export async function changeRemoteDedicatedUser(serverId:string,id:string,body:R
     }else{
       if(body.confirm!==true)throw new ApiError('Acknowledge the application restarts first',400)
       if(row.status!=='preview'||Date.now()-Date.parse(row.created_at)>600000)throw new ApiError('The database review expired. Refresh the checks.',409)
-      const current=await prepare(client,serverId,id),plan=decode(row.plan_private_ciphertext)
+      const current=await prepareRemoteStorageChange(client,serverId,id),plan=decode(row.plan_private_ciphertext)
       if(current.metadataHash!==row.metadata_hash)throw new ApiError('The database links or application settings changed. Refresh the checks.',409)
       if(plan.blockers?.length)throw new ApiError(plan.blockers.join(' '),409)
       input={...input,operation:'dedicated-user',agentReview:plan.agentReview,role:plan.roleName,password:randomBytes(32).toString('base64url')}
@@ -82,7 +82,7 @@ export async function finishRemoteStorageChange(client:PoolClient,serverId:strin
   if(result.accepted){
     const input=decode(row.payload_ciphertext)
     if(result.role!==input.role||!Array.isArray(result.apps)||result.apps.length!==input.apps.length)throw new ApiError('Database switch acknowledgement changed the reviewed account or applications',400)
-    const current=await prepare(client,serverId,row.service_id)
+    const current=await prepareRemoteStorageChange(client,serverId,row.service_id)
     if(current.metadataHash!==row.metadata_hash)throw new ApiError('Saved database settings changed during this operation. Reconcile before continuing.',409)
     const changed=await client.query("update remote_storage_services set username=$3,password_ciphertext=$4,pending_password_ciphertext=null,status='ready',options=options||'{\"ownership\":\"manager\"}'::jsonb,updated_at=now() where server_id=$1 and id=any($2::uuid[]) returning app_id",[serverId,input.serviceIds,input.role,encryptSecret(input.password)])
     if(changed.rowCount!==input.serviceIds.length)throw new ApiError('A database link changed during the switch',409)
