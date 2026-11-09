@@ -122,7 +122,7 @@ test('tool selection reloads keep PATH bounded and remove replaced directories',
   t.after(async()=>{process.env[key]=before;await fs.rm(root,{recursive:true,force:true})});
   await fs.mkdir(path.join(root,'first'));await fs.mkdir(path.join(root,'second'));
   const first=path.join(root,'first','node.exe'),second=path.join(root,'second','node.exe');
-  await fs.writeFile(first,'fixture');await fs.writeFile(second,'fixture');
+  await fs.writeFile(first,'fixture',{mode:0o700});await fs.writeFile(second,'fixture',{mode:0o700});
   await fs.writeFile(path.join(root,'tool-paths.json'),JSON.stringify({node:first}));
   await agent.loadToolPaths(root);const initial=process.env[key];
   for(let i=0;i<50;i++)await agent.loadToolPaths(root);
