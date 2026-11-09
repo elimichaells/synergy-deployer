@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][ValidatePattern('^\d+\.\d+\.\d+$')][string]$Release,[switch]$CandidateInstaller)
+param([Parameter(Mandatory=$true)][ValidatePattern('^\d+\.\d+\.\d+$')][string]$Release,[switch]$CandidateInstaller,[string]$PackageDirectory)
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:RUNNER_OS -ne 'Windows' -or $env:MANAGER_INSTALL_LAB -ne '1') {
@@ -22,17 +22,29 @@ try {
     if($service.Name -match '^postgresql'){& sc.exe delete $service.Name | Out-Null; if($LASTEXITCODE){throw 'Could not clear disposable image PostgreSQL service registration'}}
     else{Set-Service -Name $service.Name -StartupType Disabled}
   }
-  $releaseInfo=Invoke-RestMethod "https://api.github.com/repos/elimichaells/synergy-deployer/releases/tags/v$Release"
-  if($releaseInfo.draft -or $releaseInfo.prerelease){throw 'Expected a published stable release'}
+  if($PackageDirectory){
+    if($CandidateInstaller){throw 'A complete candidate package must not have installer overrides'}
+    $releaseInfo=@{assets=@(Get-ChildItem -LiteralPath $PackageDirectory -File | ForEach-Object { @{name=$_.Name;localPath=$_.FullName} })}
+    $record.candidatePackage=$true
+  }else{
+    $releaseInfo=Invoke-RestMethod "https://api.github.com/repos/elimichaells/synergy-deployer/releases/tags/v$Release"
+    if($releaseInfo.draft -or $releaseInfo.prerelease){throw 'Expected a published stable release'}
+  }
   $zip=@($releaseInfo.assets | Where-Object name -match "^manager-windows-$([regex]::Escape($Release))-\d+-\d+\.zip$")
   $exe=@($releaseInfo.assets | Where-Object name -match "^manager-setup-$([regex]::Escape($Release))-\d+-\d+\.exe$")
   if($zip.Count -ne 1 -or $exe.Count -ne 1){throw 'Expected exactly one Windows ZIP and setup executable'}
   foreach($asset in @($zip[0],$exe[0])){
-    if(!$asset.browser_download_url.StartsWith("https://github.com/elimichaells/synergy-deployer/releases/download/v$Release/")){throw 'Unexpected package origin'}
     $manifestAsset=@($releaseInfo.assets | Where-Object name -eq ($asset.name+'.sha256.json'))[0]
-    $manifest=Invoke-RestMethod $manifestAsset.browser_download_url
     $destination=Join-Path $root $asset.name
-    Invoke-WebRequest $asset.browser_download_url -OutFile $destination
+    if($PackageDirectory){
+      $manifest=Get-Content -LiteralPath $manifestAsset.localPath -Raw | ConvertFrom-Json
+      if($manifest.sourceCommit -ne $env:GITHUB_SHA){throw 'Candidate package does not match this tested checkout'}
+      Copy-Item -LiteralPath $asset.localPath -Destination $destination
+    }else{
+      if(!$asset.browser_download_url.StartsWith("https://github.com/elimichaells/synergy-deployer/releases/download/v$Release/")){throw 'Unexpected package origin'}
+      $manifest=Invoke-RestMethod $manifestAsset.browser_download_url
+      Invoke-WebRequest $asset.browser_download_url -OutFile $destination
+    }
     if((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -ne $manifest.sha256 -or $manifest.version -ne $Release -or $manifest.sourceDirty){throw 'Published package identity mismatch'}
     $record.sourceCommit=$manifest.sourceCommit
   }

@@ -21,6 +21,10 @@ on:
         description: Test installer engine fixes from this checkout against the published payload
         type: boolean
         default: false
+      candidatePackage:
+        description: Build and install the complete ZIP and EXE from this checkout before publishing
+        type: boolean
+        default: false
 permissions:
   contents: read
   actions: read
@@ -42,9 +46,29 @@ jobs:
         with:
           node-version: '24'
       - run: npm ci --prefix tests/install-lab --ignore-scripts --no-audit --no-fund
+      - uses: actions/setup-dotnet@v4
+        if: github.event_name == 'push' || inputs.candidatePackage
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build complete candidate installer
+        if: github.event_name == 'push' || inputs.candidatePackage
+        shell: pwsh
+        run: |
+          $version=(Get-Content package.json -Raw | ConvertFrom-Json).version
+          $packageDirectory=Join-Path $env:RUNNER_TEMP 'manager-candidate-package'
+          ./scripts/package-manager-exe.ps1 -Version $version -OutputDirectory $packageDirectory
+          if($LASTEXITCODE){throw 'Candidate packaging failed'}
+          "LAB_RELEASE=$version" >> $env:GITHUB_ENV
+          "LAB_PACKAGE_DIRECTORY=$packageDirectory" >> $env:GITHUB_ENV
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push' || inputs.candidatePackage
+        with:
+          name: manager-tested-installer
+          path: ${{ runner.temp }}/manager-candidate-package/*
+          retention-days: 7
       - name: Install published package on a disposable Windows machine
         shell: pwsh
-        run: ./tests/install-lab/install.ps1 -Release $env:LAB_RELEASE -CandidateInstaller:([bool]::Parse('${{ github.event_name == 'push' || inputs.candidateInstaller }}'))
+        run: ./tests/install-lab/install.ps1 -Release $env:LAB_RELEASE -PackageDirectory $env:LAB_PACKAGE_DIRECTORY -CandidateInstaller:([bool]::Parse('${{ inputs.candidateInstaller == true }}'))
       - name: Save sanitized pre-boot results
         if: always()
         uses: actions/upload-artifact@v4
@@ -78,4 +102,5 @@ jobs:
       - name: Require real boot transition and successful application checks
         env:
           LAB_RELEASE: ${{ inputs.release || '2.30.4' }}
+          LAB_SOURCE_PACKAGE: ${{ github.event_name == 'push' || inputs.candidatePackage }}
         run: node tests/install-lab/check-receipt.cjs receipt/reboot-result.json
