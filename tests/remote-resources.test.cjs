@@ -10,6 +10,8 @@ test('wire agent bundle is self contained and carries resource capability',async
 function metrics(){return{platform:'win32',hostname:'test',version:'1.7.0',cpuPercent:1,memoryTotal:8*1024**3,memoryFree:4*1024**3,diskTotal:100*1024**3,diskFree:50*1024**3,uptime:100,tools:{},apps:[]};}
 test('real operating-system memory collector reports bounded process usage without commands or environment',{timeout:60000},async t=>{
   const {root}=await fixture(t),sample=await resources.telemetry(root,{},[],h);assert.equal(sample.error,null);assert.ok(sample.processes.length>0);assert.ok(sample.processes.some(p=>p.privateBytes>0));assert.ok(sample.processes.every(p=>!('commandLine' in p)&&!('env' in p)));if(process.platform==='win32')assert.ok(sample.commitLimitMb>0);
+  const self=sample.processes.find(p=>p.pid===process.pid);assert.ok(self);assert.equal(self.ppid,process.ppid);assert.ok(self.privateBytes>0);assert.ok(self.workingBytes>0);
+  if(process.platform==='win32'){assert.ok(self.started>Date.now()-3600000);assert.ok(sample.commitMb>0&&sample.commitMb<=sample.commitLimitMb);assert.ok(sample.pageFileMb===null||sample.pageFileUsedMb<=sample.pageFileMb);}
 });
 test('telemetry strips secrets, commands and unrecognized fields and bounds process counts',()=>{
   const clean=resources.sanitize({at:new Date().toISOString(),environment:{PASSWORD:'secret'},processes:Array.from({length:4005},(_,i)=>({pid:i,ppid:1,name:'node',privateBytes:10,workingBytes:15,commandLine:'password=secret'})),apps:[{id:randomUUID(),env:{PASSWORD:'secret'},cwd:'C:\\apps',method:'invalid'}]});assert.equal(clean.processes.length,4000);assert.doesNotMatch(JSON.stringify(clean),/secret|password|commandLine/i);assert.equal(clean.apps[0].method,'runner');

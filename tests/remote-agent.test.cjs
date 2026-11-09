@@ -74,6 +74,17 @@ test('secrets spanning output chunks, truncated credentials and overlapping valu
   assert.equal(output,'prefix [redacted] and [redacted] then [redacted]');
 });
 
+test('redaction is independent of chunk boundaries and never reprocesses replacement markers',()=>{
+  const secrets=['token','token-secret','redacted',null,42],source='before token-secret then token after!';
+  const expected='before [redacted] then [redacted] after!';
+  assert.equal(agent.redact(source,secrets),expected);
+  for(let split=0;split<=source.length;split++){
+    let result='';const r=agent.streamRedactor(secrets,s=>result+=s);
+    r.write(source.slice(0,split));r.write(source.slice(split));r.end();
+    assert.equal(result,expected,'chunk boundary '+split);
+  }
+});
+
 test('telemetry strips unexpected fields and rejects invalid capacity',()=>{
   const raw={hostname:'campus',platform:'linux',version:'1',cpuPercent:30,memoryTotal:100,memoryFree:50,diskTotal:200,diskFree:100,uptime:10,
     addresses:['10.0.0.1','secret'],tools:{node:'v22',git:'git',pm2:'6',caddy:'2'},environment:{SECRET:'hidden'},apps:[]};

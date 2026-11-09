@@ -194,25 +194,32 @@ function sanitizeMetrics(raw) {
 }
 
 function redact(value, secrets) {
-  let output = String(value);
-  for (const secret of [...new Set(secrets.filter(x => typeof x === 'string' && x))].sort((a,b) => b.length-a.length)) output = output.split(secret).join('[redacted]');
+  let output = '';
+  const redactor=streamRedactor(secrets,text=>output+=text);
+  redactor.write(String(value));redactor.end(false);
   return output;
 }
 function streamRedactor(secrets, write) {
-  const values = [...new Set(secrets.filter(Boolean))].sort((a,b) => b.length-a.length);
+  const values = [...new Set(secrets.filter(x => typeof x === 'string' && x))].sort((a,b) => b.length-a.length);
   let pending = '';
-  return { write(chunk) {
-    if (!values.length) { write(chunk); return; }
-    pending += chunk;
+  function flush(final=false) {
     let safe = '';
     while (pending) {
+      // Wait for a longer possible match before consuming its shorter prefix.
+      if (!final && values.some(value => value.length>pending.length && value.startsWith(pending))) break;
       const match = values.find(value => pending.startsWith(value));
       if (match) { safe += '[redacted]'; pending = pending.slice(match.length); }
-      else if (values.some(value => value.startsWith(pending))) break;
       else { safe += pending[0]; pending = pending.slice(1); }
     }
     if (safe) write(safe);
-  }, end() { if (pending) write('[redacted]'); pending = ''; } };
+  }
+  return { write(chunk) {
+    if (!values.length) { write(chunk); return; }
+    pending += chunk; flush();
+  }, end(redactPartial=true) {
+    if(redactPartial) { if(pending)write('[redacted]');pending=''; }
+    else flush(true);
+  } };
 }
 
 function caddyConfig(apps, storageRoot) {

@@ -10,6 +10,7 @@ async function agentBundle(root = process.cwd()) {
   const listeners=(await fs.readFile(path.join(root,'scripts/lan-listener.cjs'),'utf8')).replace("const { parseLanAddress } = require('./lan-address.cjs');",'');
   source=source.replace("const { checkLanListeners } = require('./lan-listener.cjs');",`const { checkLanListeners } = (()=>{const module={exports:{}};\n${listeners}\nreturn module.exports;})();`);
   let resources = await fs.readFile(path.join(root, 'scripts/manager-agent-resources.cjs'), 'utf8');
+  resources=resources.replace("require('./manager-agent-windows-memory.cjs')",JSON.stringify(require('./manager-agent-windows-memory.cjs')));
   const diagnostics=await fs.readFile(path.join(root,'scripts/health-diagnostics.cjs'),'utf8');
   resources=resources.replace("const { readDiagnostics, classifyReadiness } = require('./health-diagnostics.cjs');",`const { readDiagnostics, classifyReadiness } = (()=>{const module={exports:{}};\n${diagnostics}\nreturn module.exports;})();`);
   const marker = "const resources = require('./manager-agent-resources.cjs');";
