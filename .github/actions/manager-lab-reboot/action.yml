@@ -1,0 +1,5 @@
+name: Reboot disposable Manager lab
+description: Uses a SYSTEM startup task to verify automatic recovery after a real OS reboot.
+runs:
+  using: node24
+  main: ../../../tests/install-lab/reboot-action.mjs

@@ -1,0 +1,77 @@
+name: Isolated Manager installation and reboot
+on:
+  push:
+    branches: [codex/isolated-install-validation]
+    paths: ['.github/workflows/manager-install-lab.yml', '.github/actions/manager-lab-reboot/**', 'tests/install-lab/**']
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Published installer version to test
+        required: true
+        default: '2.30.4'
+      platform:
+        type: choice
+        options: [windows-2025, windows-2022]
+        default: windows-2025
+      reboot:
+        description: Reboot the disposable hosted VM and require a post-boot receipt
+        type: boolean
+        default: true
+permissions:
+  contents: read
+  actions: read
+jobs:
+  install:
+    runs-on: ${{ inputs.platform || 'windows-2025' }}
+    timeout-minutes: 50
+    # Reboot ends the runner process. The independent receipt job is authoritative;
+    # it fails if installation, real reboot or post-boot verification is missing.
+    continue-on-error: true
+    env:
+      MANAGER_INSTALL_LAB: '1'
+      LAB_RELEASE: ${{ inputs.release || '2.30.4' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --prefix tests/install-lab --ignore-scripts --no-audit --no-fund
+      - name: Install published package on a disposable Windows machine
+        shell: pwsh
+        run: ./tests/install-lab/install.ps1 -Release $env:LAB_RELEASE
+      - name: Save sanitized pre-boot results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: manager-install-before-reboot
+          path: C:/ManagerAcceptanceLab/results/*
+          if-no-files-found: error
+          retention-days: 7
+      - name: Arrange independent verification and reboot disposable VM
+        if: github.event_name == 'push' || inputs.reboot
+        uses: ./.github/actions/manager-lab-reboot
+  receipt:
+    if: github.event_name == 'push' || inputs.reboot
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Wait for independently uploaded post-boot receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tests/install-lab/wait-for-reboot.cjs
+      - uses: actions/download-artifact@v4
+        with:
+          name: manager-install-after-reboot
+          path: receipt
+      - name: Require real boot transition and successful application checks
+        env:
+          LAB_RELEASE: ${{ inputs.release || '2.30.4' }}
+        run: node tests/install-lab/check-receipt.cjs receipt/reboot-result.json
