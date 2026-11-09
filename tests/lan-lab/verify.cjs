@@ -55,6 +55,29 @@ async function run(){
   await agent.proxyConfig(remoteRoot,config,{caddy:binary,tools:{caddy:true},pm:async()=> '[]'});
   assert.equal((await request('https://'+remoteAddress,remoteCa)).body,'institution app');
   report.checks.push({path:'remote agent',dedicatedProxyReloadVerified:true,httpsVerifiedWithSeparateRootCA:true,ipOnlyNoDns:true,existingSitesPreserved:true});
+  // Reused Caddy retains its owner's global options and existing routes.
+  const sharedRoot=root+'/shared-agent',sharedStorage=sharedRoot+'/storage',sharedAdmin=await freePort(),sharedPeerPort=await freePort(),sharedPort=await freePort();
+  await fs.mkdir(sharedRoot+'/managed-sites',{recursive:true});
+  const sharedConfig=sharedRoot+'/existing.Caddyfile',sharedCandidate=sharedRoot+'/candidate.pending',sharedOrigin=`http://127.0.0.1:${sharedAdmin}`;
+  const sharedSource=`{\n admin 127.0.0.1:${sharedAdmin}\n auto_https disable_redirects\n storage file_system {\n root ${sharedStorage}\n }\n}\nhttp://127.0.0.1:${sharedPeerPort} {\n respond "shared existing site"\n}\nimport "${sharedRoot}/managed-sites/*.caddy"\n`;
+  await fs.writeFile(sharedConfig,sharedSource);await fs.writeFile(sharedCandidate,'');await start(sharedConfig,env);
+  await until(async()=>assert.equal((await request(`http://127.0.0.1:${sharedPeerPort}`)).body,'shared existing site'));
+  const settings={mode:'existing-caddy',configPath:sharedConfig,candidatePath:sharedCandidate,admin:sharedOrigin,sourceHash:require('node:crypto').createHash('sha256').update(sharedSource).digest('hex'),reservedHosts:[],reservedPorts:[sharedPeerPort]};
+  await fs.writeFile(sharedRoot+'/proxy.json',JSON.stringify(settings));
+  const sharedAddress=lan.lanAddress(ip,sharedPort).authority;
+  const sharedManaged=agent.caddyConfig([{name:'Shared LAN app',repo_url:'https://example.com/org/app',branch:'main',start_cmd:'node app.cjs',port:backend,access_mode:'lan',hostname:sharedAddress}],sharedRoot+'/unused-private-storage');
+  const sharedTools={caddy:binary,tools:{caddy:true},pm:()=>{throw Error('Shared proxy must not start or stop another process')}};
+  await assert.rejects(agent.proxyConfig(sharedRoot,sharedManaged,sharedTools),/skip_install_trust/);
+  assert.equal(await fs.readFile(sharedConfig,'utf8'),sharedSource);assert.equal((await request(`http://127.0.0.1:${sharedPeerPort}`)).body,'shared existing site');
+  // The lab acts as the existing proxy's administrator for this one-time setting.
+  const prepared=sharedSource.replace('{\n','{\n skip_install_trust\n');await fs.writeFile(sharedConfig,prepared);
+  await exec(`"${binary}" reload --config "${sharedConfig}" --adapter caddyfile --address 127.0.0.1:${sharedAdmin}`,{env,windowsHide:true,timeout:30000});
+  settings.sourceHash=require('node:crypto').createHash('sha256').update(prepared).digest('hex');await fs.writeFile(sharedRoot+'/proxy.json',JSON.stringify(settings));
+  await agent.proxyConfig(sharedRoot,sharedManaged,sharedTools);
+  const sharedCa=await until(async()=>{const ca=await agent.publicCertificate(sharedRoot,{sharedProxy:settings});assert.match(ca||'',/BEGIN CERTIFICATE/);return ca});
+  await until(async()=>assert.equal((await request('https://'+sharedAddress,sharedCa)).body,'institution app'));
+  assert.equal(await fs.readFile(sharedConfig,'utf8'),prepared);assert.equal((await request(`http://127.0.0.1:${sharedPeerPort}`)).body,'shared existing site');
+  report.checks.push({path:'reused remote Caddy',httpsVerified:true,activeCaDownload:true,interactiveTrustRejected:true,ownerConfigPreserved:true,existingSitePreserved:true});
   await caddy.removeFromCaddyStrict(address);assert.ok((await fs.readFile(root+'/Caddyfile','utf8')).includes(peer.trim()));assert.ok(!(await fs.readFile(root+'/Caddyfile','utf8')).includes(address));assert.equal((await request(`http://127.0.0.1:${peerPort}`)).body,'existing site preserved');
   report.status='passed';
 }
