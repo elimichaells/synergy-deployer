@@ -20,7 +20,11 @@ async function run(){
   }
   await fs.writeFile(root+'/private/instances.json',JSON.stringify(inventory));
   const peerBefore=await identity(peer),peerConfig=await hash(peer.config);
-  const h={readJson:agent.readJson,atomicJson:agent.atomicJson,contained:agent.contained,run:agent.run,redact:agent.redact,baseEnv:()=>({...process.env})};
+  const h={readJson:agent.readJson,atomicJson:agent.atomicJson,contained:agent.contained,run:async(file,args,options={})=>{
+    const started=Date.now();let diagnostic='';
+    try {return await agent.run(file,args,{...options,log:chunk=>{diagnostic+=chunk}})}
+    catch(error){console.error(JSON.stringify({command:path.basename(file),durationMs:Date.now()-started,error:error.message,diagnostic:diagnostic.slice(-2000)}));throw error}
+  },redact:agent.redact,baseEnv:()=>({...process.env})};
   const agentRoot=root+'/private/agent';await fs.mkdir(agentRoot);
   const resource=input=>resources.execute(agentRoot,{payload:{resource:input}},null,h);
   await agent.atomicJson(path.join(agentRoot,'tool-paths.json'),{mysql:target.client,mariadb:maria.client});
@@ -45,7 +49,12 @@ async function run(){
     await assert.rejects(native('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',path.join(repository,'scripts/tune-database-memory.ps1'),'-Engine',instance.provider,'-ServiceName',instance.name,'-Settings','port=3306']),/not one this script changes/);
     assert.equal((await identity(instance)).pid,oldPid);assert.equal(await hash(instance.config),stableConfig);
     await assert.rejects(resource({action:'database-tune',connection,service:instance.name,facts:before.facts,settings:'performance_schema=OFF',script,serviceScript}),/settings changed/);
-    report.checks.push({engine:instance.provider,localOrRemote:instance===target?'local Manager tuning script':'remote agent tuning',customPaths:true,realSqlSettingsVerified:true,dataPreserved:true,peerUnchanged:true,invalidAndStaleRequestsRejected:true});
+    await assert.rejects(native('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',path.join(__dirname,'restart-failure.ps1'),'-Engine',instance.provider,'-ServiceName',instance.name]),/It is running again with the previous settings/);
+    assert.equal(await hash(instance.config),stableConfig,'Failed restart restores exact original configuration bytes');
+    assert.equal((await sql(instance,"SHOW GLOBAL VARIABLES LIKE 'performance_schema'"))[0].Value,'OFF');
+    assert.equal((await sql(instance,'SELECT value FROM preservation_probe.values_to_keep WHERE id=1'))[0].value,'original fixture must survive');
+    assert.deepEqual(await identity(peer),peerBefore,'Rollback never restarts the peer');assert.equal(await hash(peer.config),peerConfig);
+    report.checks.push({engine:instance.provider,localOrRemote:instance===target?'local Manager tuning script':'remote agent tuning',customPaths:true,realSqlSettingsVerified:true,dataPreserved:true,peerUnchanged:true,invalidAndStaleRequestsRejected:true,failedStartRestoresConfigurationAndDatabase:true});
   }
   const listeners=JSON.parse(await ps("@(Get-NetTCPConnection -State Listen | Where-Object {$_.LocalPort -in @(33161,33162,33163)} | Select-Object LocalAddress,LocalPort)|ConvertTo-Json -Compress"));assert.ok(listeners.length>=3);assert.ok(listeners.every(l=>['127.0.0.1','::1'].includes(l.LocalAddress)));
   report.status='passed';report.privateListeners=true;
