@@ -28,6 +28,11 @@ execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',
 await createRequire(import.meta.url)('./verify.cjs').verify('system-recovery');
 const {DefaultArtifactClient}=await import('@actions/artifact');
 await new DefaultArtifactClient().uploadArtifact('manager-system-recovery',[root+'/results/system-recovery.json'],root+'/results',{retentionDays:7});
+if(process.env.MANAGER_LAB_REBOOT!=='1'){
+  fs.unlinkSync(root+'/private/artifact-environment.json');
+  console.log('Fresh installation and installed SYSTEM recovery task passed. An OS reboot was not requested or verified.');
+  process.exit(0);
+}
 const code=`$ErrorActionPreference='Stop';$action=New-ScheduledTaskAction -Execute ${q(node)} -Argument ${q('"'+script+'"')};$trigger=New-ScheduledTaskTrigger -AtStartup;$trigger.Delay='PT30S';$principal=New-ScheduledTaskPrincipal -UserId SYSTEM -LogonType ServiceAccount -RunLevel Highest;$settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 10);Register-ScheduledTask -TaskName 'Manager Isolated Reboot Verification' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null;`;
 execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(code,'utf16le').toString('base64')],{stdio:'inherit',windowsHide:true});
 console.log('Independent startup verifier registered. Rebooting only this disposable GitHub-hosted VM.');

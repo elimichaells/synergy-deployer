@@ -1,4 +1,4 @@
-name: Isolated Manager installation and reboot
+name: Isolated Manager installation and recovery
 on:
   push:
     branches: [codex/isolated-install-validation]
@@ -16,7 +16,7 @@ on:
       reboot:
         description: Reboot the disposable hosted VM and require a post-boot receipt
         type: boolean
-        default: true
+        default: false
       address:
         description: Local HTTPS address used by the fresh installation
         type: choice
@@ -39,11 +39,12 @@ jobs:
     timeout-minutes: 50
     # Reboot ends the runner process. The independent receipt job is authoritative;
     # it fails if installation, real reboot or post-boot verification is missing.
-    continue-on-error: true
+    continue-on-error: ${{ inputs.reboot == true }}
     env:
       MANAGER_INSTALL_LAB: '1'
       LAB_RELEASE: ${{ inputs.release || '2.30.4' }}
       LAB_ADDRESS_MODE: ${{ inputs.address || 'private-ip' }}
+      MANAGER_LAB_REBOOT: ${{ inputs.reboot == true && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -85,11 +86,10 @@ jobs:
           path: C:/ManagerAcceptanceLab/results/*
           if-no-files-found: error
           retention-days: 7
-      - name: Arrange independent verification and reboot disposable VM
-        if: github.event_name == 'push' || inputs.reboot
+      - name: Verify SYSTEM recovery and optionally reboot disposable VM
         uses: ./.github/actions/manager-lab-reboot
   receipt:
-    if: github.event_name == 'push' || inputs.reboot
+    if: inputs.reboot
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
