@@ -1,4 +1,6 @@
 'use client'
+import {ConsoleCommands} from '@/components/app/console-commands'
+import {completeCommand} from '../../../scripts/console-policy.cjs'
 import { ConsoleTerminal } from '@/components/console-terminal'
 import { ApplicationHealth } from '@/components/app/health-settings'
 import { useServerHealth } from '@/components/server-health'
@@ -489,24 +491,13 @@ const handleToggleAutoDeploy = async () => {
   const stopNpmCommand = () => npmAbortRef.current?.abort()
 
   const completeConsoleCommand = async () => {
-    const tokenMatch = npmCommand.match(/(?:^|\s)([^\s"']*)$/)
-    const token = tokenMatch?.[1] || ''
-    const tokenStart = npmCommand.length - token.length
     try {
       const res = await fetch(`/api/sites/${siteId}/console?cwd=${encodeURIComponent(consoleCwd || project?.root_path || '')}`)
       if (!res.ok) return
       const data = await res.json()
-      const commandNames = ['cd', 'clear', 'cls', 'Get-ChildItem', 'Get-Content', 'Get-History', 'Get-Location', 'history', 'pwd', ...(data.commands || []).map((value: string) => value.split(/\s+/)[0])]
-      const source: string[] = tokenStart === 0 ? commandNames : data.entries || []
-      const matches = [...new Set(source)].filter(entry => entry.toLowerCase().startsWith(token.toLowerCase()))
-      if (!matches.length) return
-      const common = matches.reduce((prefix, entry) => {
-        let length = 0
-        while (length < prefix.length && length < entry.length && prefix[length].toLowerCase() === entry[length].toLowerCase()) length++
-        return prefix.slice(0, length)
-      })
-      if (matches.length === 1 || common.length > token.length) setNpmCommand(`${npmCommand.slice(0, tokenStart)}${matches.length === 1 ? matches[0] : common}`)
-      else setNpmOutput(previous => `${previous}${previous && !previous.endsWith('\n') ? '\n' : ''}${matches.join('    ')}\n`)
+      const completion=completeCommand(npmCommand,data.entries||[],data.commands||[],true)
+      if(completion.command!==npmCommand)setNpmCommand(completion.command)
+      else if(completion.matches.length>1)setNpmOutput(previous=>`${previous}${previous&&!previous.endsWith('\n')?'\n':''}${completion.matches.join('    ')}\n`)
     } catch { /* Tab completion is best effort. */ }
   }
 
@@ -762,12 +753,7 @@ const handleToggleAutoDeploy = async () => {
         <TabsContent value="console" className="mt-0 space-y-4">
           {runtimeSwitch}
           <Section title="Console" description={<>A terminal for one-off commands, such as running database migrations or an npm script. It opens inside <span className="break-all font-mono text-xs">{project.root_path}</span> with this app&apos;s runtime versions and environment.</>}>
-            {(consoleCommands.length > 0 || Object.keys(npmScripts).length > 0) && (
-              <div className="mb-4 flex flex-wrap gap-2">
-                {consoleCommands.map(cmd => <Button key={cmd} variant="outline" size="sm" className="font-mono text-xs" disabled={npmRunning || !canWrite} onClick={() => { setNpmCommand(cmd); void runNpmCommand(cmd) }}>{cmd}</Button>)}
-                {Object.entries(npmScripts).map(([name, script]) => <Button key={name} variant="secondary" size="sm" className="font-mono text-xs" disabled={npmRunning || !canWrite} title={script} onClick={() => { setNpmCommand(`npm run ${name}`); void runNpmCommand(`npm run ${name}`) }}><Play className="mr-1.5 h-3 w-3" />{name}</Button>)}
-              </div>
-            )}
+            <ConsoleCommands commands={consoleCommands} scripts={npmScripts} disabled={npmRunning||!canWrite} onRun={cmd=>{setNpmCommand(cmd);void runNpmCommand(cmd)}}/>
             <ConsoleTerminal title={`PowerShell · ${project.name}`} cwd={consoleCwd || project.root_path} command={npmCommand} onCommand={setNpmCommand} output={npmOutput ? renderLogLines(npmOutput) : null} outputText={npmOutput} running={npmRunning} disabled={!canWrite} onRun={()=>void runNpmCommand(npmCommand)} onStop={stopNpmCommand} onClear={()=>setNpmOutput('')} onComplete={()=>void completeConsoleCommand()} inputRef={terminalInputRef} outputRef={npmOutputRef} onHistory={direction=>{const index=direction==='up'?Math.min(consoleHistory.length-1,consoleHistoryIndex+1):Math.max(-1,consoleHistoryIndex-1);setConsoleHistoryIndex(index);setNpmCommand(index>=0?consoleHistory[consoleHistory.length-1-index]:'')}}/>
 
           </Section>

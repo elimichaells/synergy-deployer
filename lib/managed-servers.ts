@@ -1,3 +1,4 @@
+import {consoleInfo} from '../scripts/console-policy.cjs'
 import { ApiError } from '@/lib/api'
 import { audit } from '@/lib/audit'
 import { db, query } from '@/lib/db'
@@ -394,9 +395,9 @@ export async function reportJob(serverId: string, body: Record<string, unknown>)
       const value=body.result as Record<string,unknown>; if(value?.ok!==true || JSON.stringify(value).length>300000)throw new ApiError('Invalid infrastructure result',400); result=value
     }
     if(body.status==='success' && ['console','logs'].includes(kind)) {
-      const value=body.result as {ok?:boolean;cwd?:unknown}
+      const value=body.result as {ok?:boolean;cwd?:unknown;console?:unknown;inspection?:unknown}
       if(value?.ok!==true || typeof value.cwd!=='string' || value.cwd.length>1024)throw new ApiError('Invalid console result',400)
-      result={ok:true,cwd:value.cwd}
+      try{result={ok:true,cwd:value.cwd,...(value.console?{console:consoleInfo(value.console)}:{}),...(payload.inspect===true?{inspection:true}:{})}}catch{throw new ApiError('Invalid console information',400)}
     }
     if(job.resource_action==='storage'&&payload.resource?.operation==='sync-env'&&result){const value=result as Record<string,unknown>;result={ok:value.ok===true,synced:value.synced===true,keys:Array.isArray(value.keys)?value.keys.filter(key=>typeof key==='string'&&/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)):[],healthy:value.healthy===true}}
     const privateResult=job.resource_action==='storage'&&payload.resource?.operation!=='sync-env'&&result?encryptSecret(JSON.stringify(result)):null

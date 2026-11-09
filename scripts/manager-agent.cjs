@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 'use strict';
+const consolePolicy = require('./console-policy.cjs');
 
 // Dependency-free Windows/Linux agent. Downloaded intact by the Manager UI.
 // Only run trusted application repositories: build scripts execute as the agent account.
@@ -23,6 +24,7 @@ const { parseLanAddress, lanCaddyDirectives, lanProxyHeaders, assertLanInterface
 const { checkLanListeners } = require('./lan-listener.cjs');
 const INFRASTRUCTURE_CAPABILITY = 'remote-infrastructure-v1';
 const CONSOLE_CAPABILITY = 'remote-console-v1';
+const CONSOLE_DETAILS_CAPABILITY = 'remote-console-details-v1';
 const RUNTIME_CAPABILITY = 'runtime-versions-v1';
 const SERVICE_TOOLS_CAPABILITY = 'service-tools-v2';
 const SETUP_CAPABILITY = 'guided-setup-v1';
@@ -200,7 +202,7 @@ function sanitizeMetrics(raw) {
     caddy:raw.caddy?{mode:raw.caddy.mode==='shared'?'shared':'pm2',status:['running','stopped','unknown'].includes(raw.caddy.status)?raw.caddy.status:'unknown',configPath:str(raw.caddy.configPath,1024),version:str(raw.caddy.version)}:null,
     proxyError: raw.proxyError ? str(raw.proxyError, 500) : null,
     resources:resources.sanitize(raw.resources),
-    capabilities: [STORAGE_CAPABILITY,APPLICATION_CONTROL_CAPABILITY,LAN_CAPABILITY,SETUP_CAPABILITY,UPDATE_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,SERVICE_TOOLS_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY].filter(value => Array.isArray(raw.capabilities) && raw.capabilities.includes(value)) };
+    capabilities: [STORAGE_CAPABILITY,APPLICATION_CONTROL_CAPABILITY,LAN_CAPABILITY,SETUP_CAPABILITY,UPDATE_CAPABILITY,CONSOLE_CAPABILITY,CONSOLE_DETAILS_CAPABILITY,RUNTIME_CAPABILITY,SERVICE_TOOLS_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY].filter(value => Array.isArray(raw.capabilities) && raw.capabilities.includes(value)) };
   if (result.memoryFree > result.memoryTotal || (result.diskFree !== null && result.diskTotal !== null && result.diskFree > result.diskTotal)) throw new Error('Invalid capacity');
   return result;
 }
@@ -954,7 +956,7 @@ async function enrollCli(root, options) {
 async function consoleJob(root,job,tools,log,signal) {
   const payload=job.payload;
   if(!Number.isFinite(payload.expiresAt)||Date.now()>payload.expiresAt)throw new Error('Console request expired; run it again while connected');
-  let directory=path.join(root,'console'),runtime={};
+  let directory=path.join(root,'console'),runtime={},repoUrl=null;
   if(payload.id){
     if(!ID.test(payload.id))throw new Error('Invalid application');
     const app=(await readJson(path.join(root,'apps.json'),{}))[payload.id];
@@ -962,11 +964,19 @@ async function consoleJob(root,job,tools,log,signal) {
     const launch=await readJson(path.join(path.dirname(app.ecosystem),'launch.json'));
     directory=await contained(root,'releases',payload.id,path.basename(launch.cwd));
     if(path.resolve(directory)!==path.resolve(launch.cwd))throw new Error('Application directory changed');
-    runtime=Object.fromEntries(Object.entries(launch.env||{}).filter(([key])=>['Path','PATH','PHPRC','PHP_INI_SCAN_DIR'].includes(key)||/^MANAGER_(NODE|GO|PHP)_VERSION$/.test(key)));
+    repoUrl=app.app?.repo_url;
+    runtime={...Object.fromEntries(Object.entries(launch.env||{}).filter(([key])=>['Path','PATH','PHPRC','PHP_INI_SCAN_DIR'].includes(key)||/^MANAGER_(NODE|GO|PHP)_VERSION$/.test(key))),...await runtimeEnvironment(root,payload.runtimeVersions||{})};
   }else await fs.mkdir(directory,{recursive:true,mode:0o700});
   const base=await fs.realpath(directory),cwd=await fs.realpath(path.resolve(base,payload.cwd||'.'));
   const relative=path.relative(base,cwd);
   if(relative.startsWith('..')||path.isAbsolute(relative))throw new Error('Working directory must stay inside this application');
+  const information=async working=>{
+    let scripts={};const file=path.join(base,'package.json'),stat=await fs.lstat(file).catch(()=>null);
+    if(stat?.isFile()&&!stat.isSymbolicLink()&&stat.size<1000000){try{const value=JSON.parse(await fs.readFile(file,'utf8')).scripts;scripts=Object.fromEntries(Object.entries(value||{}).filter(([name,command])=>/^[A-Za-z0-9_.:-]{1,100}$/.test(name)&&typeof command==='string').slice(0,100).map(([name,command])=>[name,redact(command,jobSecrets(payload)).slice(0,500)]));}catch{}}
+    const entries=(await fs.readdir(working,{withFileTypes:true}).catch(()=>[])).filter(entry=>!/[\x00-\x1f]/.test(entry.name)).slice(0,500).map(entry=>entry.name+(entry.isDirectory()?path.sep:'')).sort();
+    return consolePolicy.consoleInfo({scripts,entries});
+  };
+  if(payload.inspect===true)return {ok:true,cwd,console:await information(cwd),inspection:true};
   if(job.kind==='logs'){
     const app=(await processList(tools.pm)).find(item=>item.name==='manager-remote-'+payload.id);
     if(!app)throw new Error('Application process is unavailable');
@@ -985,13 +995,29 @@ async function consoleJob(root,job,tools,log,signal) {
     if(/[;&|`$<>]/.test(target))throw Error('Enter a literal directory path');
     const next=await fs.realpath(path.resolve(cwd,target)),rel=path.relative(base,next);
     if(rel.startsWith('..')||path.isAbsolute(rel)||!(await fs.stat(next)).isDirectory())throw Error('Working directory must stay inside this application');
-    log(next+'\n');return {ok:true,cwd:next};
+    log(next+'\n');return {ok:true,cwd:next,console:await information(next)};
+  }
+  const gitArgs=consolePolicy.consoleGitArguments(payload.command);
+  if(payload.git){
+    if(!gitArgs||!payload.id||!repoUrl?.startsWith('https://')||payload.repoUrl!==repoUrl)throw Error('The saved Git connection does not match this application command');
+    const parsed=new URL(repoUrl);if(parsed.username||parsed.password||parsed.search||parsed.hash)throw Error('Invalid saved repository URL');
+    const config=[['credential.helper',''],['http.extraHeader',''],['http.followRedirects','false'],['http.sslVerify','true'],['protocol.allow','never'],['protocol.https.allow','always'],['core.hooksPath',path.join(root,'disabled-hooks')]];
+    if(payload.git.token)config.push([`http.${repoUrl}.extraHeader`,'Authorization: Basic '+Buffer.from(`${payload.git.username}:${payload.git.token}`).toString('base64')]);
+    let caFile;
+    try{
+      if(payload.git.caPem){if(typeof payload.git.caPem!=='string'||payload.git.caPem.length>8192||payload.git.caPem.includes('PRIVATE KEY'))throw Error('Invalid Git CA certificate');const certificate=new X509Certificate(payload.git.caPem);if(!certificate.ca)throw Error('Invalid Git CA certificate');caFile=await contained(root,'console-git-ca-'+randomBytes(16).toString('hex')+'.pem');await fs.writeFile(caFile,[...rootCertificates,certificate.toString()].join('\n'),{mode:0o600});config.push(['http.sslCAInfo',caFile]);if(process.platform==='win32')config.push(['http.sslBackend','openssl']);}
+      const env={...baseEnv(),GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'never',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null',GIT_CONFIG_COUNT:String(config.length)};
+      config.forEach(([key,value],i)=>{env[`GIT_CONFIG_KEY_${i}`]=key;env[`GIT_CONFIG_VALUE_${i}`]=value;});
+      log('[git] Using the application’s saved Git connection\n');
+      await run(executable('git'),gitArgs,{cwd,env,timeout:900000,signal,log,secrets:jobSecrets(payload)});
+      log('\n[exit] Command finished with code 0\n');return {ok:true,cwd,console:await information(cwd)};
+    }finally{if(caFile)await fs.unlink(caFile);}
   }
   const env={...baseEnv(),...payload.environment,...runtime,FORCE_COLOR:'0',NO_COLOR:'1'};
   const command=payload.command;
   const args=process.platform==='win32'?['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from("$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new(); "+command+'; if($LASTEXITCODE){exit $LASTEXITCODE}', 'utf16le').toString('base64')]:['-c',command];
   await run(process.platform==='win32'?'powershell.exe':'/bin/bash',args,{cwd,env,timeout:900000,signal,log,secrets:jobSecrets(payload)});
-  log('\n[exit] Command finished with code 0\n');return {ok:true,cwd};
+  log('\n[exit] Command finished with code 0\n');return {ok:true,cwd,console:await information(cwd)};
 }
 
 async function runAgent(root) {
@@ -1049,7 +1075,7 @@ async function runAgent(root) {
   let heartbeatBusy=false;
   const pulse=async()=>{
     if(heartbeatBusy)return;heartbeatBusy=true;
-    try{const data=await sample(root,tools,prior);prior=data.cpu;data.metrics.capabilities=[STORAGE_CAPABILITY,APPLICATION_CONTROL_CAPABILITY,LAN_CAPABILITY,SETUP_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,SERVICE_TOOLS_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY,...(supervised?[UPDATE_CAPABILITY]:[])];await request(config,'heartbeat',{protocol:PROTOCOL_VERSION,metrics:data.metrics,caPem:data.caPem});send({type:'heartbeat',version:AGENT_VERSION,metrics:data.metrics});}
+    try{const data=await sample(root,tools,prior);prior=data.cpu;data.metrics.capabilities=[STORAGE_CAPABILITY,APPLICATION_CONTROL_CAPABILITY,LAN_CAPABILITY,SETUP_CAPABILITY,CONSOLE_CAPABILITY,CONSOLE_DETAILS_CAPABILITY,RUNTIME_CAPABILITY,SERVICE_TOOLS_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY,...(supervised?[UPDATE_CAPABILITY]:[])];await request(config,'heartbeat',{protocol:PROTOCOL_VERSION,metrics:data.metrics,caPem:data.caPem});send({type:'heartbeat',version:AGENT_VERSION,metrics:data.metrics});}
     finally{heartbeatBusy=false;}
   };
   const describe=error=>console.error(`[agent] ${redact(error.message,[config.agentToken])}`);
@@ -1315,5 +1341,5 @@ async function main(){
 
 function resourceHelpers(){return {run,readJson,atomicJson,contained,processList,healthy,baseEnv,proxyConfig,managedCaddyConfig,redact};}
 
-module.exports={SERVICE_TOOLS_CAPABILITY,APPLICATION_CONTROL_CAPABILITY,publicCertificate,LAN_CAPABILITY,validateLanSelection,managedCaddyConfig,sampleApplications,infrastructureJob,INFRASTRUCTURE_CAPABILITY,toolVersion,validateRuntimeSelection,RUNTIME_CAPABILITY,validateRuntimeVersions,runtimeEnvironment,installedRuntimeVersions,CONSOLE_CAPABILITY,consoleJob,PROTOCOL_VERSION,AGENT_VERSION,SETUP_CAPABILITY,UPDATE_CAPABILITY,validateApp,sanitizeMetrics,redact,streamRedactor,caddyConfig,managerAddress,contained,run,request,deploy,restoreActivation,healthy,atomicJson,readJson,enrollCli,detectFramework,inspectRepository,validateDatabase,databaseEnvironment,setupDatabase,validateSetup,jobSecrets,findStaticRoot,serveStatic,loadToolPaths,checkConfiguredTools,privatePm2Environment,findTools,proxyConfig,sharedProxySettings,sharedProxyState,configDigest};
+module.exports={CONSOLE_DETAILS_CAPABILITY,SERVICE_TOOLS_CAPABILITY,APPLICATION_CONTROL_CAPABILITY,publicCertificate,LAN_CAPABILITY,validateLanSelection,managedCaddyConfig,sampleApplications,infrastructureJob,INFRASTRUCTURE_CAPABILITY,toolVersion,validateRuntimeSelection,RUNTIME_CAPABILITY,validateRuntimeVersions,runtimeEnvironment,installedRuntimeVersions,CONSOLE_CAPABILITY,consoleJob,PROTOCOL_VERSION,AGENT_VERSION,SETUP_CAPABILITY,UPDATE_CAPABILITY,validateApp,sanitizeMetrics,redact,streamRedactor,caddyConfig,managerAddress,contained,run,request,deploy,restoreActivation,healthy,atomicJson,readJson,enrollCli,detectFramework,inspectRepository,validateDatabase,databaseEnvironment,setupDatabase,validateSetup,jobSecrets,findStaticRoot,serveStatic,loadToolPaths,checkConfiguredTools,privatePm2Environment,findTools,proxyConfig,sharedProxySettings,sharedProxyState,configDigest};
 if(require.main===module)main().catch(error=>{console.error(error.message);process.exitCode=1;});

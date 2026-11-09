@@ -23,11 +23,7 @@ export function prepareConsoleCommand(command: string) {
   return `powershell.exe -NoLogo -NoProfile -NonInteractive -InputFormat Text -OutputFormat Text -EncodedCommand ${encoded}`
 }
 
-export function projectQuickCommands(type: string) {
-  if (type === 'go') return ['go version', 'go mod download', 'go test ./...', 'go list ./...']
-  if (type === 'laravel') return ['php --version', 'composer install --no-interaction', 'php artisan about', 'php artisan migrate:status', 'php artisan schedule:list']
-  return ['node --version', 'npm ci --include=dev', 'npm run build', 'npm outdated']
-}
+export {projectQuickCommands} from '../scripts/console-policy.cjs'
 
 export async function resolveConsoleWorkingDirectory(root: string, requested?: unknown) {
   const projectRoot = await realpath(root)

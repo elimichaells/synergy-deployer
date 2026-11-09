@@ -16,6 +16,10 @@ test('real remote deployment, workers, rollback, TLS routing, Git promotion and 
   const state=async id=>(await agent.readJson(path.join(h.root,'apps.json')))[id];
   const launch=async id=>agent.readJson(path.join(path.dirname((await state(id)).ecosystem),'launch.json'));
   await deploy({});await deploy(peer);const peerPid=await pid(peerId),first=await launch(appId),firstPid=await pid(appId);
+  let consoleLog='';const consoleJob={kind:'console',payload:{id:appId,command:'git ls-remote origin',repoUrl:h.repo,git:h.gitCredential,environment:{PRIVATE_APPLICATION_VALUE:'must-not-reach-git'},expiresAt:Date.now()+60000}};
+  const consoleResult=await agent.consoleJob(h.root,consoleJob,h.tools,text=>consoleLog+=text);assert.equal(consoleResult.ok,true);assert.match(consoleLog,/refs\/heads\/main/);assert.ok(!consoleLog.includes(h.gitCredential.token));assert.ok(!(await fs.readdir(h.root)).some(name=>name.startsWith('console-git-ca-')));
+  await assert.rejects(agent.consoleJob(h.root,{...consoleJob,payload:{...consoleJob.payload,command:'git ls-remote --upload-pack=unsafe origin'}},h.tools,()=>{}),/transport/);
+  await assert.rejects(agent.consoleJob(h.root,{...consoleJob,payload:{...consoleJob.payload,repoUrl:h.repo+'/other'}},h.tools,()=>{}),/does not match/);
   assert.equal((await h.secure(h.ports.get(app.hostname))).body.version,'one');
   assert.equal(await(await fetch('http://127.0.0.1:'+h.existingPort)).text(),'preserved-site');
   assert.equal(await fs.readFile(h.configPath,'utf8'),h.source);

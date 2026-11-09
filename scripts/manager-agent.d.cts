@@ -29,3 +29,5 @@ export function databaseEnvironment(input: AgentDatabase): Record<string, string
 export function jobSecrets(input: Record<string, unknown>): string[]
 
 export const INFRASTRUCTURE_CAPABILITY: string
+
+export const CONSOLE_DETAILS_CAPABILITY:string

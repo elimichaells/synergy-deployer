@@ -95,7 +95,7 @@ test('direct Git execution retains cancellation and redacts both streams and ret
 
 test('console route passes the selected project connection and releases the operation lock', async () => {
   const git = gitModule(); let run; let unlocks = 0;
-  const api = load('app/api/sites/[id]/console/route.ts', {
+  const api = load('app/api/sites/[id]/console/route.ts', { '@/lib/request-body':load('lib/request-body.ts',{'@/lib/api':{ApiError}}),
     '@/lib/auth': { getSessionFromCookie: async () => ({ id: 'operator', role: 'operator' }) },
     '@/lib/rbac': { requireRole: () => {} }, '@/lib/api': { ApiError, jsonError: error => Response.json({ error: error.message }, { status: error.status || 500 }) },
     '@/lib/db': { query: async sql => ({ rows: sql.startsWith('select') ? [{ ...app, id: 'fixture' }] : [] }) },
@@ -104,7 +104,7 @@ test('console route passes the selected project connection and releases the oper
     '@/lib/project-console-git': git, '@/lib/runtimes': {}, '@/lib/project-databases': {}, '@/lib/data-services': {},
     '@/lib/exec': { runCommand: async (...args) => { run = args; args[3]('fatal: Authentication failed\n'); return { code: 128, output: 'Authentication failed' }; } },
   });
-  const response = await api.POST(new Request('http://localhost/console', { method: 'POST', body: JSON.stringify({ command: 'git fetch origin' }) }), { params: Promise.resolve({ id: 'fixture' }) });
+  const response = await api.POST(new Request('http://localhost/console', { method: 'POST',headers:{origin:'http://localhost',host:'localhost'}, body: JSON.stringify({ command: 'git fetch origin' }) }), { params: Promise.resolve({ id: 'fixture' }) });
   assert.equal(response.status, 200);
   const output = await response.text();
   assert.deepEqual(run[0].args, ['fetch', 'origin']); assert.equal(run[5], false); assert.deepEqual(run[6].redact, [token, basic]);

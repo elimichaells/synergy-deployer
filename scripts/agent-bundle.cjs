@@ -6,6 +6,8 @@ const path = require('node:path');
 async function agentBundle(root = process.cwd()) {
   let source = await fs.readFile(path.join(root, 'scripts/manager-agent.cjs'), 'utf8');
   source=source.replace("const createWindowsPidUsage = require('./windows-pidusage.cjs');",`const createWindowsPidUsage = ${require('./windows-pidusage.cjs').toString()};`);
+  const consolePolicy=await fs.readFile(path.join(root,'scripts/console-policy.cjs'),'utf8');
+  source=source.replace("const consolePolicy = require('./console-policy.cjs');",`const consolePolicy=(()=>{const module={exports:{}};\n${consolePolicy}\nreturn module.exports;})();`);
   const releaseData=await fs.readFile(path.join(root,'scripts/remote-release-data.cjs'),'utf8');
   source=source.replace("const releaseData = require('./remote-release-data.cjs');",`const releaseData = (()=>{const module={exports:{}};\n${releaseData}\nreturn module.exports;})();`);
   const audit=await fs.readFile(path.join(root,'scripts/dependency-audit.cjs'),'utf8');

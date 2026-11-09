@@ -25,6 +25,13 @@ test('console rejects expired requests, multiline commands and escaping working 
   await assert.rejects(agent.consoleJob(root,job('echo unsafe',{cwd:'outside'}),{},()=>{}),/stay inside/);
   await fs.unlink(path.join(root,'console','outside'));
 });
+test('console information reads scripts without executing them and completion stays in the selected directory',async t=>{
+  const root=await fixture(t),directory=path.join(root,'console');await fs.mkdir(directory);await fs.mkdir(path.join(directory,'src'));await fs.writeFile(path.join(directory,'package.json'),JSON.stringify({scripts:{build:'echo private-fixture-token','bad;name':'touch unsafe',test:'node --test'}}));
+  const result=await agent.consoleJob(root,job('',{inspect:true,environment:{TOKEN:'private-fixture-token'}}),{},()=>{throw Error('Inspection must not execute shell commands')});assert.equal(result.inspection,true);assert.ok(result.console.entries.includes('src'+path.sep));assert.equal(result.console.scripts.build,'echo [redacted]');assert.equal(result.console.scripts['bad;name'],undefined);
+  const policy=require('../scripts/console-policy.cjs');assert.equal(policy.completeCommand('cd sr',result.console.entries,[],process.platform==='win32').command,'cd src'+path.sep);assert.equal(policy.completeCommand('NOD',[],['node --version'],false).command,'NOD');assert.equal(policy.completeCommand('NOD',[],['node --version'],true).command,'node');
+  await fs.unlink(path.join(directory,'package.json'));const outside=path.join(root,'private.json');await fs.writeFile(outside,JSON.stringify({scripts:{unsafe:'private'}}));await fs.symlink(outside,path.join(directory,'package.json'),'file');assert.deepEqual((await agent.consoleJob(root,job('',{inspect:true}),{},()=>{})).console.scripts,{});
+});
+
 test('stopping a console terminates its child process tree', {timeout:15000},async t=>{
   const extensions=process.env.PATHEXT;delete process.env.PATHEXT;t.after(()=>{if(extensions!==undefined)process.env.PATHEXT=extensions});
   const root=await fixture(t),controller=new AbortController();
@@ -107,6 +114,13 @@ test('real PostgreSQL serializes console and service work and preserves cancella
   assert.equal((await managed.claimJob(server.id)).paused,true);await assert.rejects(mod.queueRemoteConsole(server.id,null,{action:'run',command:'Get-Date'},user),/service operation/);
   await query("update remote_service_operations set status='success' where id=$1",[operation]);const next=await mod.queueRemoteConsole(server.id,null,{action:'run',command:'Get-Date'},user);assert.ok(next.id);
   await mod.cancelRemoteConsole(server.id,next.id,user);assert.equal((await managed.claimJob(server.id)).job,null);
+  await assert.rejects(mod.queueRemoteConsole(server.id,null,{action:'inspect'},user),/Update the agent/);
+  await query('update managed_servers set metrics=$2 where id=$1',[server.id,JSON.stringify({capabilities:[agent.CONSOLE_CAPABILITY,agent.CONSOLE_DETAILS_CAPABILITY]})]);
+  await mod.queueRemoteConsole(server.id,null,{action:'inspect'},user);const inspection=(await managed.claimJob(server.id)).job;assert.equal(inspection.payload.inspect,true);assert.equal(inspection.payload.command,'');
+  await assert.rejects(managed.reportJob(server.id,{id:inspection.id,claimToken:inspection.claimToken,status:'success',sequence:1,result:{ok:true,cwd:'/fixture',console:{entries:['unsafe\nname'],scripts:{}}}}),/console information/);
+  await managed.reportJob(server.id,{id:inspection.id,claimToken:inspection.claimToken,status:'success',sequence:1,result:{ok:true,cwd:'/fixture',console:{entries:['src/'],scripts:{build:'npm run build'}}}});
+  assert.equal((await mod.remoteConsoleHistory(server.id,null)).jobs[0].result.inspection,true);
+
   await query('update managed_servers set metrics=$2 where id=$1',[server.id,JSON.stringify({capabilities:[agent.CONSOLE_CAPABILITY,agent.RUNTIME_CAPABILITY,agent.APPLICATION_CONTROL_CAPABILITY],runtimeVersions:{node:['22.23.4']}})]);
   const appConfig={name:'Pinned runtime fixture',repo_url:'https://github.com/example/test',branch:'main',start_cmd:'node app.cjs',port:45001,access_mode:'lan',hostname:randomUUID()+'.example.test',runtime_versions:{node:'22.23.4'}};
   const app=await managed.saveRemoteApp(server.id,null,appConfig,user);assert.deepEqual((await query('select runtime_versions from remote_apps where id=$1',[app.id])).rows[0].runtime_versions,{node:'22.23.4'});
