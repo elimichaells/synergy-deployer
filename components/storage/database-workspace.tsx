@@ -39,6 +39,10 @@ const ownershipLabel: Record<string, string> = { manager: 'Created by Synergy', 
 
 export default function DatabaseWorkspace() {
   const params=useParams<{id:string;databaseId?:string}>(),id=params.databaseId||params.id
+  const {serverId}=useStorageTransport()
+  return <ScopedDatabaseWorkspace key={`${serverId||'local'}:${id}`} id={id}/>
+}
+function ScopedDatabaseWorkspace({id}:{id:string}) {
   const [database, setDatabase] = useState<Detail | null>(null)
   const {fetch,root,appHref,serverId}=useStorageTransport()
   const [engine, setEngine] = useState<Engine | null>(null)
@@ -66,7 +70,7 @@ export default function DatabaseWorkspace() {
     const engines = await fetch('/api/storage/engines', { cache: 'no-store',signal:controller.signal }).then(res => res.ok ? res.json() : null).catch(() => null)
     if(controller.signal.aborted)return
     setEngine(engines?.engines?.find((item: Engine) => item.id === body.database.serverId) || null)
-  }, [id,fetch,serverId])
+  }, [id,fetch])
 
   useEffect(() => {setDatabase(null);setRevealed(null);setEngine(null);setError('');void load().catch(err=>{if(err.name!=='AbortError')setError(err.message)});return()=>pending.current?.abort()}, [load])
   useEffect(() => {

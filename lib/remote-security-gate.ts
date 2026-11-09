@@ -4,6 +4,7 @@ import { ensureManagedServers, uuid, queueRemoteDeploy } from './managed-servers
 import { resourceTransaction } from './remote-resources'
 import { gateOffUntil, validateGateOverride } from './security-gate-policy'
 import { remoteGateState } from './remote-security-gate-policy'
+import {promotionReview,promotionProblem} from '../scripts/remote-promotion-policy.cjs'
 export async function readRemoteGate(serverId:string,appId:string) {
   await ensureManagedServers()
   const app=(await query('select security_gate from remote_apps where server_id=$1 and id=$2',[uuid(serverId),uuid(appId)])).rows[0]
@@ -14,11 +15,21 @@ export async function remoteOverridePlan(serverId:string,jobId:string) {
   await ensureManagedServers()
   const row=(await query(`select j.*,a.name,a.branch as current_branch,not exists(select 1 from remote_jobs n where n.app_id=j.app_id and n.kind='deploy' and n.created_at>j.created_at) as newest from remote_jobs j join remote_apps a on a.id=j.app_id where j.server_id=$1 and j.id=$2 and j.kind='deploy'`,[uuid(serverId),uuid(jobId)])).rows[0]
   if(!row)throw new ApiError('Deployment not found on this server',404)
-  return{projectId:row.app_id,projectName:row.name,branch:row.current_branch,kind:'deploy',staging:null,blocker:row.status!=='failed'||row.security_status!=='failed'?'This deployment was not stopped by the security gate.':!row.newest?'A newer deployment exists. Open that deployment instead.':null}
+  const plan={projectId:row.app_id,projectName:row.name,branch:row.current_branch,kind:'deploy',staging:null as {id:string;name:string;branch:string;commit:string}|null,blocker:row.status!=='failed'||row.security_status!=='failed'?'This deployment was not stopped by the security gate.':!row.newest?'A newer deployment exists. Open that deployment instead.':row.branch&&row.branch!==row.current_branch?'The deployment branch changed. Start a new reviewed deployment.':null as string|null}
+  if(row.trigger==='promote'){
+    plan.kind='promote';const requested=row.promotion_options
+    if(!requested){plan.blocker='This older promotion has no saved review. Review staging promotion again.';return plan}
+    const apps=(await query('select * from remote_apps where server_id=$1 and id=any($2::uuid[])',[serverId,[row.app_id,uuid(requested.stagingId)]])).rows,production=apps.find(a=>a.id===row.app_id),staging=apps.find(a=>a.id===requested.stagingId)
+    plan.blocker ||= promotionProblem(staging,production)
+    if(!plan.blocker&&(!staging||!production||staging.live_commit!==requested.commit||promotionReview(serverId,staging,production)!==requested.review))plan.blocker='Staging or production changed. Review the promotion again.'
+    if(staging)plan.staging={id:staging.id,name:staging.name,branch:staging.branch,commit:requested.commit}
+  }
+  return plan
 }
 export async function overrideRemoteDeployment(serverId:string,jobId:string,body:Record<string,unknown>,actor:string) {
   let override;try{override=validateGateOverride(body)}catch(error){throw new ApiError((error as Error).message,400)}
   const plan=await remoteOverridePlan(serverId,jobId);if(plan.blocker)throw new ApiError(plan.blocker,409)
+  if(plan.staging&&body.commit!==plan.staging.commit)throw new ApiError('Confirm the reviewed staging commit before overriding this promotion',409)
   const job=await queueRemoteDeploy(serverId,plan.projectId,actor,{override:{jobId,...override}})
   return{deploymentId:job.id,gate:await readRemoteGate(serverId,plan.projectId)}
 }

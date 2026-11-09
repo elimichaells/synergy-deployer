@@ -270,13 +270,7 @@ export async function queueRemoteDeploy(serverId: string, appId: string, userId:
     if (!app) throw new ApiError('App not found', 404)
     let commitSha:string|undefined
     let promotion:{stagingId:string;sourceCommit:string;branch:string;mode:'commit'|'merge'}|undefined
-    if(options.promotion){
-      const requested=options.promotion,staging=(await client.query('select * from remote_apps where server_id=$1 and id=$2',[serverId,uuid(requested.stagingId)])).rows[0]
-      const problem=promotionProblem(staging,app);if(problem)throw new ApiError(problem,409)
-      if(staging.live_commit!==requested.commit||promotionReview(serverId,staging,app)!==requested.review)throw new ApiError('Staging or production changed. Review the promotion again.',409)
-      promotion={stagingId:staging.id,sourceCommit:staging.live_commit,branch:staging.branch,mode:staging.branch===app.branch?'commit':'merge'}
-      if(promotion.mode==='commit')commitSha=promotion.sourceCommit
-    }
+    let reviewedPromotion=options.promotion
     if(options.webhook){
       const push=options.webhook
       if(!app.auto_deploy||app.webhook_user_id!==userId||!app.webhook_ciphertext||hash(app.webhook_ciphertext)!==push.secretHash||app.branch!==push.branch||repositoryUrl(app.repo_url)!==push.repository||!/^[a-f0-9]{40,64}$/.test(push.sha))throw new ApiError('Git automation changed. This delivery is no longer authorized.',409)
@@ -289,12 +283,23 @@ export async function queueRemoteDeploy(serverId: string, appId: string, userId:
       const stopped=(await client.query("select * from remote_jobs where server_id=$1 and app_id=$2 and id=$3 and kind='deploy' and status='failed' and security_status='failed' and not exists(select 1 from remote_jobs n where n.app_id=$2 and n.kind='deploy' and n.created_at>remote_jobs.created_at)",[serverId,appId,uuid(options.override.jobId)])).rows[0]
       if(!stopped)throw new ApiError('Only the newest deployment stopped by the security gate can be overridden',409)
       if(stopped.repo_url&&stopped.repo_url!==app.repo_url)throw new ApiError('The repository changed. Start a new reviewed deployment.',409)
-      if(stopped.trigger==='promote')throw new ApiError('Review staging promotion again after adjusting its production security gate.',409)
+      if(stopped.branch&&stopped.branch!==app.branch)throw new ApiError('The deployment branch changed. Start a new reviewed deployment.',409)
+      if(stopped.trigger==='promote'){
+        if(!stopped.promotion_options)throw new ApiError('This older promotion has no saved review. Review staging promotion again.',409)
+        reviewedPromotion=stopped.promotion_options
+      }
       commitSha=stopped.requested_commit||undefined
       if(options.override.scope!=='once'){
         app.security_gate={until:gateOffUntil(options.override.scope),reason:options.override.reason,userId,at:new Date().toISOString()}
         await client.query('update remote_apps set security_gate=$2 where id=$1',[appId,JSON.stringify(app.security_gate)])
       }
+    }
+    if(reviewedPromotion){
+      const requested=reviewedPromotion,staging=(await client.query('select * from remote_apps where server_id=$1 and id=$2',[serverId,uuid(requested.stagingId)])).rows[0]
+      const problem=promotionProblem(staging,app);if(problem)throw new ApiError(problem,409)
+      if(staging.live_commit!==requested.commit||promotionReview(serverId,staging,app)!==requested.review)throw new ApiError('Staging or production changed. Review the promotion again.',409)
+      promotion={stagingId:staging.id,sourceCommit:staging.live_commit,branch:staging.branch,mode:staging.branch===app.branch?'commit':'merge'}
+      commitSha=promotion.mode==='commit'?promotion.sourceCommit:undefined
     }
     if(options.rollbackJobId){
       if(!server.metrics?.capabilities?.includes('application-control-v1'))throw new ApiError('Update the agent before restoring a previous commit',409)
@@ -316,8 +321,8 @@ export async function queueRemoteDeploy(serverId: string, appId: string, userId:
     try{validateRuntimeSelection(app.runtime_versions||{},server.metrics)}catch(error){throw new ApiError((error as Error).message,409)}
     if(!server.metrics?.capabilities?.includes('application-control-v1'))throw new ApiError('Update the agent before deploying with the application security gate and readiness controls',409)
     const payload = { ...validateApp({ ...app, environment }), id: app.id, git, project_type: app.project_type,environmentFiles:app.env_files_ciphertext?JSON.parse(decryptSecret(app.env_files_ciphertext)):undefined,managedEnvironment,commitSha,promotion,securityGate:options.override?.scope==='once'?{off:true,once:true,reason:options.override.reason}:remoteGateState(app.security_gate),auditExceptions:loadAuditExceptions().filter(entry=>entry.projectId===app.id), requiredCapability:'application-control-v1' }
-    const result = await client.query(`insert into remote_jobs (server_id,app_id,user_id,payload_ciphertext,trigger,branch,repo_url,requested_commit) values ($1,$2,$3,$4,$5,$6,$7,$8) returning id`,
-      [serverId, appId, userId, encryptSecret(JSON.stringify(payload)),options.promotion?'promote':options.webhook?'webhook':options.rollbackJobId?'rollback':'manual',app.branch,app.repo_url,commitSha||null])
+    const result = await client.query(`insert into remote_jobs (server_id,app_id,user_id,payload_ciphertext,trigger,branch,repo_url,requested_commit,promotion_options) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id`,
+      [serverId, appId, userId, encryptSecret(JSON.stringify(payload)),promotion?'promote':options.webhook?'webhook':options.rollbackJobId?'rollback':'manual',app.branch,app.repo_url,commitSha||null,reviewedPromotion?JSON.stringify(reviewedPromotion):null])
     jobId = result.rows[0].id
     if(options.override)await client.query('insert into audit_logs(user_id,action,resource,details) values($1,$2,$3,$4)',[userId,'remote.security_gate.override',appId,JSON.stringify({...options.override,serverId,queuedJobId:jobId})])
     await client.query('commit')

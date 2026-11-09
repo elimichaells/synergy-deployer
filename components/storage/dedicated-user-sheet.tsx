@@ -26,13 +26,16 @@ export function DedicatedUserSheet({ serviceId, open, onOpenChange, onDone }: { 
 
   useEffect(() => {
     if (!open) return
+    const controller=new AbortController()
     setPlan(null); setResult(null); setUnderstood(false); setLoading(true)
-    void fetch(`/api/storage/${serviceId}/dedicated-user`, { cache: 'no-store' }).then(async response => {
+    void fetch(`/api/storage/${serviceId}/dedicated-user`, { cache: 'no-store',signal:controller.signal }).then(async response => {
       const body = await response.json().catch(() => ({}))
+      if(controller.signal.aborted)return
       if (!response.ok) throw new Error(body.error || 'Could not prepare the switch')
       setPlan(body.plan)
-    }).catch(error => setResult({ ok: false, message: error.message })).finally(() => setLoading(false))
-  }, [open, serviceId])
+    }).catch(error => {if(!controller.signal.aborted)setResult({ ok: false, message: error.message })}).finally(() => {if(!controller.signal.aborted)setLoading(false)})
+    return()=>controller.abort()
+  }, [open, serviceId,fetch])
 
   const run = async () => {
     setRunning(true); setResult(null)

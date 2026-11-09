@@ -48,3 +48,22 @@ test('remote webhook routes bound unauthenticated payloads and require admin sam
   assert.equal((await route.POST(request(),context)).status,403);role='admin';assert.equal((await route.POST(request('{}','https://other.test'),context)).status,403);assert.equal(calls,0);
   const events=load('app/api/webhooks/remote/[serverId]/[appId]/route.ts',mocks);assert.equal((await events.POST(request('x'.repeat(2*1024*1024+1)),context)).status,413);assert.equal(calls,0);
 });
+test('signed HTTP deliveries reach only their selected remote application for all Git providers',async t=>{
+  const http=require('node:http'),{randomUUID}=require('node:crypto'),serverId=randomUUID(),appId=randomUUID(),actor=randomUUID(),secret='disposable-http-webhook-secret',queued=[];
+  class ApiError extends Error{constructor(message,status){super(message);this.status=status}}
+  const api={ApiError,jsonError:e=>Response.json({error:e.message},{status:e.status||500})};let provider='github';
+  const app={id:appId,repo_url:'https://git.example/org/app',git_connection_id:'fixture',branch:'main',auto_deploy:true,webhook_user_id:actor,webhook_ciphertext:'encrypted-fixture'};
+  const automation=load('lib/remote-git-automation.ts',{'@/lib/api':api,'@/lib/db':{query:async(_sql,args)=>({rows:args[0]===serverId&&args[1]===appId?[app]:[]})},'@/lib/managed-servers':{ensureManagedServers:async()=>{},uuid:x=>x,queueRemoteDeploy:async(server,application,user,options)=>{queued.push({server,application,user,options});return{id:randomUUID()}}},'@/lib/secret-crypto':{decryptSecret:()=>secret},'@/lib/github-connections':{getGitConnection:async()=>({provider})},'@/lib/git-provider-api':{},'@/lib/git-provider-policy':{...policy,repositoryPath:()=> 'org/app'},'@/lib/manager-address':{managerUrl:()=> 'https://manager.example'},'@/lib/remote-webhook-policy':{remotePush}});
+  const route=load('app/api/webhooks/remote/[serverId]/[appId]/route.ts',{'@/lib/api':api,'@/lib/remote-git-automation':automation,'@/lib/update-maintenance':{updateProtected:(_name,fn)=>fn()}});
+  const listener=http.createServer(async(req,res)=>{try{const parts=req.url.split('/'),body=[];for await(const chunk of req)body.push(chunk);const result=await route.POST(new Request('http://127.0.0.1'+req.url,{method:'POST',headers:req.headers,body:Buffer.concat(body)}),{params:Promise.resolve({serverId:parts[1],appId:parts[2]})});res.writeHead(result.status,{'Content-Type':'application/json'});res.end(await result.text());}catch{res.writeHead(500);res.end();}});
+  await new Promise(r=>listener.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>{listener.close(r);listener.closeAllConnections()}));const origin='http://127.0.0.1:'+listener.address().port;
+  for(provider of ['github','gitlab','gitea']){
+    const payload={ref:'refs/heads/main',after:'b'.repeat(40),repository:{clone_url:app.repo_url+'.git'},project:{git_http_url:app.repo_url+'.git'}},raw=JSON.stringify(payload);
+    const headers={'Content-Type':'application/json',[provider==='github'?'x-github-event':provider==='gitlab'?'x-gitlab-event':'x-gitea-event']:provider==='gitlab'?'Push Hook':'push',[provider==='github'?'x-hub-signature-256':provider==='gitlab'?'x-gitlab-token':'x-gitea-signature']:provider==='gitlab'?secret:(provider==='github'?'sha256=':'')+createHmac('sha256',secret).update(raw).digest('hex')};
+    const response=await fetch(`${origin}/${serverId}/${appId}`,{method:'POST',headers,body:raw});assert.equal(response.status,200);assert.equal((await response.json()).status,'queued');const delivery=queued.at(-1);assert.equal(delivery.server,serverId);assert.equal(delivery.application,appId);assert.equal(delivery.user,actor);assert.equal(delivery.options.webhook.sha,payload.after);assert.equal(delivery.options.webhook.repository,app.repo_url);
+    const count=queued.length;assert.equal((await fetch(`${origin}/${randomUUID()}/${appId}`,{method:'POST',headers,body:raw})).status,404);
+    const badHeaders={...headers,[provider==='github'?'x-hub-signature-256':provider==='gitlab'?'x-gitlab-token':'x-gitea-signature']:'invalid-signature'};
+    assert.equal((await fetch(`${origin}/${serverId}/${appId}`,{method:'POST',headers:badHeaders,body:raw})).status,401);assert.equal(queued.length,count);
+    app.auto_deploy=false;assert.equal((await(await fetch(`${origin}/${serverId}/${appId}`,{method:'POST',headers,body:raw})).json()).status,'ignored');assert.equal(queued.length,count);app.auto_deploy=true;
+  }
+});

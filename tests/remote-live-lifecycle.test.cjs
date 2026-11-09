@@ -1,0 +1,56 @@
+'use strict';
+const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),{randomUUID}=require('node:crypto');
+const agent=require('../scripts/manager-agent.cjs'),{lab}=require('./fixtures/live-agent-lab.cjs');
+test('real remote deployment, workers, rollback, TLS routing, Git promotion and detach preserve unrelated applications',{
+  skip:!process.env.TEST_PM2_PACKAGE_ROOT||!process.env.TEST_CADDY,timeout:600000,
+},async t=>{
+  const h=await lab(t),appId=randomUUID(),peerId=randomUUID(),workerId=randomUUID(),stoppedId=randomUUID(),peerWorkerId=randomUUID();
+  const app={id:appId,name:'Live fixture',repo_url:h.repo,branch:'main',port:await h.freePort(),health_path:'/',health_profile:{path:'/',timeoutMs:5000},access_mode:'lan',hostname:'live.example.test',project_type:'node',start_cmd:'node app.cjs',install_cmd:'',build_cmd:'',environment:{DATABASE_URL:'postgres://fixture:initial@127.0.0.1/fixture'},git:h.gitCredential};
+  const peer={...app,id:peerId,name:'Preserved peer',hostname:'peer.example.test',port:await h.freePort()};
+  h.ports.set(app.hostname,await h.freePort());h.ports.set(peer.hostname,await h.freePort());
+  const deploy=async patch=>{const job={id:randomUUID(),payload:{...app,...patch}},journal={appId:job.payload.id,log:'',securityStatus:null};const persist=()=>agent.atomicJson(path.join(h.root,'active-test-job.json'),journal);await agent.deploy(h.root,job,journal,h.tools,persist,text=>journal.log+=text,{proxyConfig:h.proxyConfig});return{job,journal};};
+  const list=async()=>{const text=await h.pm(['jlist']);return JSON.parse(text.slice(text.indexOf('[')));};
+  const pid=async id=>(await list()).find(p=>p.name==='manager-remote-'+id)?.pid;
+  const resource=input=>agent.infrastructureJob(h.root,{payload:{action:'resource',resource:input,expiresAt:Date.now()+60000}},h.tools,()=>{});
+  const action=(id,action)=>agent.infrastructureJob(h.root,{payload:{action,id,expiresAt:Date.now()+60000}},h.tools,()=>{});
+  const state=async id=>(await agent.readJson(path.join(h.root,'apps.json')))[id];
+  const launch=async id=>agent.readJson(path.join(path.dirname((await state(id)).ecosystem),'launch.json'));
+  await deploy({});await deploy(peer);const peerPid=await pid(peerId),first=await launch(appId),firstPid=await pid(appId);
+  assert.equal((await h.secure(h.ports.get(app.hostname))).body.version,'one');
+  assert.equal(await(await fetch('http://127.0.0.1:'+h.existingPort)).text(),'preserved-site');
+  assert.equal(await fs.readFile(h.configPath,'utf8'),h.source);
+  const memory=await resource({action:'memory',id:appId,limitMb:512,restart:false});assert.equal(memory.healthy,true);assert.equal(await pid(appId),firstPid);
+  await action(appId,'stop');assert.equal((await list()).find(p=>p.name==='manager-remote-'+appId).pm2_env.status,'stopped');await action(appId,'start');await agent.healthy(app,5000);await action(appId,'restart');await agent.healthy(app,5000);assert.equal(await pid(peerId),peerPid);
+  await resource({action:'storage',operation:'sync-env',serviceId:appId,environment:{DATABASE_URL:'postgres://fixture:changed@127.0.0.1/fixture'},restart:true});
+  assert.equal((await(await fetch('http://127.0.0.1:'+app.port)).json()).database,'postgres://fixture:changed@127.0.0.1/fixture');
+  await assert.rejects(resource({action:'storage',operation:'sync-env',serviceId:appId,environment:{DATABASE_URL:'postgres://fixture:wrong@127.0.0.1/fixture',FAIL_HEALTH:'yes'},restart:true}),/previous environment and process were restored/);
+  assert.equal((await(await fetch('http://127.0.0.1:'+app.port)).json()).database,'postgres://fixture:changed@127.0.0.1/fixture');
+  const config={command:'node worker.cjs',workingDirectory:first.cwd,projectRoot:first.cwd,projectId:appId,enabled:true};
+  await resource({action:'worker-save',id:workerId,config});await resource({action:'worker-save',id:stoppedId,config:{...config,enabled:false}});
+  const peerLaunch=await launch(peerId);await resource({action:'worker-save',id:peerWorkerId,config:{...config,workingDirectory:peerLaunch.cwd,projectRoot:peerLaunch.cwd,projectId:peerId}});
+  const workerPeerPid=(await list()).find(p=>p.name==='manager-worker-'+peerWorkerId).pid;
+  await fs.mkdir(path.join(first.cwd,'uploads'),{recursive:true});await fs.writeFile(path.join(first.cwd,'uploads','saved.txt'),'persistent application data');
+  await h.run(['checkout','-b','staging'],h.seed);await fs.writeFile(path.join(h.seed,'version.txt'),'two');await h.run(['add','.'],h.seed);await h.run(['commit','-m','tested staging change'],h.seed);const staging=await h.run(['rev-parse','HEAD'],h.seed);await h.run(['push',h.bare,'staging'],h.seed);
+  await h.run(['checkout','main'],h.seed);await fs.writeFile(path.join(h.seed,'production.txt'),'main branch change');await h.run(['add','.'],h.seed);await h.run(['commit','-m','production branch change'],h.seed);await h.run(['push',h.bare,'main'],h.seed);
+  const promoted=await deploy({promotion:{stagingId:randomUUID(),sourceCommit:staging,branch:'staging',mode:'merge'}});assert.equal(promoted.journal.activation.accepted,true);assert.ok(h.pushes()>0);assert.equal(await h.run(['--git-dir',h.bare,'rev-parse','main']),promoted.journal.commitSha);
+  const current=await launch(appId);assert.notEqual(current.cwd,first.cwd);assert.equal(await fs.readFile(path.join(current.cwd,'uploads','saved.txt'),'utf8'),'persistent application data');
+  for(let i=0;i<30;i++){if(await fs.readFile(path.join(current.cwd,'uploads','worker.txt'),'utf8').catch(()=>'')==='two')break;await h.pause(100);}assert.equal(await fs.readFile(path.join(current.cwd,'uploads','worker.txt'),'utf8'),'two');
+  assert.equal((await list()).find(p=>p.name==='manager-worker-'+peerWorkerId).pid,workerPeerPid);assert.ok(!(await list()).some(p=>p.name==='manager-worker-'+stoppedId&&p.pm2_env.status==='online'));
+  assert.equal((await h.secure(h.ports.get(app.hostname))).body.version,'two');assert.equal((await h.secure(h.ports.get(peer.hostname))).body.version,'one');
+  await assert.rejects(deploy({environment:{...app.environment,FAIL_HEALTH:'yes'}}),/Health check failed/);
+  assert.equal((await launch(appId)).cwd,current.cwd);assert.equal((await h.secure(h.ports.get(app.hostname))).body.version,'two');assert.equal(await fs.readFile(path.join(current.cwd,'uploads','saved.txt'),'utf8'),'persistent application data');
+  assert.equal((await list()).find(p=>p.name==='manager-worker-'+peerWorkerId).pid,workerPeerPid);
+  // A genuine Git conflict must fail before replacing the healthy process.
+  await h.run(['checkout','staging'],h.seed);await fs.writeFile(path.join(h.seed,'version.txt'),'three');await h.run(['add','.'],h.seed);await h.run(['commit','-m','conflicting staging change'],h.seed);const conflict=await h.run(['rev-parse','HEAD'],h.seed);await h.run(['push',h.bare,'staging'],h.seed);
+  await h.run(['checkout','main'],h.seed);await h.run(['fetch',h.bare,'main'],h.seed);await h.run(['reset','--hard','FETCH_HEAD'],h.seed);await fs.writeFile(path.join(h.seed,'version.txt'),'four');await h.run(['add','.'],h.seed);await h.run(['commit','-m','conflicting production change'],h.seed);await h.run(['push',h.bare,'main'],h.seed);
+  const conflictPid=await pid(appId),pushCount=h.pushes();await assert.rejects(deploy({promotion:{stagingId:randomUUID(),sourceCommit:conflict,branch:'staging',mode:'merge'}}),/CONFLICT|merge failed/i);assert.equal(await pid(appId),conflictPid);assert.equal(h.pushes(),pushCount);
+  await assert.rejects(action(appId,'detach'),/workers first/);
+  await resource({action:'worker-delete',id:workerId});await resource({action:'worker-delete',id:stoppedId});
+  const detach=process.env.MANAGER_REMOTE_TEST_DATABASE_URL?await require('./fixtures/manager-removal-lab.cjs')(t,[await state(appId),await state(peerId)]):null;
+  const detachedPid=await pid(appId),receipt=detach?await detach(appId,job=>agent.infrastructureJob(h.root,job,h.tools,()=>{})):await action(appId,'detach');assert.equal(receipt.preservedResources,true);assert.equal(receipt.detachedAppId,appId);assert.equal(await pid(appId),detachedPid);assert.equal(await state(appId),undefined);
+  assert.equal((await action(appId,'detach')).preservedResources,true,'detach replay is idempotent');
+  const saved=await agent.readJson(path.join(h.root,'apps.json'));await h.proxyConfig(h.root,await agent.managedCaddyConfig(h.root,Object.values(saved).map(x=>x.app)),h.tools);
+  assert.equal((await h.secure(h.ports.get(app.hostname))).body.version,'two');assert.equal((await h.secure(h.ports.get(peer.hostname))).body.version,'one');assert.equal(await fs.readFile(path.join(current.cwd,'uploads','saved.txt'),'utf8'),'persistent application data');
+  await assert.rejects(deploy({id:randomUUID()}),/site preserved after removal/);await assert.rejects(action(appId,'stop'),/removed from Manager/);
+  assert.equal(await pid(peerId),peerPid);assert.equal(await fs.readFile(h.configPath,'utf8'),h.source);assert.equal(await(await fetch('http://127.0.0.1:'+h.existingPort)).text(),'preserved-site');
+});

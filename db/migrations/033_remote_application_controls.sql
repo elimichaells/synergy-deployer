@@ -5,6 +5,7 @@ alter table remote_jobs add column if not exists repo_url text;
 alter table remote_apps add column if not exists security_gate jsonb;
 alter table remote_jobs add column if not exists security_status text;
 alter table remote_jobs add column if not exists requested_commit text;
+alter table remote_jobs add column if not exists promotion_options jsonb;
 alter table remote_apps add column if not exists env_files_ciphertext text;
 alter table remote_apps add column if not exists auto_deploy boolean not null default false;
 alter table remote_apps add column if not exists webhook_ciphertext text;

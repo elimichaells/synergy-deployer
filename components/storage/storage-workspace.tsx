@@ -1,7 +1,7 @@
 'use client'
 import {useStorageTransport} from '@/lib/storage-client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { AlertTriangle, ArrowRight, Database, Link2, Loader2, Plus, RefreshCw, Search, ShieldAlert } from 'lucide-react'
 import { AppShell } from '@/components/layout/app-shell'
@@ -23,6 +23,10 @@ interface Found { projectId: string; projectName: string; environment: string; s
 
 function EmbeddedStorage({children,tabs,actions,subtitle}:React.ComponentProps<typeof AppShell>){return <div><div className="mb-4 flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-muted-foreground">{subtitle}</p><div className="flex gap-2">{actions}</div></div>{tabs}<div className="mt-5">{children}</div></div>}
 export default function StorageWorkspace({embedded=false}:{embedded?:boolean}) {
+  const {serverId}=useStorageTransport()
+  return <ScopedStorageWorkspace key={serverId||'local'} embedded={embedded}/>
+}
+function ScopedStorageWorkspace({embedded}:{embedded:boolean}) {
   const Shell=embedded?EmbeddedStorage:AppShell
   const [databases, setDatabases] = useState<StorageDatabase[] | null>(null)
   const {fetch,root,databaseHref,appHref}=useStorageTransport()
@@ -36,16 +40,19 @@ export default function StorageWorkspace({embedded=false}:{embedded?:boolean}) {
   const [addOpen, setAddOpen] = useState(false)
   const [tab, setTab] = useState('databases')
 
-  const load = async () => {
+  const pending=useRef<AbortController|null>(null)
+  const load = useCallback(async () => {
+    pending.current?.abort();const controller=new AbortController();pending.current=controller
     setError('')
     try {
-      const response = await fetch('/api/storage', { cache: 'no-store' })
+      const response = await fetch('/api/storage', { cache: 'no-store',signal:controller.signal })
       const body = await response.json()
+      if(controller.signal.aborted)return
       if (!response.ok) throw new Error(body.error || 'Could not load storage')
       setDatabases(body.databases); setFound(body.discovered); setIsAdmin(body.isAdmin); setNow(Date.now())
-    } catch (err) { setError((err as Error).message); setDatabases(current => current || []) }
-  }
-  useEffect(() => { void load() }, [fetch])
+    } catch (err) { if(controller.signal.aborted)return;setError((err as Error).message); setDatabases(current => current || []) }
+  },[fetch])
+  useEffect(() => { void load();return()=>pending.current?.abort() }, [load])
   useEffect(() => {
     const value = new URLSearchParams(window.location.search).get('tab')
     if (value === 'servers' || value === 'migrations') setTab(value)
