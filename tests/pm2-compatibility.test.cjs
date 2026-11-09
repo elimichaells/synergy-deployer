@@ -3,8 +3,8 @@ const agent=require('../scripts/manager-agent.cjs'),worker=require('../scripts/m
 test('updater, health monitor and recovery read the selected real PM2 daemon',{skip:!process.env.TEST_PM2_PACKAGE_ROOT,timeout:90000},async t=>{
   const pm2PackageRoot=path.resolve(process.env.TEST_PM2_PACKAGE_ROOT),cli=path.join(pm2PackageRoot,'bin/pm2');
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'manager-pm2-compat-')),env=await agent.privatePm2Environment(root,cli);
-  const pm=args=>agent.run(process.execPath,[cli,...args],{env,timeout:25000});
-  t.after(async()=>{if(await fs.stat(path.join(root,'pm2/pm2.pid')).catch(()=>null))await pm(['kill']);assert.ok(root.startsWith(path.join(os.tmpdir(),'manager-pm2-compat-')));await fs.rm(root,{recursive:true,force:true});});
+  const pm=async args=>{const output=await agent.run(process.execPath,[cli,...args],{env,timeout:25000});t.diagnostic(args[0]+': '+output.slice(-3500));return output;};
+  t.after(async()=>{t.diagnostic((await fs.readFile(path.join(root,'pm2/pm2.log'),'utf8').catch(()=>'' )).slice(-5000));if(await fs.stat(path.join(root,'pm2/pm2.pid')).catch(()=>null))await pm(['kill']);assert.ok(root.startsWith(path.join(os.tmpdir(),'manager-pm2-compat-')));await fs.rm(root,{recursive:true,force:true});});
   const marker=process.platform==='win32'?await agent.readJson(path.join(root,'pm2-private-pipes.json')):null;
   const config={pm2PackageRoot,pm2Home:path.join(root,'pm2'),pm2Socket:marker?marker.prefix+'-rpc.sock':path.join(root,'pm2/rpc.sock')};
   const script=path.join(root,'fixture.cjs');await fs.writeFile(script,'setInterval(()=>{},1000)');
