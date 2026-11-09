@@ -1,6 +1,7 @@
 'use client'
 import {useState} from 'react'
 import {PromoteSheet} from '@/components/app/promote-sheet'
+import {StoragePanel} from '@/components/app/storage-panel'
 import { Section, StatusLine } from '@/components/app/section'
 import { ApplicationRemoval } from '@/components/app/application-removal'
 import { ApplicationProcess } from '@/components/app/application-process'
@@ -43,6 +44,7 @@ export function RemoteApplicationWorkspace({ server, app, apps, jobs, tab, now, 
   const related = apps.filter(item => item.id !== app.id && (item.production_id || item.id) === (app.production_id || app.id))
   const section = ({environment:'environment',storage:'database',domains:'domain',settings:'runtime'} as const)[tab as 'environment'|'storage'|'domains'|'settings']
   if(tab==='environment')return <EnvironmentSettings projectId={app.id} serverId={server.id} canWrite={deployer} browserApp={app.project_type==='angular'} onDirtyChange={onDirtyChange} onSaved={onChanged}/>
+  if(tab==='storage')return <StoragePanel projectId={app.id} projectName={app.name} projectType={app.project_type||'node'} role={admin?'admin':deployer?'operator':'viewer'} onChanged={onChanged}/>
   if(tab==='domains'&&app.live_commit)return <div className="space-y-6"><DomainsPanel projectId={app.id} projectName={app.name} port={app.port} serverId={server.id} environment={app.environment_name||'production'} role={admin?'admin':deployer?'operator':'viewer'} onChanged={onChanged}/><details className="rounded-xl border border-border p-4"><summary className="cursor-pointer text-sm font-medium">Primary address configuration</summary><div className="mt-4">{app.guided_setup?<RemoteAppSetup server={server} appId={app.id} section="domain" canWrite={admin} canDeploy={deployer} onChanged={onChanged} onDirtyChange={onDirtyChange} onDeploy={onDeploy}/>:<RemoteAppForm serverId={server.id} platform={server.platform} app={app} section="domains" canWrite={admin&&server.enabled} onSaved={onChanged} onDirtyChange={onDirtyChange}/>}</div></details></div>
   if(tab==='settings')return <div className="space-y-6">
     <GitAutomation projectId={app.id} serverId={server.id} branch={app.branch} autoDeploy={!!app.auto_deploy} canWrite={admin} onChanged={onChanged}/>

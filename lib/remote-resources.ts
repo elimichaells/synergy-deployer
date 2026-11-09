@@ -26,13 +26,18 @@ export async function admitResource(client:PoolClient,serverId:string) {
   return server
 }
 export async function enqueueResource(client:PoolClient,serverId:string,resource:Record<string,unknown>,actor:string|null,target:string|null=null) {
-  const allowed=['health','app-logs','disk','memory','start-method','sleep','wake','worker-save','worker-start','worker-stop','worker-restart','worker-delete','worker-logs','cron-run','database-inspect','database-tune','database-review','recovery']
+  const allowed=['storage','health','app-logs','disk','memory','start-method','sleep','wake','worker-save','worker-start','worker-stop','worker-restart','worker-delete','worker-logs','cron-run','database-inspect','database-tune','database-review','recovery']
   if(!allowed.includes(String(resource.action)))throw new ApiError('Unknown resource action',400)
-  const appId=['health','app-logs','memory','start-method','sleep','wake','database-review','recovery'].includes(String(resource.action))?uuid(resource.id):null
+  const appId=resource.action==='storage'&&resource.operation==='sync-env'?uuid(resource.serviceId):['health','app-logs','memory','start-method','sleep','wake','database-review','recovery'].includes(String(resource.action))?uuid(resource.id):null
   if(appId&&!(await client.query('select 1 from remote_apps where id=$1 and server_id=$2 and live_commit is not null',[appId,serverId])).rowCount)throw new ApiError('Deploy this application first',409)
   const applicationControl=['health','app-logs'].includes(String(resource.action))||resource.action==='memory'&&resource.restart===false
+  if(resource.action==='storage'&&!(await client.query('select metrics from managed_servers where id=$1',[serverId])).rows[0]?.metrics?.capabilities?.includes('storage-control-v1'))throw new ApiError('Update the agent to enable database management on this server',409)
   if(applicationControl&&!(await client.query('select metrics from managed_servers where id=$1',[serverId])).rows[0]?.metrics?.capabilities?.includes('application-control-v1'))throw new ApiError('Update the agent to enable these application controls',409)
-  const payload={action:'resource',id:appId,resource,requiredCapability:applicationControl?'application-control-v1':CAPABILITY,expiresAt:Date.now()+60000}
+  const payload={action:'resource',id:appId,resource,requiredCapability:resource.action==='storage'?'storage-control-v1':applicationControl?'application-control-v1':CAPABILITY,expiresAt:Date.now()+60000}
+  if(resource.action==='storage'){
+    const provider=(resource.connection as {provider?:string}|undefined)?.provider,driver=provider&&({mysql:'mysql2',mariadb:'mysql2',sqlserver:'mssql',mongodb:'mongodb',redis:'redis'} as Record<string,string>)[provider]
+    if(driver)resource.driverArchive=await (await import('../scripts/agent-postgres-runtime.cjs')).packagePostgresRuntime(process.cwd(),[driver])
+  }
   const job=(await client.query("insert into remote_jobs(server_id,app_id,user_id,kind,operation_type,resource_action,resource_target,payload_ciphertext) values($1,$2,$3,'console','infrastructure',$4,$5,$6) returning id",[serverId,appId,actor,resource.action,target,encryptSecret(JSON.stringify(payload))])).rows[0]
   await client.query('insert into audit_logs(user_id,action,resource,details) values($1,$2,$3,$4)',[actor,'remote.resource.'+resource.action,serverId,JSON.stringify({jobId:job.id,appId,target})])
   return {jobId:job.id}

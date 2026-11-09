@@ -33,7 +33,14 @@ test('host environment writes preserve separate files, reject stale edits and ne
 });
 test('runtime log tails remain bounded and tolerate invalid line counts',async t=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'manager-log-tail-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));const file=path.join(root,'app.log');await fs.writeFile(file,'large log\n'.repeat(100000)+'last line');
-  const {tailRuntimeLog}=load('lib/runtime-log-reader.ts',{});assert.equal(await tailRuntimeLog(file,1),'last line');assert.ok((await tailRuntimeLog(file,NaN)).length<65536);assert.equal(await tailRuntimeLog(file,-5),'last line');
+  const {tailRuntimeLog}=load('lib/runtime-log-reader.ts',{'./environment-text':load('lib/environment-text.ts',{})});assert.equal(await tailRuntimeLog(file,1),'last line');assert.ok((await tailRuntimeLog(file,NaN)).length<65536);assert.equal(await tailRuntimeLog(file,-5),'last line');
+});
+test('host log output redacts stored environment values and encoded database passwords',async t=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'manager-log-secrets-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const password='Fixture p@ssword',url='postgresql://app:'+encodeURIComponent(password)+'@127.0.0.1/fixture';await fs.writeFile(path.join(root,'.env'),'DATABASE_URL='+url+'\nAPI_KEY=stored-fixture-secret\n');
+  const log=load('lib/runtime-log-reader.ts',{'./environment-text':load('lib/environment-text.ts',{})}),secrets=await log.runtimeLogSecrets(root,{SESSION_TOKEN:'process-fixture-token'});
+  const result=log.redactRuntimeLog([url,password,encodeURIComponent(password),'stored-fixture-secret','process-fixture-token','ordinary log'].join('\n'),secrets);assert.doesNotMatch(result,/Fixture|stored-fixture|process-fixture/);assert.match(result,/ordinary log/);
+  await fs.mkdir(path.join(root,'.env.local'));await assert.rejects(log.runtimeLogSecrets(root),/safely read/);
 });
 test('PostgreSQL stores remote environment files separately, scopes edits and audits security overrides', {skip:!process.env.MANAGER_REMOTE_TEST_DATABASE_URL},async t=>{
   const url=new URL(process.env.MANAGER_REMOTE_TEST_DATABASE_URL);assert.equal(url.hostname,'127.0.0.1');assert.match(url.pathname,/^\/manager_remote_test_/);

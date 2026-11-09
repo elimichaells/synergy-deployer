@@ -17,7 +17,7 @@ import { RemoteDeployment } from '@/components/infrastructure/remote-deployment'
 import { RemoteServerHealth, RemoteProcesses } from '@/components/infrastructure/remote-server-health'
 import { RemoteRuntimes } from '@/components/infrastructure/remote-runtimes'
 import { RemoteConsole } from '@/components/infrastructure/remote-console'
-import { RemoteResources } from '@/components/infrastructure/remote-resources'
+import StorageWorkspace from '@/components/storage/storage-workspace'
 import { RemoteProjectWorkspace } from '@/components/infrastructure/remote-project-workspace'
 import { RemoteServerOverview } from '@/components/infrastructure/remote-server-overview'
 import { ServerEnrollment } from '@/components/infrastructure/server-enrollment'
@@ -154,7 +154,7 @@ function ManagedServerWorkspace({ id }: { id: string }) {
       {view === 'applications' && !projectId && <RemoteApplications canCreate={admin && server.enabled} now={now} server={server} apps={summary.apps} jobs={summary.jobs} fresh={summary.fresh} />}
       {project && <TabsContent value={projectTab} className="mt-0"><RemoteProjectWorkspace key={project.id} server={server} projectId={project.id} apps={projectApps} jobs={summary.jobs} tab={projectTab} preferredEnvironment={projectEnvironment} now={now} canWrite={admin} canDeploy={deployer} busy={busy} onDeploy={appId => { void action(`/apps/${appId}/deploy`).then(ok => { if (ok) router.push(remoteAppHref(id, appId, 'deployments')) }) }} /></TabsContent>}
       {projectId && !project && <div role="alert" className="notice-error">This project is no longer available on {server.name}. <Link href={`${root}#applications`} className="underline">View projects</Link></div>}
-      {view === 'storage' && <RemoteResources apps={summary.apps} mode="storage" />}
+      {view === 'storage' && <StorageWorkspace embedded/>}
       {view === 'domains' && <DomainsWorkspace key={server.id} serverId={server.id} />}
       {view === 'domains' && server.has_ca && <div className="rounded-xl border border-border bg-card p-5"><h2 className="text-sm font-semibold">LAN certificate trust</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">Distribute this server’s public root CA through your institution’s device policy or trust store. This enables trusted HTTPS for internal hostnames and IP access. Internal DNS must point each name to this server. The certificate is public; private keys stay on the server.</p><Button asChild variant="outline" size="sm" className="mt-3"><a href={`/api/servers/${id}/ca`}><Download className="mr-2 h-3.5 w-3.5" />Download root CA</a></Button></div>}
       {selected && <TabsContent value={appTab} className="mt-0"><RemoteApplicationWorkspace key={selected.id} server={server} app={selected} apps={summary.apps} jobs={summary.jobs} tab={appTab} now={now} fresh={summary.fresh} admin={admin} deployer={deployer}

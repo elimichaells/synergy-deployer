@@ -1,6 +1,7 @@
 'use client'
+import {useStorageTransport} from '@/lib/storage-client'
 
-import { useState } from 'react'
+import { useEffect,useRef,useState } from 'react'
 import { Loader2, Lock, Play, Unlock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ResultsGrid, type GridColumn } from './results-grid'
@@ -10,20 +11,25 @@ interface SqlResult { command: string; rowCount: number; columns: GridColumn[]; 
 /** Run SQL against one database. Read-only until writes are switched on; writes are audited. */
 export function SqlTab({ serviceId, database }: { serviceId: string; database: string }) {
   const [sql, setSql] = useState('')
+  const {fetch}=useStorageTransport()
   const [allowWrites, setAllowWrites] = useState(false)
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<SqlResult | null>(null)
   const [error, setError] = useState('')
+  const pending=useRef<AbortController|null>(null)
+  useEffect(()=>{setSql('');setAllowWrites(false);setResult(null);setError('');setRunning(false);return()=>pending.current?.abort()},[serviceId,fetch])
 
   const run = async () => {
     if (running || !sql.trim()) return
+    const controller=new AbortController();pending.current=controller
     setRunning(true); setError(''); setResult(null)
     try {
-      const response = await fetch(`/api/storage/${encodeURIComponent(serviceId)}/data/sql`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sql, allowWrites }) })
+      const response = await fetch(`/api/storage/${encodeURIComponent(serviceId)}/data/sql`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sql, allowWrites }),signal:controller.signal })
       const body = await response.json().catch(() => ({}))
+      if(controller.signal.aborted)return
       if (!response.ok) throw new Error(body.error || 'The query failed')
       setResult(body)
-    } catch (err) { setError((err as Error).message) } finally { setRunning(false) }
+    } catch (err) { if(!controller.signal.aborted)setError((err as Error).message) } finally { if(!controller.signal.aborted)setRunning(false) }
   }
 
   return (

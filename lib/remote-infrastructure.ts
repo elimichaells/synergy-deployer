@@ -3,7 +3,7 @@ import { parseLanAddress } from '../scripts/lan-address.cjs'
 import { audit } from './audit'
 import { db,query } from './db'
 import { ensureManagedServers,serverDetail,uuid } from './managed-servers'
-import { encryptSecret } from './secret-crypto'
+import { encryptSecret,decryptSecret } from './secret-crypto'
 import { INFRASTRUCTURE_CAPABILITY, LAN_CAPABILITY, validateLanSelection } from '@/scripts/manager-agent.cjs'
 
 export async function remoteProcesses(serverId:string) {
@@ -12,9 +12,11 @@ export async function remoteProcesses(serverId:string) {
 }
 export async function remoteInfrastructureJob(serverId:string,jobId:string,admin:boolean) {
   await ensureManagedServers();uuid(serverId);uuid(jobId)
-  const job=(await query("select id,app_id,status,log,result,resource_action from remote_jobs where server_id=$1 and id=$2 and operation_type='infrastructure'",[serverId,jobId])).rows[0]
+  const job=(await query("select id,app_id,status,log,result,result_private_ciphertext,resource_action from remote_jobs where server_id=$1 and id=$2 and operation_type='infrastructure'",[serverId,jobId])).rows[0]
   if(!job||!admin&&!job.app_id&&!['worker-save','worker-start','worker-stop','worker-restart','worker-delete','worker-logs','cron-run','database-inspect'].includes(job.resource_action))throw new ApiError('Operation not found',404)
   if(job.resource_action==='database-inspect'&&job.result)job.result=(await import('./remote-databases')).decorateDatabaseResult(job.result,admin)
+  if(job.result_private_ciphertext){if(!admin)throw new ApiError('Operation not found',404);job.result=JSON.parse(decryptSecret(job.result_private_ciphertext))}
+  delete job.result_private_ciphertext
   return {job}
 }
 export async function queueInfrastructure(serverId:string,appId:string|null,action:unknown,userId:string,domain?:{id:string;hostname:string;remove:boolean;restoreHostname?:string;restoreAccessMode?:string;routes?:{id:string;appId:string;prefix:string;stripPrefix:boolean}[]}) {

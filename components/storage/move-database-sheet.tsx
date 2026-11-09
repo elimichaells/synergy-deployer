@@ -1,4 +1,5 @@
 'use client'
+import {useStorageTransport} from '@/lib/storage-client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, ArrowRight, Check, Loader2, Truck, XCircle } from 'lucide-react'
@@ -36,6 +37,7 @@ function MoveLog({ move }: { move: Move }) {
 /** Moves a PostgreSQL database to another server, with the plan shown and confirmed first. */
 export function MoveDatabaseSheet({ serviceId, open, onOpenChange, onDone }: { serviceId: string; open: boolean; onOpenChange: (open: boolean) => void; onDone: () => void }) {
   const [plan, setPlan] = useState<Plan | null>(null)
+  const {fetch}=useStorageTransport()
   const [move, setMove] = useState<Move | null>(null)
   const [canMove, setCanMove] = useState(false)
   const [confirm, setConfirm] = useState('')

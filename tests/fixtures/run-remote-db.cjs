@@ -14,8 +14,9 @@ const exec=promisify(execFile),bin=process.argv[2];
     await run('pg_ctl',['-D',data,'-l',path.join(root,'postgres.log'),'-w','start']);started=true;
     const {Client}=require('pg'),client=new Client({host:'127.0.0.1',port,user:'fixture_admin',password,database:'postgres'});
     await client.connect();try{await client.query('create database manager_remote_test_parity')}finally{await client.end()}
-    const env={...process.env,MANAGER_REMOTE_TEST_DATABASE_URL:`postgresql://fixture_admin:${password}@127.0.0.1:${port}/manager_remote_test_parity`};
-    const files=['managed-servers','agent-update-api','remote-guided-setup','remote-operations','remote-infrastructure','remote-resources','server-removal','application-removal','remote-app-controls'].map(x=>'tests/'+x+'.test.cjs');
+    const env={...process.env,MANAGER_REMOTE_TEST_PG_BIN:bin,MANAGER_REMOTE_TEST_DATABASE_URL:`postgresql://fixture_admin:${password}@127.0.0.1:${port}/manager_remote_test_parity`};
+    const selected=process.argv.slice(3);if(selected.some(name=>!/^[a-z0-9-]+$/.test(name)))throw Error('Invalid isolated test selection');
+    const files=(selected.length?selected:['managed-servers','agent-update-api','remote-guided-setup','remote-operations','remote-infrastructure','remote-resources','server-removal','application-removal','remote-app-controls','remote-storage','remote-storage-agent']).map(x=>'tests/'+x+'.test.cjs');
     const code=await new Promise(resolve=>{const child=spawn(process.execPath,['--require','./tests/register.cjs','--test','--test-concurrency=1',...files],{cwd:path.resolve(__dirname,'../..'),env,windowsHide:true,stdio:'inherit'});child.on('error',()=>resolve(1));child.on('exit',resolve)});if(code!==0)throw Error('Remote API integration tests failed');
   }finally{
     if(started)await run('pg_ctl',['-D',data,'-w','-m','fast','stop']);

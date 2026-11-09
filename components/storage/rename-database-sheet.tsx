@@ -1,4 +1,5 @@
 'use client'
+import {useStorageTransport} from '@/lib/storage-client'
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
@@ -8,7 +9,8 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import type { RenamePlan } from '@/lib/database-rename'
 
 export function RenameDatabaseSheet({ serviceId, open, onOpenChange, onDone }: { serviceId: string; open: boolean; onOpenChange: (open: boolean) => void; onDone: () => void }) {
-  const [plan, setPlan] = useState<RenamePlan | null>(null)
+  const [plan, setPlan] = useState<(RenamePlan&{review?:string}) | null>(null)
+  const {fetch,serverId}=useStorageTransport()
   const [name, setName] = useState(''), [confirm, setConfirm] = useState('')
   const [acknowledge, setAcknowledge] = useState(false), [busy, setBusy] = useState(false)
   const [error, setError] = useState(''), [message, setMessage] = useState('')
@@ -31,7 +33,7 @@ export function RenameDatabaseSheet({ serviceId, open, onOpenChange, onDone }: {
   const rename = async () => {
     setBusy(true); setError('')
     try {
-      const response = await fetch(`/api/storage/${encodeURIComponent(serviceId)}/rename`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newName: name, confirm, acknowledge }) })
+      const response = await fetch(`/api/storage/${encodeURIComponent(serviceId)}/rename`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newName: name, confirm, acknowledge,review:plan?.review }) })
       const body = await response.json()
       if (!response.ok) throw new Error(body.error || 'Rename failed')
       setMessage(body.message); onDone()
@@ -54,7 +56,7 @@ export function RenameDatabaseSheet({ serviceId, open, onOpenChange, onDone }: {
             <div className="space-y-3">
               <p className="text-sm font-medium">Apps and settings Manager can identify</p>
               {plan.apps.length ? plan.apps.map(app => <div key={app.projectId} className="rounded-lg border border-border p-3 text-sm">
-                <Link className="underline" href={`/sites/${app.projectId}?tab=environment`}>{app.name}</Link> · {app.environment}
+                <Link className="underline" href={serverId?`/infrastructure/servers/${serverId}?tab=environment#app-${app.projectId}`:`/sites/${app.projectId}?tab=environment`}>{app.name}</Link> · {app.environment}
                 <ul className="mt-2 space-y-1 text-xs text-muted-foreground">{app.settings.map(setting => <li key={setting} className="break-all font-mono">{setting}</li>)}</ul>
               </div>) : <p className="text-sm text-muted-foreground">No saved app settings or Manager links were found.</p>}
               <p className="text-xs text-muted-foreground">Also check apps outside Manager, CI secrets, containers, workers and external clients. These may not appear here.</p>

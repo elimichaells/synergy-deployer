@@ -1,4 +1,5 @@
 'use client'
+import {useStorageTransport} from '@/lib/storage-client'
 
 import { useEffect, useState } from 'react'
 import { CheckCircle2, FileCog, Loader2, ShieldCheck, XCircle } from 'lucide-react'
@@ -17,6 +18,7 @@ interface Plan {
  */
 export function DedicatedUserSheet({ serviceId, open, onOpenChange, onDone }: { serviceId: string; open: boolean; onOpenChange: (open: boolean) => void; onDone: () => void }) {
   const [plan, setPlan] = useState<Plan | null>(null)
+  const {fetch}=useStorageTransport()
   const [loading, setLoading] = useState(false)
   const [running, setRunning] = useState(false)
   const [understood, setUnderstood] = useState(false)

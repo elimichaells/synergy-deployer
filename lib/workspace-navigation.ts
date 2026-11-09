@@ -12,7 +12,7 @@ export const MAX_WORKSPACE_TABS = 20
 export const workspaceKey = (userId: string, role: string) => `synergy:workspace:v1:${userId}:${role}`
 const pages = new Set(['/', '/overview', '/projects', '/sites', '/sites/new', '/storage', '/data-services', '/database', '/deployments', '/settings', '/domains', '/services', '/automation', '/infrastructure', '/infrastructure/servers', '/infrastructure/operations', '/infrastructure/health', '/infrastructure/memory', '/infrastructure/disk', '/infrastructure/runtimes'])
 const details = /^\/(?:sites|projects|storage|deployments)\/[a-zA-Z0-9_-]{1,128}$/
-const remote = /^\/infrastructure\/servers\/[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i
+const remote = /^\/infrastructure\/servers\/[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}(?:\/storage(?:\/[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})?)?$/i
 
 /** Persist navigation only. Never retain arbitrary query strings, tokens or setup actions. */
 export function workspaceHref(value: string): string | null {

@@ -1,4 +1,5 @@
 'use client'
+import {useStorageTransport} from '@/lib/storage-client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
@@ -115,6 +116,7 @@ function statusClass(status: MigrationJob['status']) {
 }
 
 export function DataMigrationWizard({ projectId, projectName, services, onAddService, onActivated, onChanged, canRemove = false }: DataMigrationWizardProps) {
+  const {fetch}=useStorageTransport()
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState(0)
   const [sourceServiceId, setSourceServiceId] = useState('')

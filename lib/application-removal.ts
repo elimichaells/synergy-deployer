@@ -42,12 +42,14 @@ async function snapshot(client: PoolClient, serverId: string | null, appId: stri
   const related = (await client.query(`select id,name from ${table} where production_id=$1 order by id for update`, [appId])).rows
   const jobs = await rows(client, serverId ? 'remote_jobs' : 'deployments', serverId ? 'app_id' : 'project_id', appId)
   const domains = await rows(client, serverId ? 'remote_domains' : 'project_domains', 'project_id', appId)
-  const connections = serverId ? [] : await rows(client, 'project_data_services', 'project_id', appId)
+  const connections = await rows(client, serverId ? 'remote_storage_services' : 'project_data_services', serverId ? 'app_id' : 'project_id', appId)
+  if(serverId&&connections.length){const servers=(await client.query('select id,provider,host,port from remote_storage_connections where server_id=$1',[serverId])).rows;for(const item of connections){const connection=servers.find(c=>c.id===item.connection_id);if(connection)Object.assign(item,{provider:connection.provider,host:connection.host,port:connection.port})}}
   const migrations = serverId ? [] : await rows(client, 'data_migration_jobs', 'project_id', appId)
   const schedules = serverId ? (await client.query("select * from remote_automations where server_id=$1 and config->>'projectId'=$2 order by id for update", [serverId,appId])).rows : await rows(client, 'cron_jobs', 'project_id', appId)
   const databases = serverId ? [] : await rows(client, 'project_databases', 'project_id', appId)
   const backups = !serverId && databases.length && await exists(client,'backup_schedules') ? (await client.query('select * from backup_schedules where database_name=any($1::text[]) order by id for update',[databases.map(d=>d.database_name)])).rows : []
-  const serviceBackups = !serverId && await exists(client,'data_service_backup_schedules') ? (await client.query('select * from data_service_backup_schedules where service_id=any($1::uuid[]) order by id for update',[connections.map(c=>c.id)])).rows : []
+  const backupTable=serverId?'remote_storage_schedules':'data_service_backup_schedules'
+  const serviceBackups = await exists(client,backupTable) ? (await client.query(`select * from ${backupTable} where service_id=any($1::uuid[]) order by id for update`,[connections.map(c=>c.id)])).rows : []
   const blockers: string[] = []
   if (jobs.some(j => j.status === 'running')) blockers.push('An application operation is running. Wait for completion or cancel it first.')
   if (migrations.some(j => ['queued','running','validating'].includes(j.status))) blockers.push('A database migration is active.')
@@ -58,7 +60,7 @@ async function snapshot(client: PoolClient, serverId: string | null, appId: stri
   if (!serverId && await exists(client, 'project_domain_routes')) {
     if ((await client.query('select 1 from project_domain_routes r join project_domains d on d.id=r.domain_id where r.project_id=$1 or d.project_id=$1 limit 1', [appId])).rowCount) blockers.push('Remove shared domain paths before removing this application.')
   }
-  if (connections.length && (await client.query("select 1 from project_data_services where project_id<>$1 and options->>'sharedFrom'=any($2::text[]) limit 1", [appId,connections.map(c => c.id)])).rowCount) blockers.push('Another application shares this application’s database. Unlink the shared connection first.')
+  if (connections.length && (await client.query(`select 1 from ${serverId?'remote_storage_services':'project_data_services'} where ${serverId?'app_id':'project_id'}<>$1 and options->>'sharedFrom'=any($2::text[]) limit 1`, [appId,connections.map(c => c.id)])).rowCount) blockers.push('Another application shares this application’s database. Unlink the shared connection first.')
   if (schedules.length) blockers.push('Remove or reassign this application’s scheduled jobs and workers first.')
   if(!serverId&&await exists(client,'workers')){
     const root=path.resolve(app.root_path).toLowerCase()
@@ -67,6 +69,7 @@ async function snapshot(client: PoolClient, serverId: string | null, appId: stri
   }
   let requiresAgent = false
   if (serverId) {
+    if(await exists(client,'remote_storage_renames')&&(await client.query("select 1 from remote_storage_renames where server_id=$1 and status in ('running','needs_review') and apps @> $2::jsonb",[serverId,JSON.stringify([{projectId:appId}])])).rowCount)blockers.push('Verify the pending database rename before removing this application.')
     if(await exists(client,'remote_domain_routes')&&(await client.query('select 1 from remote_domain_routes r join remote_domains d on d.id=r.domain_id where r.server_id=$1 and (r.project_id=$2 or d.project_id=$2) limit 1',[serverId,appId])).rowCount)blockers.push('Remove shared domain paths before removing this application.')
     const server = (await client.query('select * from managed_servers where id=$1', [serverId])).rows[0]
     const resource = server.metrics?.resources?.apps?.find((a:{id:string})=>a.id===appId)

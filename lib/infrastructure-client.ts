@@ -22,11 +22,11 @@ export async function scopedInfrastructureFetch(serverId: string | undefined, ur
 export const infrastructureAppHref = (serverId: string | undefined, appId: string, tab = 'settings') => serverId
   ? `/infrastructure/servers/${serverId}?tab=${tab}#app-${appId}` : `/sites/${appId}?tab=${tab}`
 
-export async function infrastructureResponse(response:Response,endpoint?:string,signal?:AbortSignal) {
+export async function infrastructureResponse(response:Response,endpoint?:string,signal?:AbortSignal,waitMs=90000) {
   const body=await response.json().catch(()=>({}))
   if(!response.ok)throw Error(body.error||'Infrastructure request failed')
   if(!body.jobId||!endpoint)return body
-  const until=Date.now()+90000
+  const until=Date.now()+Math.min(1800000,Math.max(1000,waitMs))
   while(Date.now()<until){
     signal?.throwIfAborted()
     await new Promise(resolve=>setTimeout(resolve,1500))
@@ -34,7 +34,7 @@ export async function infrastructureResponse(response:Response,endpoint?:string,
     const timeout=AbortSignal.timeout(10000)
     const poll=await fetch(`${endpoint}/jobs/${body.jobId}`,{cache:'no-store',signal:signal?AbortSignal.any([signal,timeout]):timeout}),data=await poll.json()
     if(!poll.ok)throw Error(data.error||'Unable to read operation status')
-    if(data.job.status==='success')return {...data.job.result,message:data.job.log||'Operation completed',output:data.job.result?.output||data.job.log}
+    if(data.job.status==='success')return {...data.job.result,message:data.job.result?.message||data.job.log||'Operation completed',output:data.job.result?.output||data.job.log}
     if(!['queued','running'].includes(data.job.status))throw Error(data.job.log||`Operation ${data.job.status}`)
   }
   throw Error('The server has not confirmed completion. Refresh its state before retrying.')

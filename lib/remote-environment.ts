@@ -23,7 +23,7 @@ export async function saveRemoteEnvironmentFile(serverId:string,appId:string,bod
     await client.query('begin');await client.query('select id from managed_servers where id=$1 for update',[serverId])
     const app=(await client.query('select * from remote_apps where server_id=$1 and id=$2 for update',[serverId,appId])).rows[0]
     if(!app)throw new ApiError('Application not found on this server',404)
-    if((await client.query("select 1 from remote_jobs where server_id=$1 and app_id=$2 and status in ('queued','running')",[serverId,appId])).rowCount)throw new ApiError('Wait for this application operation to finish before editing its environment',409)
+    if((await client.query("select 1 from remote_jobs where server_id=$1 and (app_id=$2 or resource_action='storage') and status in ('queued','running')",[serverId,appId])).rowCount)throw new ApiError('Wait for this application or storage operation to finish before editing its environment',409)
     const files=remoteEnvironmentFiles(app)
     if(typeof body.previousContent!=='string'||body.previousContent!==(files[file]||''))throw new ApiError('This file changed elsewhere. Reload it before saving.',409)
     files[file]=body.content

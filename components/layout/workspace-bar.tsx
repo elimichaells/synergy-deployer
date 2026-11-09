@@ -47,7 +47,7 @@ export function WorkspaceBar({ title, context, onNew, onHashChange }: { title: s
   const remoteProject = hash === '#applications' && /^[a-f0-9-]{36}$/i.test(params.get('view') || '')
   const detail = remoteProject || hash.startsWith('#app-') || /^\/(sites|projects|storage|deployments)\/[^/]+$/.test(pathname) && !pathname.endsWith('/new')
   const isRemote = !['fleet', 'local'].includes(serverId)
-  const label = hash.startsWith('#app-') ? context?.destinations?.[hash] || 'Application' : isRemote ? context?.page || sectionTitle || 'Overview' : context?.page || pageNames[pathname] || title
+  const label = hash.startsWith('#app-') ? context?.destinations?.[hash] || 'Application' : isRemote ? context?.page || (/\/storage(?:\/|$)/.test(pathname)?title:sectionTitle || 'Overview') : context?.page || pageNames[pathname] || title
   useEffect(() => {
     // Next can publish the query before the hash listener catches up. Never save
     // that intermediate location as another page's remembered tab.

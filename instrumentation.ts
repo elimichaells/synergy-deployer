@@ -125,6 +125,8 @@ async function initialize() {
     try {
       const { remoteResourceTick } = await import('@/lib/remote-automation')
       setInterval(() => tick('Remote resources', remoteResourceTick), 15_000)
+      const { remoteStorageSchedulerTick } = await import('@/lib/remote-storage')
+      setInterval(() => tick('Remote database backups', remoteStorageSchedulerTick), 60_000)
     } catch (err) { console.error('[System] Failed to start remote resource scheduler:', err) }
 
     // Memory is sampled every minute for the Memory page, its history and its warnings.

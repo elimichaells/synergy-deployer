@@ -26,6 +26,7 @@ const RUNTIME_CAPABILITY = 'runtime-versions-v1';
 const SETUP_CAPABILITY = 'guided-setup-v1';
 const UPDATE_CAPABILITY = 'agent-update-v1';
 const APPLICATION_CONTROL_CAPABILITY = 'application-control-v1';
+const STORAGE_CAPABILITY = 'storage-control-v1';
 const ID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 let configuredTools = {};
@@ -192,7 +193,7 @@ function sanitizeMetrics(raw) {
     caddy:raw.caddy?{mode:raw.caddy.mode==='shared'?'shared':'pm2',status:['running','stopped','unknown'].includes(raw.caddy.status)?raw.caddy.status:'unknown',configPath:str(raw.caddy.configPath,1024),version:str(raw.caddy.version)}:null,
     proxyError: raw.proxyError ? str(raw.proxyError, 500) : null,
     resources:resources.sanitize(raw.resources),
-    capabilities: [APPLICATION_CONTROL_CAPABILITY,LAN_CAPABILITY,SETUP_CAPABILITY,UPDATE_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY].filter(value => Array.isArray(raw.capabilities) && raw.capabilities.includes(value)) };
+    capabilities: [STORAGE_CAPABILITY,APPLICATION_CONTROL_CAPABILITY,LAN_CAPABILITY,SETUP_CAPABILITY,UPDATE_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY].filter(value => Array.isArray(raw.capabilities) && raw.capabilities.includes(value)) };
   if (result.memoryFree > result.memoryTotal || (result.diskFree !== null && result.diskTotal !== null && result.diskFree > result.diskTotal)) throw new Error('Invalid capacity');
   return result;
 }
@@ -1019,7 +1020,7 @@ async function runAgent(root) {
   let heartbeatBusy=false;
   const pulse=async()=>{
     if(heartbeatBusy)return;heartbeatBusy=true;
-    try{const data=await sample(root,tools,prior);prior=data.cpu;data.metrics.capabilities=[APPLICATION_CONTROL_CAPABILITY,LAN_CAPABILITY,SETUP_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY,...(supervised?[UPDATE_CAPABILITY]:[])];await request(config,'heartbeat',{protocol:PROTOCOL_VERSION,metrics:data.metrics,caPem:data.caPem});send({type:'heartbeat',version:AGENT_VERSION,metrics:data.metrics});}
+    try{const data=await sample(root,tools,prior);prior=data.cpu;data.metrics.capabilities=[STORAGE_CAPABILITY,APPLICATION_CONTROL_CAPABILITY,LAN_CAPABILITY,SETUP_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY,...(supervised?[UPDATE_CAPABILITY]:[])];await request(config,'heartbeat',{protocol:PROTOCOL_VERSION,metrics:data.metrics,caPem:data.caPem});send({type:'heartbeat',version:AGENT_VERSION,metrics:data.metrics});}
     finally{heartbeatBusy=false;}
   };
   const describe=error=>console.error(`[agent] ${redact(error.message,[config.agentToken])}`);
@@ -1109,7 +1110,7 @@ function serveStatic(root,portNumber) {
 function jobSecrets(payload) {
   const database = payload.database || {};
   const values = [...Object.values(payload.environment || {}),payload.git?.token,database.password,database.adminPassword,
-    payload.resource?.connection?.password,...(Array.isArray(payload.resource?.connections)?payload.resource.connections.flatMap(d=>[d.password,d.adminPassword]):[]),
+    payload.resource?.connection?.password,payload.resource?.administrator?.password,payload.resource?.password,payload.resource?.owner?.password,...Object.values(payload.resource?.environment||{}),...(Array.isArray(payload.resource?.connections)?payload.resource.connections.flatMap(d=>[d.password,d.adminPassword,d.connection?.password]):[]),
     payload.git?.token ? Buffer.from(`${payload.git.username}:${payload.git.token}`).toString('base64') : ''].filter(x=>typeof x==='string' && x);
   return [...values,...values.flatMap(value=>{try{return [encodeURIComponent(value)];}catch{return [];}}),...values.map(x=>x.replace(/'/g,"''"))];
 }

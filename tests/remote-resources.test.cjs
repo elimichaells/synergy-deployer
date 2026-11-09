@@ -45,6 +45,13 @@ test('memory limits restart only the selected app, preserve other Node flags and
 test('ambiguous shell commands and pinned runtimes cannot silently change to a direct launch',async t=>{
   const {launch}=await application(t);assert.equal((await resources.directPlan(launch,h)).ok,true);for(const command of ['node app.cjs && echo bad','node ../outside.cjs','npm run custom','node app.cjs --flag="space value"'])assert.equal((await resources.directPlan({...launch,command},h)).ok,false);assert.equal((await resources.directPlan({...launch,env:{MANAGER_NODE_VERSION:'24.1.0'}},h)).ok,false);
 });
+test('database environment sync backs up the file, changes only its app and restores launch and file on failed readiness',async t=>{
+  const {root,id,ecosystem,launch}=await application(t),file=path.join(launch.cwd,'.env'),original='# preserve this comment\nDATABASE_URL="postgresql://old"\nUNCHANGED="value"\n';await fs.writeFile(file,original);
+  const calls=[],name=`manager-remote-${id}`,tools={pm:async args=>{calls.push(args);return args[0]==='jlist'?JSON.stringify([{name,pm2_env:{status:'online'}}]):''}},input={action:'storage',operation:'sync-env',serviceId:id,environment:{DATABASE_URL:'postgresql://new'},restart:true};let checks=0;
+  await assert.rejects(resources.execute(root,{payload:{resource:input}},tools,{...h,healthy:async()=>{if(++checks===2)throw Error('fixture readiness failed')}}),/previous environment and process were restored/);
+  assert.equal(await fs.readFile(file,'utf8'),original);assert.deepEqual(await h.readJson(path.join(path.dirname(ecosystem),'launch.json')),launch);
+  const result=await resources.execute(root,{payload:{resource:input}},tools,h);assert.equal(result.synced,true);assert.equal(result.restart.success,true);assert.deepEqual(result.keys,['DATABASE_URL']);const current=await fs.readFile(file,'utf8');assert.match(current,/# preserve this comment/);assert.match(current,/UNCHANGED="value"/);assert.equal(current.match(/^DATABASE_URL=/gm).length,1);assert.match(current,/postgresql:\/\/new/);assert.ok(calls.filter(args=>args[0]==='delete').every(args=>args[1]===name));assert.equal((await fs.readdir(path.join(root,'environment-backups',id))).length,2);
+});
 test('saving a memory limit for the next start never restarts a running or stopped app',async t=>{
   const {root,id,ecosystem}=await application(t),calls=[],tools={pm:async args=>{calls.push(args);if(args[0]==='jlist')return '[]';throw Error('Must not mutate processes during deferred save')}};
   const result=await resources.execute(root,{payload:{resource:{action:'memory',id,limitMb:512,restart:false}}},tools,{...h,healthy:async()=>{throw Error('Deferred save must not require a running app')}});

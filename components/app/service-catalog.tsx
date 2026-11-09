@@ -1,4 +1,5 @@
 'use client'
+import {useStorageTransport} from '@/lib/storage-client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { CheckCircle2, Download, Link2, Loader2, Plug, RefreshCw } from 'lucide-react'
@@ -6,6 +7,9 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import { ProviderLogo, providerMeta } from './providers'
+import { Sheet,SheetContent,SheetHeader,SheetTitle,SheetDescription } from '@/components/ui/sheet'
+import { RemoteServices,type RequestedService } from '@/components/infrastructure/remote-services'
+import type { ManagedServer } from '@/lib/managed-server-types'
 
 export type Engine = 'postgresql' | 'mysql' | 'mariadb' | 'mongodb' | 'sqlserver' | 'redis'
 
@@ -34,6 +38,9 @@ export function ServiceCatalog({ role, selectedConnectionId, onSelect }: {
   onSelect: (connection: ServerConnection) => void
 }) {
   const [connections, setConnections] = useState<ServerConnection[] | null>(null)
+  const {fetch,serverId}=useStorageTransport()
+  const [remoteServer,setRemoteServer]=useState<ManagedServer|null>(null)
+  const [requested,setRequested]=useState<RequestedService>()
   const [runtimes, setRuntimes] = useState<Runtime[]>([])
   const [job, setJob] = useState<{ engine: Engine; job: Job } | null>(null)
   const [connectFor, setConnectFor] = useState<Engine | null>(null)
@@ -51,7 +58,7 @@ export function ServiceCatalog({ role, selectedConnectionId, onSelect }: {
     setConnections(loaded)
     if (runtimeRes.ok) setRuntimes((await runtimeRes.json()).runtimes || [])
     return loaded
-  }, [])
+  }, [fetch])
 
   useEffect(() => { void load().catch(err => setError(err.message)) }, [load])
   useEffect(() => () => { if (poll.current) window.clearInterval(poll.current) }, [])
@@ -82,12 +89,13 @@ export function ServiceCatalog({ role, selectedConnectionId, onSelect }: {
     const runtime = runtimes.find(item => item.id === engine.runtime)
     if (job?.engine === engine.id && ['queued', 'running'].includes(job.job.status)) return { kind: 'installing', jobId: job.job.id }
     if (runtime?.activeJob) return { kind: 'installing', jobId: runtime.activeJob.id }
-    if (runtime?.installed && engine.id !== 'postgresql') return { kind: 'installed' }
+    if (runtime?.installed && (serverId || engine.id !== 'postgresql')) return { kind: 'installed' }
     if (runtime?.canInstall) return { kind: 'installable' }
     return { kind: 'external' }
   }
 
   const install = async (engine: Engine) => {
+    if(serverId){setBusy(engine);setError('');try{const response=await window.fetch(`/api/servers/${serverId}`,{cache:'no-store'}),body=await response.json();if(!response.ok)throw Error(body.error||'Could not load this server');setRemoteServer(body.server);setRequested({service:engine,mode:'install',version:'',nonce:Date.now()})}catch(error){setError((error as Error).message)}finally{setBusy(null)}return}
     if (!window.confirm(`Install ${providerMeta[engine].label} on this server? It takes a few minutes, is restricted to this machine (no ports are opened), and runs while your apps keep serving.`)) return
     setBusy(engine); setError('')
     try {
@@ -131,6 +139,7 @@ export function ServiceCatalog({ role, selectedConnectionId, onSelect }: {
 
   return (
     <div className="space-y-3">
+      {remoteServer&&<Sheet open={!!requested} onOpenChange={open=>{if(!open)setRequested(undefined)}}><SheetContent className="w-full overflow-y-auto sm:max-w-2xl"><SheetHeader><SheetTitle>Configure runtime on {remoteServer.name}</SheetTitle><SheetDescription>Inspect existing installations and review changes on this server.</SheetDescription></SheetHeader><div className="mt-6"><RemoteServices server={remoteServer} requested={requested} onChanged={()=>void load().catch(error=>setError(error.message))}/></div></SheetContent></Sheet>}
       <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Database engine">
         {ENGINES.map(engine => {
           const state = stateOf(engine)

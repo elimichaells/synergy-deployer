@@ -1,3 +1,4 @@
+import {storageFixture} from './storage-api'
 import { NextResponse } from 'next/server'
 import { dataServiceRemovalReason, migrationRemovalReason } from '@/lib/data-removal-policy'
 import { resourceWorkspacesFixture } from './resource-workspaces-api'
@@ -19,6 +20,7 @@ const fixtureRuntimes = () => ['git', 'node', 'go', 'php', 'composer', 'angular'
 export async function GET(request: Request) {
   const cleanup = await releaseCleanupFixture(request, state.role); if (cleanup) return cleanup
   const resources = await resourceWorkspacesFixture(request, state.role); if (resources) return resources
+  const storage = await storageFixture(request,state.role); if(storage)return storage
   const remote = await remoteServersFixture(request); if (remote) return remote
   const url = new URL(request.url); const pathname = url.pathname
   if(pathname==='/api/manager-updates') return result(url.searchParams.get('check')==='1'?{version:'2.22.0',newer:true,available:true,url:'https://github.com/elimichaells/synergy-deployer/releases',notes:'Example release notes for the isolated UI preview.'}:{version:updateState.version,configured:true,assetName:'manager-update-win32-x64-node24.tar',recoveryDirectory:'C:\\ProgramData\\Manager\\updates',job:updateState.job,history:updateState.job?[updateState.job]:[]})
@@ -62,6 +64,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const cleanup = await releaseCleanupFixture(request, state.role); if (cleanup) return cleanup
   const resources = await resourceWorkspacesFixture(request, state.role); if (resources) return resources
+  const storage = await storageFixture(request,state.role); if(storage)return storage
   const remote = await remoteServersFixture(request); if (remote) return remote
   const pathname = new URL(request.url).pathname
   const body = await request.json().catch(() => ({}))
@@ -114,6 +117,7 @@ export async function POST(request: Request) {
 }
 export async function PATCH(request: Request) {
   const resources = await resourceWorkspacesFixture(request, state.role); if (resources) return resources
+  const storage = await storageFixture(request,state.role); if(storage)return storage
   const remote = await remoteServersFixture(request); if (remote) return remote
   const body = await request.json()
   const map: Record<string, string> = { projectType: 'project_type', runtimeVersions: 'runtime_versions', buildCmd: 'build_cmd', startCmd: 'start_cmd', deployScript: 'deploy_script', autoDeploy: 'auto_deploy' }
@@ -131,6 +135,7 @@ export async function PUT(request: Request) {
 }
 export async function DELETE(request: Request) {
   const resources = await resourceWorkspacesFixture(request, state.role); if (resources) return resources
+  const storage = await storageFixture(request,state.role); if(storage)return storage
   const remote = await remoteServersFixture(request); if (remote) return remote
   const pathname = new URL(request.url).pathname
   if (pathname.endsWith('/related')) state.grouped = false

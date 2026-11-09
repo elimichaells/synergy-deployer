@@ -1,4 +1,5 @@
 'use client'
+import {useStorageTransport} from '@/lib/storage-client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ArrowRightLeft, CheckCircle2, Database, Eye, Loader2, Play, Power, Server, StopCircle, Trash2, XCircle } from 'lucide-react'
@@ -30,6 +31,8 @@ const inputClass = 'h-10 w-full rounded-md border border-input bg-background px-
 /** Database servers and migrations, shown as the Servers and Migrations tabs of Storage. */
 export function ServersAndMigrations({ view }: { view: 'servers' | 'migrations' }) {
   const [user, setUser] = useState<User | null>(null)
+  const {fetch,serverId}=useStorageTransport()
+  const [inventoryRevision,setInventoryRevision]=useState(0)
   const [connections, setConnections] = useState<Connection[]>([])
   const [services, setServices] = useState<DataService[]>([])
   const [migrations, setMigrations] = useState<MigrationJob[]>([])
@@ -48,7 +51,7 @@ export function ServersAndMigrations({ view }: { view: 'servers' | 'migrations' 
     setNotice(null)
     try {
       const [me, connectionResponse, serviceResponse, migrationResponse] = await Promise.all([
-        fetch('/api/auth/me'), fetch('/api/data/connections'), fetch('/api/data/services'), fetch('/api/data/migrations'),
+        fetch('/api/auth/me'), fetch('/api/data/connections'), fetch('/api/data/services'), view==='migrations'?fetch('/api/data/migrations'):Promise.resolve(Response.json({migrations:[]})),
       ])
       if (!connectionResponse.ok || !serviceResponse.ok || !migrationResponse.ok) throw new Error('Failed to load data services')
       setUser((await me.json()).user || null)
@@ -57,7 +60,7 @@ export function ServersAndMigrations({ view }: { view: 'servers' | 'migrations' 
       setMigrations((await migrationResponse.json()).migrations || [])
     } catch (error) { setNotice(error instanceof Error ? error.message : 'Failed to load data services') }
     finally { setLoading(false) }
-  }, [])
+  }, [fetch,view])
 
   useEffect(() => { void refresh() }, [refresh])
   useEffect(() => {
@@ -164,21 +167,22 @@ export function ServersAndMigrations({ view }: { view: 'servers' | 'migrations' 
       <div className="space-y-6">
         {notice && <div className="rounded-md border border-border bg-muted/50 px-4 py-3 text-sm">{notice}</div>}
         {isAdmin && <div className="flex flex-wrap justify-end gap-2">
+          {view==='servers'&&serverId&&<Button size="sm" variant="outline" disabled={!!busy} onClick={async()=>{setBusy('inventory');setNotice(null);try{const response=await fetch('/api/storage/engines/refresh',{method:'POST'}),body=await response.json();if(!response.ok)throw Error(body.error||'Could not inspect this server');setInventoryRevision(v=>v+1)}catch(error){setNotice((error as Error).message)}finally{setBusy(null)}}}>{busy==='inventory'&&<Loader2 className="mr-2 h-4 w-4 animate-spin"/>}Refresh server inventory</Button>}
           {view === 'migrations' && <Button size="sm" variant="outline" onClick={() => { setMigrationOpen(true); setMigrationPreview(null) }} disabled={services.filter((service) => relationalProviders.includes(service.provider)).length < 2}><ArrowRightLeft className="mr-2 h-4 w-4" />Migrate data</Button>}
           {view === 'servers' && <Button size="sm" onClick={() => setCatalogOpen(true)}><Server className="mr-2 h-4 w-4" />Add database server</Button>}
         </div>}
-        {view === 'servers' && <EnginesPanel renderActions={engine => {
+        {view === 'servers' && <EnginesPanel key={`engines-${inventoryRevision}`} renderActions={engine => {
           const connection = connections.find(item => item.id === engine.id)
           if (!connection || !isAdmin) return null
           return <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
             <span className="text-xs text-muted-foreground">{connection.service_count} project service{connection.service_count === 1 ? '' : 's'}{connection.tls_enabled ? ' · TLS' : ''}{!connection.provisioning_enabled ? ' · new databases disabled' : ''}</span>
             <div className="flex gap-1">
               <Button variant="ghost" size="sm" onClick={() => void testConnection(connection.id)} disabled={!!busy}>{busy === `test-${connection.id}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="mr-2 h-4 w-4" />Test connection</>}</Button>
-              <Button variant="ghost" size="sm" title={connection.managed ? 'Managed by the Windows installer' : connection.service_count > 0 ? 'Disconnect its databases from their apps first' : 'Remove this server connection'} onClick={() => void deleteConnection(connection)} disabled={!!busy || connection.service_count > 0 || connection.managed}><Trash2 className="h-4 w-4" /></Button>
+              <Button variant="ghost" size="sm" title={connection.managed ? 'Managed installation' : connection.service_count > 0 ? 'Disconnect its databases from their apps first' : 'Remove this server connection'} onClick={() => void deleteConnection(connection)} disabled={!!busy || connection.service_count > 0 || connection.managed}><Trash2 className="h-4 w-4" /></Button>
             </div>
           </div>
         }} />}
-        {view === 'servers' && <ServerDatabases servers={connections} isAdmin={isAdmin} />}
+        {view === 'servers' && <ServerDatabases key={`databases-${inventoryRevision}`} servers={connections} isAdmin={isAdmin} />}
         {view === 'migrations' && <section>
           <div className="mb-3"><h2 className="text-sm font-semibold">Database migrations</h2><p className="text-xs text-muted-foreground">Validated transfers between project-owned relational services.</p></div>
           <div className="overflow-x-auto border-y border-border">

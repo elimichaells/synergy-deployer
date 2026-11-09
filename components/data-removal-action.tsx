@@ -1,4 +1,5 @@
 'use client'
+import {useStorageTransport} from '@/lib/storage-client'
 
 import { useId, useState } from 'react'
 import { Loader2, Trash2 } from 'lucide-react'
@@ -16,6 +17,7 @@ interface DataRemovalActionProps {
 
 export function DataRemovalAction({ kind, name, endpoint, blockedReason, disabled, onRemoved }: DataRemovalActionProps) {
   const [open, setOpen] = useState(false)
+  const {fetch}=useStorageTransport()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const reasonId = useId()

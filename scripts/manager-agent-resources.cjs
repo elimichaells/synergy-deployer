@@ -1,4 +1,5 @@
 'use strict';
+const storage = require('./remote-storage-agent.cjs');
 // Runs only inside the selected agent. Never imports Manager's database, host
 // process manager or host paths. All application changes use its private PM2.
 const fs = require('node:fs/promises');
@@ -99,6 +100,7 @@ async function recover(root,tools,h) {
   const saved=await h.readJson(path.join(root,'apps.json'),{}),item=saved[tx.id];
   if(!ID.test(tx.id)||!item||item.ecosystem!==tx.ecosystem)throw Error('Resource recovery requires manual review; app state changed');
   const ecosystem=await h.contained(root,path.relative(root,tx.ecosystem));
+  for(const entry of tx.envFiles||[]){const filename=await h.contained(root,path.relative(root,entry.path));if(entry.content===null)await fs.unlink(filename).catch(error=>{if(error.code!=='ENOENT')throw error;});else await fs.writeFile(filename,entry.content,{mode:0o600});}
   await fs.writeFile(ecosystem,tx.definition,{mode:0o600});await h.atomicJson(path.join(path.dirname(ecosystem),'launch.json'),tx.launch);
   await h.atomicJson(path.join(root,'resources.json'),tx.settings);
   try {if(tx.restart!==false){await tools.pm(['delete',`manager-remote-${tx.id}`]).catch(()=>{});await tools.pm(['start',ecosystem]);await h.healthy(item.app);await tools.pm(['save','--force']);}}
@@ -116,20 +118,34 @@ async function appChange(root,input,tools,h) {
     settings.limitMb=n;
   } else if(input.action==='start-method') {
     if(!['direct','runner'].includes(input.method))throw Error('Invalid start method');settings.method=input.method;
+  } else if(input.action==='database-env') {
+    if(!input.environment||typeof input.environment!=='object'||Array.isArray(input.environment)||Object.keys(input.environment).length>200||Object.entries(input.environment).some(([key,value])=>!/^[A-Z][A-Z0-9_]{0,100}$/.test(key)||['PATH','PORT','NODE_OPTIONS','NODE_ENV','PM2_HOME','HOME','USERPROFILE','APPDATA'].includes(key)||typeof value!=='string'||value.includes('\0')||value.length>50000))throw Error('Invalid database environment');
   } else throw Error('Unknown app resource operation');
   const ecosystem=await h.contained(root,path.relative(root,item.ecosystem)),launchFile=path.join(path.dirname(ecosystem),'launch.json'),launch=await h.readJson(launchFile);
   const restart=input.action==='start-method'||input.restart!==false;
   const before=await h.processList(tools.pm);const own=before.find(p=>p.name===`manager-remote-${input.id}`);
   if(restart&&own?.pm2_env?.status!=='online')throw Error('Start the app and verify it is healthy before changing its launch settings');
   if(restart)await h.healthy(item.app,5000);
-  await h.atomicJson(path.join(root,'resource-transaction.json'),{id:input.id,ecosystem,definition:await fs.readFile(ecosystem,'utf8'),launch,settings:previous,restart});
+  const envFiles=[];
+  if(input.action==='database-env'){
+    const filename=await h.contained(root,path.relative(root,path.join(launch.cwd,'.env'))),info=await fs.lstat(filename).catch(error=>{if(error.code==='ENOENT')return null;throw error;});
+    if(info&&(!info.isFile()||info.isSymbolicLink()||info.size>200000))throw Error('Application .env must be an ordinary file no larger than 200 KB');
+    const content=info?await fs.readFile(filename,'utf8'):null;envFiles.push({path:filename,content});
+    const backup=await h.contained(root,'environment-backups',input.id,require('node:crypto').randomUUID()+'.env');await fs.mkdir(path.dirname(backup),{recursive:true,mode:0o700});await fs.writeFile(backup,content||'',{mode:0o600,flag:'wx'});
+  }
+  await h.atomicJson(path.join(root,'resource-transaction.json'),{id:input.id,ecosystem,definition:await fs.readFile(ecosystem,'utf8'),launch,settings:previous,restart,envFiles});
   cfg.apps[input.id]=settings;
   try{
     if(input.action==='memory')launch.env.NODE_OPTIONS=heapOptions(launch.env.NODE_OPTIONS,input.limitMb);
+    if(input.action==='database-env'){
+      const values=input.environment,keys=new Set(Object.keys(values)),entry=envFiles[0];
+      const kept=(entry.content||'').split(/\r?\n/).filter(line=>!keys.has(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line.trimStart())?.[1]));
+      await fs.writeFile(entry.path,kept.join('\n')+'\n'+Object.entries(values).map(([key,value])=>`${key}=${JSON.stringify(value)}`).join('\n')+'\n',{mode:0o600});Object.assign(launch.env,values);
+    }
     await h.atomicJson(launchFile,launch);await h.atomicJson(path.join(root,'resources.json'),cfg);await applyLaunchSettings(root,input.id,ecosystem,h);
     if(restart){await tools.pm(['delete',own.name]);await tools.pm(['start',ecosystem]);await h.healthy(item.app);await tools.pm(['save','--force']);}
-    await fs.unlink(path.join(root,'resource-transaction.json'));invalidate(root);return {ok:true,healthy:true,restart:restart?{healthy:true,reason:null}:null,limitMb:settings.limitMb||null,method:settings.method||'runner'};
-  }catch(error){await recover(root,tools,h);return {ok:true,healthy:false,restored:true,reason:error.message};}
+    await fs.unlink(path.join(root,'resource-transaction.json'));invalidate(root);return {ok:true,healthy:true,...(input.action==='database-env'?{synced:true,keys:Object.keys(input.environment)}:{}),restart:restart?{success:true,healthy:true,reason:null}:null,limitMb:settings.limitMb||null,method:settings.method||'runner'};
+  }catch(error){await recover(root,tools,h);if(input.action==='database-env')throw Error('Database environment change failed; the previous environment and process were restored.');return {ok:true,healthy:false,restored:true,reason:error.message};}
 }
 async function ordinary(root,file) {
   const base=path.resolve(root),target=path.resolve(file),rel=path.relative(base,target);
@@ -223,6 +239,7 @@ async function execute(root,job,tools,h) {
   if(input.action==='database-review')return databaseReview(root,input,h);
   if(input.action==='database-inspect')return inspectDatabases(root,input,h);
   if(input.action==='database-tune')return tuneDatabase(root,input,h);
+  if(input.action==='storage')return input.operation==='sync-env'?appChange(root,{...input,action:'database-env',id:input.serviceId},tools,h):storage.execute(root,input,h);
   if(input.action.startsWith('worker-')||input.action==='cron-run')return automation(root,input,tools,h);
   throw Error('Unknown resource operation');
 }

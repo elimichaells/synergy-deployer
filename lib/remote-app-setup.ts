@@ -27,7 +27,7 @@ async function lockApp(client: PoolClient, serverId: string, appId: string) {
   await lockServer(client,serverId)
   const app = (await client.query('select * from remote_apps where id=$1 and server_id=$2 for update',[appId,serverId])).rows[0]
   if (!app?.guided_setup) throw new ApiError('Guided application not found on this server',404)
-  if ((await client.query("select id from remote_jobs where app_id=$1 and status in ('queued','running')",[appId])).rowCount) throw new ApiError('Wait for the current operation to finish, or cancel it before it starts',409)
+  if ((await client.query("select id from remote_jobs where (app_id=$1 or server_id=$2 and resource_action='storage') and status in ('queued','running')",[appId,serverId])).rowCount) throw new ApiError('Wait for the current operation to finish, or cancel it before it starts',409)
   return app
 }
 async function enqueue(client: PoolClient, serverId: string, appId: string, userId: string, kind: string, payload: object) {
@@ -117,6 +117,7 @@ export async function changeRemoteSetup(serverId: string, appId: string, body: R
       const collisions=await client.query(`select id from remote_apps where server_id=$1 and id<>$2 and (hostname=$3 or port=$4 or port=$5 or ip_port=$4 or ip_port=$5)`,[serverId,appId,config.hostname,config.port,config.ip_port])
       if(collisions.rowCount)throw new ApiError('Hostname or port is already assigned on this server',409)
       if(body.databaseNone===true) {
+        if(app.storage_catalog_enabled&&(await client.query('select 1 from remote_storage_services where server_id=$1 and app_id=$2',[serverId,appId])).rowCount)throw new ApiError('Disconnect the application databases in Storage before choosing no database',409)
         await client.query('update remote_apps set database_config=null,database_ciphertext=null where id=$1',[appId]); decisions.database='none'
       }
       if(body.environmentReviewed===true) decisions.environment='reviewed'
@@ -133,6 +134,7 @@ export async function changeRemoteSetup(serverId: string, appId: string, body: R
       jobId=await enqueue(client,serverId,appId,userId,'inspect',{...config,id:appId,git})
       await client.query("update remote_apps set inspection=null,branch=$2,setup_step='repository' where id=$1",[appId,config.branch])
     } else if(body.action==='database') {
+      if(app.storage_catalog_enabled&&(await client.query('select 1 from remote_storage_services where server_id=$1 and app_id=$2',[serverId,appId])).rowCount)throw new ApiError('Manage this application’s connected databases in Storage',409)
       if(!app.project_type || app.project_type==='angular')throw new ApiError('Choose a backend framework first; browser apps must use a backend API',400)
       let database
       if(body.mode==='retry') {
