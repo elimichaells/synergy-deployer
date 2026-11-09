@@ -31,6 +31,7 @@ async function getConfigPath() {
 async function isCaddyRunning(): Promise<boolean> {
   try {
     const res = await fetch(`${CADDY_ADMIN_URL}/config/`, {
+      headers: { Origin: CADDY_ADMIN_URL },
       signal: AbortSignal.timeout(2000),
     })
     return res.ok

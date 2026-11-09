@@ -19,7 +19,8 @@ export async function GET() {
     const admin=process.env.CADDY_ADMIN || '127.0.0.1:2019'
     if(/^(?:http:\/\/)?(?:127\.0\.0\.1|localhost|\[::1\]):\d{1,5}$/.test(admin)) {
       try {
-        const response=await fetch(`${admin.startsWith('http://')?'':'http://'}${admin}/pki/ca/local`,{cache:'no-store',redirect:'error',signal:AbortSignal.timeout(3000)})
+        const origin=`${admin.startsWith('http://')?'':'http://'}${admin}`
+        const response=await fetch(`${origin}/pki/ca/local`,{headers:{Origin:origin},cache:'no-store',redirect:'error',signal:AbortSignal.timeout(3000)})
         if(response.ok){const ca=await response.json();if(typeof ca.root_certificate==='string')return download(ca.root_certificate)}
       } catch (error) { console.warn('[Caddy] Could not read the active public CA:',(error as Error).message) }
     }

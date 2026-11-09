@@ -24,7 +24,7 @@ async function run(){
   await caddy.updateCaddyStrict(address,backend);
   const ca=await fs.readFile(storage+'/pki/authorities/local/root.crt');
   process.env.CADDY_ADMIN=`127.0.0.1:${admin}`;
-  const caInfo=await fetch(`http://${process.env.CADDY_ADMIN}/pki/ca/local`);assert.equal(caInfo.status,200,await caInfo.clone().text());
+  const caInfo=await fetch(`http://${process.env.CADDY_ADMIN}/pki/ca/local`,{headers:{Origin:`http://${process.env.CADDY_ADMIN}`}});assert.equal(caInfo.status,200,await caInfo.clone().text());
   const caDetails=await caInfo.json();assert.equal(typeof caDetails.root_certificate,'string',JSON.stringify(Object.keys(caDetails)));
   const certificateRoute=load('app/api/system/local-ca/route.ts',{'@/lib/auth':{getSessionFromCookie:async()=>({role:'admin'})},'@/lib/rbac':{requireRole:()=>{}},'@/lib/api':{ApiError:Error,jsonError:error=>{throw error}}});
   const certificateResponse=await certificateRoute.GET();assert.equal(certificateResponse.status,200);assert.match(certificateResponse.headers.get('Content-Disposition'),/attachment/);
