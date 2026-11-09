@@ -14,6 +14,7 @@ test('update API requires admin, same origin and a server-scoped action',async()
   let role='viewer',called=0;
   const api={ApiError,jsonError:error=>Response.json({error:error.message},{status:error.status||500})};
   const route=load('app/api/servers/[[...path]]/route.ts',{
+    '@/lib/update-maintenance':{updateProtected:(_name,work)=>work()},
     '@/lib/auth':{getSessionFromCookie:async()=>role?{id:randomUUID(),role}:null},
     '@/lib/rbac':load('lib/rbac.ts',{'./api':{ApiError}}),'@/lib/api':api,
     '@/lib/request-body':load('lib/request-body.ts',{'@/lib/api':{ApiError}}),
