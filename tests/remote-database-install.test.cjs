@@ -31,7 +31,8 @@ test('disposable OS installs authenticated '+engine+', verifies restart persiste
   // Model an administrator SSH session, including ProgramFiles and the Windows
   // installer environment. Application jobs intentionally use a smaller env.
   const install=()=>run(windows?'powershell.exe':'bash',windows?['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',path.join(stage,'install-remote-service.ps1'),'-PlanFile',file]:[path.join(stage,'install-remote-service.sh'),file,process.execPath],{timeout:720000,env:process.env,secrets:[plan.databasePassword]});
-  await install();const receipt=await agent.readJson(path.join(stage,'result.json'));assert.equal(receipt.status,'success');assert.equal(receipt.username,engine==='sqlserver'?'sa':engine==='redis'?'default':'manager_provisioner');assert.equal(receipt.port,port);
+  try{await install();}catch(error){if(!windows){const unit=engine==='redis'?'ManagerRedis.service':'ManagerMongoDB.service',details=await run('journalctl',['-u',unit,'--no-pager','-n','20'],{secrets:[plan.databasePassword]}).catch(()=>'<journal unavailable>');console.error(agent.redact(details,[plan.databasePassword]));}throw error;}
+  const receipt=await agent.readJson(path.join(stage,'result.json'));assert.equal(receipt.status,'success');assert.equal(receipt.username,engine==='sqlserver'?'sa':engine==='redis'?'default':'manager_provisioner');assert.equal(receipt.port,port);
   if(engine==='redis'){
     const {createClient}=require('redis'),client=createClient({url:`redis://127.0.0.1:${port}`,username:'default',password:plan.databasePassword,socket:{connectTimeout:5000,reconnectStrategy:false}});client.on('error',()=>{});await client.connect();
     try{

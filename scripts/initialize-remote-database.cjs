@@ -51,4 +51,7 @@ async function initialize(file,mode){
   return{authenticated:true,persistenceVerified:true};
 }
 module.exports={initialize,contained};
-if(require.main===module)initialize(process.argv[2],process.argv[3]).then(()=>console.log('[service] Authenticated database and persistence receipt verified.')).catch(()=>{console.error('Database initialization or verification failed. Existing data and recovery credentials were preserved.');process.exitCode=1;});
+if(require.main===module)initialize(process.argv[2],process.argv[3]).then(()=>console.log('[service] Authenticated database and persistence receipt verified.')).catch(async error=>{
+  const p=JSON.parse(await fs.readFile(process.argv[2],'utf8').catch(()=>'{}'));let detail=String(error.message||'Verification failed').slice(0,1000);if(p.databasePassword)detail=detail.replaceAll(p.databasePassword,'[redacted]').replaceAll(encodeURIComponent(p.databasePassword),'[redacted]');
+  console.error('Database initialization or verification failed: '+detail+'. Existing data and recovery credentials were preserved.');process.exitCode=1;
+});
