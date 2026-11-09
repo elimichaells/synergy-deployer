@@ -699,6 +699,16 @@ async function infrastructureJob(root,job,tools,log) {
   else {await tools.pm([action,'manager-remote-caddy']);await tools.pm(['save','--force']);}
   log('[success] Caddy operation completed\n');return{ok:true};
 }
+async function publicCertificate(root, tools) {
+  // A LAN alias may be attached to a public application's shared proxy.
+  // Always use the active shared CA; never fall back to a different private CA.
+  if(tools.sharedProxy) {
+    const response=await fetch(tools.sharedProxy.admin+'/pki/ca/local',{headers:{Origin:tools.sharedProxy.admin},signal:AbortSignal.timeout(3000),redirect:'error'}).catch(()=>null);
+    return response?.ok?(await response.json()).root_certificate||null:null;
+  }
+  try{return await fs.readFile(path.join(root,'caddy-storage','pki','authorities','local','root.crt'),'utf8');}
+  catch(error){if(error.code==='ENOENT')return null;throw error;}
+}
 async function sample(root, tools, prior) {
   const cpu=cpuSnapshot(), delta=cpu.total-prior.total;
   const disk=await fs.statfs(root).catch(()=>null);
@@ -708,12 +718,7 @@ async function sample(root, tools, prior) {
   if(tools.sharedProxy) {
     try {await sharedProxyRead(tools.sharedProxy);}catch(error){proxyError=error.message;}
   } else if(Object.keys(saved).length&&!list.some(p=>p.name==='manager-remote-caddy'&&p.pm2_env?.status==='online'))proxyError='Caddy is not running';
-  let caPem=null;
-  try{caPem=await fs.readFile(path.join(root,'caddy-storage','pki','authorities','local','root.crt'),'utf8');}catch(error){if(error.code!=='ENOENT')throw error;}
-  if(tools.sharedProxy&&Object.values(saved).some(item=>item.app.access_mode==='lan'||item.app.ip_address)) {
-    const response=await fetch(tools.sharedProxy.admin+'/pki/ca/local',{headers:{Origin:tools.sharedProxy.admin},signal:AbortSignal.timeout(3000),redirect:'error'}).catch(()=>null);
-    if(response?.ok)caPem=(await response.json()).root_certificate||null;
-  }
+  const caPem=await publicCertificate(root,tools);
   const metrics=sanitizeMetrics({hostname:os.hostname(),platform:process.platform,arch:process.arch,version:AGENT_VERSION,runtimeVersions:await installedRuntimeVersions(root),
     cpuPercent:delta?Math.max(0,Math.min(100,100*(1-(cpu.idle-prior.idle)/delta))):0,
     memoryTotal:os.totalmem(),memoryFree:os.freemem(),diskTotal:disk?disk.blocks*disk.bsize:null,diskFree:disk?disk.bavail*disk.bsize:null,uptime:os.uptime(),
@@ -1118,5 +1123,5 @@ async function main(){
 
 function resourceHelpers(){return {run,readJson,atomicJson,contained,processList,healthy,baseEnv,proxyConfig,managedCaddyConfig,redact};}
 
-module.exports={LAN_CAPABILITY,validateLanSelection,managedCaddyConfig,sampleApplications,infrastructureJob,INFRASTRUCTURE_CAPABILITY,toolVersion,validateRuntimeSelection,RUNTIME_CAPABILITY,validateRuntimeVersions,runtimeEnvironment,installedRuntimeVersions,CONSOLE_CAPABILITY,consoleJob,PROTOCOL_VERSION,AGENT_VERSION,SETUP_CAPABILITY,UPDATE_CAPABILITY,validateApp,sanitizeMetrics,redact,streamRedactor,caddyConfig,managerAddress,contained,run,request,deploy,restoreActivation,healthy,atomicJson,readJson,enrollCli,detectFramework,inspectRepository,validateDatabase,databaseEnvironment,setupDatabase,validateSetup,jobSecrets,findStaticRoot,serveStatic,loadToolPaths,checkConfiguredTools,privatePm2Environment,findTools,proxyConfig,sharedProxySettings,sharedProxyState,configDigest};
+module.exports={publicCertificate,LAN_CAPABILITY,validateLanSelection,managedCaddyConfig,sampleApplications,infrastructureJob,INFRASTRUCTURE_CAPABILITY,toolVersion,validateRuntimeSelection,RUNTIME_CAPABILITY,validateRuntimeVersions,runtimeEnvironment,installedRuntimeVersions,CONSOLE_CAPABILITY,consoleJob,PROTOCOL_VERSION,AGENT_VERSION,SETUP_CAPABILITY,UPDATE_CAPABILITY,validateApp,sanitizeMetrics,redact,streamRedactor,caddyConfig,managerAddress,contained,run,request,deploy,restoreActivation,healthy,atomicJson,readJson,enrollCli,detectFramework,inspectRepository,validateDatabase,databaseEnvironment,setupDatabase,validateSetup,jobSecrets,findStaticRoot,serveStatic,loadToolPaths,checkConfiguredTools,privatePm2Environment,findTools,proxyConfig,sharedProxySettings,sharedProxyState,configDigest};
 if(require.main===module)main().catch(error=>{console.error(error.message);process.exitCode=1;});

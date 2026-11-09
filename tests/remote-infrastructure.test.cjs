@@ -31,6 +31,18 @@ test('shared process buttons accept bodyless POSTs while retaining origin and ro
 });
 async function fixture(t){const root=await fs.mkdtemp(path.join(os.tmpdir(),'manager-infrastructure-test-'));t.after(async()=>{assert.ok(path.resolve(root).startsWith(path.resolve(os.tmpdir())+path.sep+'manager-infrastructure-test-'));await fs.rm(root,{recursive:true,force:true})});return root}
 
+test('LAN aliases download the active shared certificate even when the primary app uses public DNS',async t=>{
+  const root=await fixture(t),certificate=path.join(root,'caddy-storage/pki/authorities/local/root.crt');
+  await fs.mkdir(path.dirname(certificate),{recursive:true});await fs.writeFile(certificate,'unrelated private CA');
+  let status=200,origin;
+  const server=http.createServer((req,res)=>{assert.equal(req.headers.origin,origin);res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify({root_certificate:'shared proxy CA'}));});
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>server.close(r)));origin='http://127.0.0.1:'+server.address().port;
+  const tools={sharedProxy:{admin:origin}};
+  assert.equal(await agent.publicCertificate(root,tools),'shared proxy CA');
+  status=404;assert.equal(await agent.publicCertificate(root,tools),null);
+  assert.equal(await agent.publicCertificate(root,{}),'unrelated private CA');
+});
+
 test('process controls use only registered private PM2 names and persist stops',async t=>{
   const root=await fixture(t),id=randomUUID(),other=randomUUID(),calls=[];
   await agent.atomicJson(path.join(root,'apps.json'),{[id]:{app:{id,name:'Fixture',port:32010},ecosystem:path.join(root,'ecosystem.config.js')}});
