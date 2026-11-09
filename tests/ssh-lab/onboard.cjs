@@ -221,6 +221,7 @@ async function main() {
     result.passed = true;
   } catch (error) {
     if(process.platform==='linux')try{console.error(redact(run('sudo',['journalctl','-u','manager-agent','-n','30','--no-pager']),secrets))}catch{}
+    if(process.platform==='win32')try{console.error(ps("Get-ScheduledTaskInfo -TaskName ManagerRemoteAgent | Select-Object LastTaskResult,LastRunTime | ConvertTo-Json -Compress"))}catch{}
     result.error = redact(error.message, secrets);
     console.error(result.error);
     process.exitCode = 1;
