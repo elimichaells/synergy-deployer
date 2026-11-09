@@ -27,6 +27,9 @@ export async function GET(request: Request) {
   if (pathname === '/api/server/health/history') return result({range:'24h',from:Date.now()-86400000,to:Date.now(),intervalMs:300000,summary:{passed:1400,failed:2,unknown:1,paused:0,successPercent:99.86,averageMs:26},services:[],points:[],unavailable:false,stale:false,startedAt:Date.now()-86400000,checkedAt:Date.now()})
   if (pathname === '/api/server/health') return result({ checkedAt: new Date().toISOString(), stale: false, unavailable: false, incidents: [], snapshot: null })
   if (pathname === '/api/auth/me') return result({ user: { id: 'fixture-user', name: 'Alex Morgan', email: 'alex@example.test', role: state.role } })
+  if (/\/sites\/[^/]+\/health$/.test(pathname)) return result({profile:state.project.health_profile||{path:'/',statuses:[200],timeoutMs:60000},application:{health:'healthy'},checkedAt:new Date().toISOString(),stale:false})
+  if (pathname.endsWith('/security-gate')) return state.failure==='security-load'?result({error:'Synthetic security settings unavailable'},503):result({gate:{off:false,indefinite:false,until:null,reason:null,by:null,at:null},canTurnOff:state.role==='admin'})
+  if (pathname.endsWith('/git-automation')) return result({autoDeploy:false,hasSecret:false,webhookUrl:'https://manager.example.test/api/webhooks/fixture',installed:false})
   if (pathname === '/api/settings') return state.failure === 'settings-load' ? result({ error: 'Fixture settings service unavailable' }, 503) : result({ ...settingsState.values, GITHUB_TOKEN: 'fixture-legacy-secret' })
   if (pathname === '/api/__fixture/settings') return result(settingsState)
   if (pathname === '/api/__fixture/data') return result(dataState)
@@ -57,7 +60,7 @@ export async function GET(request: Request) {
   if (pathname === '/api/domains') return result({ domains: state.domains })
   if (pathname === '/api/deployments') return result([{ id: 'release-one', project_id: 'fixture-live', project_name: 'Customer portal', status: 'success', branch: 'main', commit_sha: 'a7e982104b', started_at: '2026-08-31T10:00:00Z', finished_at: '2026-08-31T10:02:00Z' }])
   if (pathname.endsWith('/console')) return result({ scripts: {}, commands: state.project.project_type === 'laravel' ? ['php --version', 'php artisan about', 'php artisan migrate:status'] : state.project.project_type === 'go' ? ['go version', 'go test ./...', 'go list ./...'] : ['node --version', 'npm run build'] })
-  if (pathname.endsWith('/logs/stream')) return new Response('data: ' + JSON.stringify({ output: '[fixture] Application logs\n', status: 'online' }) + '\n\n', { headers: { 'Content-Type': 'text/event-stream' } })
+  if (pathname.endsWith('/logs/stream')) return new Response('data: ' + JSON.stringify({ log: '[fixture] Application logs\n', logPath:'C:\\fixture\\application.log' }) + '\n\n', { headers: { 'Content-Type': 'text/event-stream' } })
   if (pathname.includes('/webhook')) return result({ hasSecret: false, installed: false })
   return result([])
 }
