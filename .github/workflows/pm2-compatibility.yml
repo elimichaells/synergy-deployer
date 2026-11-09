@@ -1,0 +1,27 @@
+name: PM2 runtime compatibility
+on:
+  push:
+    branches: [codex/isolated-install-validation]
+    paths: ['scripts/manager-update-worker.cjs', 'scripts/server-monitor.cjs', 'scripts/operations-pm2.cjs', 'tests/pm2-compatibility.test.cjs', '.github/workflows/pm2-compatibility.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pm2:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        pm2: ['6', '7']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --prefix "${{ runner.temp }}/pm2-fixture" --ignore-scripts --no-audit --no-fund pm2@${{ matrix.pm2 }}
+      - run: node --test tests/pm2-compatibility.test.cjs
+        env:
+          TEST_PM2_PACKAGE_ROOT: ${{ runner.temp }}/pm2-fixture/node_modules/pm2

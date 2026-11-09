@@ -6,9 +6,11 @@ const { createRequire } = require('node:module');
 function callExisting(config, action, id, requirePackage) {
   if (!['inventory', 'restart'].includes(action) || action === 'restart' && (!Number.isInteger(id) || id < 0)) throw Error('Invalid recovery action');
   const localRequire = requirePackage || createRequire(path.join(config.pm2PackageRoot, 'package.json'));
+  // PM2 7 vendors its RPC modules; PM2 6 installs them as dependencies.
+  const rpcModule=name=>{try{return localRequire(name)}catch(error){if(error.code!=='MODULE_NOT_FOUND')throw error;return localRequire('./modules/'+name)}};
   return new Promise((resolve, reject) => {
-    const socket = localRequire('pm2-axon').socket('req');
-    const client = new (localRequire('pm2-axon-rpc').Client)(socket);
+    const socket = rpcModule('pm2-axon').socket('req');
+    const client = new (rpcModule('pm2-axon-rpc').Client)(socket);
     let done = false;
     const finish = (error, rows) => {
       if (done) return;

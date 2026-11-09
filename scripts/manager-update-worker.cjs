@@ -33,14 +33,16 @@ function pm2(c,verb,name) {
 async function processes(c) {
   // Read-only RPC: unlike the CLI, this cannot accidentally spawn a second daemon.
   const req=createRequire(path.join(c.pm2PackageRoot,'package.json'));
+  // PM2 7 vendors its RPC modules; PM2 6 installs them as dependencies.
+  const rpcModule=name=>{try{return req(name)}catch(error){if(error.code!=='MODULE_NOT_FOUND')throw error;return req('./modules/'+name)}};
   return new Promise((resolve,reject)=>{
-    const socket=req('pm2-axon').socket('req'),client=new (req('pm2-axon-rpc').Client)(socket);
+    const socket=rpcModule('pm2-axon').socket('req'),client=new (rpcModule('pm2-axon-rpc').Client)(socket);
     let done=false;
     const finish=(e,v)=>{if(done)return;done=true;clearTimeout(timer);socket.close();e?reject(e):resolve(v)};
     const timer=setTimeout(()=>finish(new Error('The registered PM2 daemon is unavailable')),5000);
     socket.on('error',e=>finish(e));
     socket.once('connect',()=>client.call('getMonitorData',{},finish));
-    socket.connect(process.platform==='win32'?'\\\\.\\pipe\\rpc.sock':path.join(c.pm2Home,'rpc.sock'));
+    socket.connect(c.pm2Socket || (process.platform==='win32'?'\\\\.\\pipe\\rpc.sock':path.join(c.pm2Home,'rpc.sock')));
   });
 }
 function connection(c) {

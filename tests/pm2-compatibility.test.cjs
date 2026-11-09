@@ -1,0 +1,20 @@
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os');
+const agent=require('../scripts/manager-agent.cjs'),worker=require('../scripts/manager-update-worker.cjs'),monitor=require('../scripts/server-monitor.cjs'),operations=require('../scripts/operations-pm2.cjs');
+test('updater, health monitor and recovery read the selected real PM2 daemon',{skip:!process.env.TEST_PM2_PACKAGE_ROOT,timeout:90000},async t=>{
+  const pm2PackageRoot=path.resolve(process.env.TEST_PM2_PACKAGE_ROOT),cli=path.join(pm2PackageRoot,'bin/pm2');
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'manager-pm2-compat-')),env=await agent.privatePm2Environment(root,cli);
+  const pm=args=>agent.run(process.execPath,[cli,...args],{env,timeout:25000});
+  t.after(async()=>{if(await fs.stat(path.join(root,'pm2/pm2.pid')).catch(()=>null))await pm(['kill']);assert.ok(root.startsWith(path.join(os.tmpdir(),'manager-pm2-compat-')));await fs.rm(root,{recursive:true,force:true});});
+  const marker=process.platform==='win32'?await agent.readJson(path.join(root,'pm2-private-pipes.json')):null;
+  const config={pm2PackageRoot,pm2Home:path.join(root,'pm2'),pm2Socket:marker?marker.prefix+'-rpc.sock':path.join(root,'pm2/rpc.sock')};
+  const script=path.join(root,'fixture.cjs');await fs.writeFile(script,'setInterval(()=>{},1000)');
+  await pm(['start',script,'--name','manager-compat-target','--interpreter',process.execPath]);
+  await pm(['start',script,'--name','manager-compat-preserved','--interpreter',process.execPath]);
+  const rows=await worker.processes(config);assert.equal(rows.length,2);
+  const target=rows.find(p=>p.name==='manager-compat-target'),peer=rows.find(p=>p.name==='manager-compat-preserved');assert.ok(target.pid&&peer.pid);
+  assert.equal((await monitor.readPm2(config)).find(p=>p.name===peer.name).pid,peer.pid);
+  const inventory=await operations.callExisting(config,'inventory');assert.equal(inventory.length,2);assert.ok(inventory.every(p=>!p.pm2_env));
+  await operations.callExisting(config,'restart',target.pm_id);
+  const after=await worker.processes(config);assert.notEqual(after.find(p=>p.name===target.name).pid,target.pid);assert.equal(after.find(p=>p.name===peer.name).pid,peer.pid);
+  console.log('Verified PM2 '+require(path.join(pm2PackageRoot,'package.json')).version+' with private '+process.platform+' daemon');
+});

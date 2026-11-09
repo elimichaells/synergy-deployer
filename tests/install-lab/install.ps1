@@ -42,7 +42,7 @@ try {
   Expand-Archive -LiteralPath (Join-Path $root $zip[0].name) -DestinationPath $source
   if(!(Test-Path -LiteralPath (Join-Path $source 'scripts\install-manager.ps1'))){throw 'Installer engine absent from package'}
   if($CandidateInstaller){
-    foreach($file in @('install-manager.ps1','installer-preflight.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot ('..\..\scripts\'+$file)) -Destination (Join-Path $source ('scripts\'+$file)) -Force}
+    foreach($file in @('install-manager.ps1','installer-preflight.ps1','manager-update-worker.cjs','server-monitor.cjs','operations-pm2.cjs')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot ('..\..\scripts\'+$file)) -Destination (Join-Path $source ('scripts\'+$file)) -Force}
     $record.candidateInstaller=$env:GITHUB_SHA
   }
   $config=[ordered]@{

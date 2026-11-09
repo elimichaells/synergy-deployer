@@ -14,8 +14,10 @@ function readPm2(config) {
   // Connect directly to the existing RPC socket. PM2's normal connect/CLI can spawn a daemon.
   return new Promise((resolve, reject) => {
     const localRequire = createRequire(path.join(config.pm2PackageRoot, 'package.json'));
-    const axon = localRequire('pm2-axon');
-    const rpc = localRequire('pm2-axon-rpc');
+  // PM2 7 vendors its RPC modules; PM2 6 installs them as dependencies.
+  const rpcModule=name=>{try{return localRequire(name)}catch(error){if(error.code!=='MODULE_NOT_FOUND')throw error;return localRequire('./modules/'+name)}};
+    const axon = rpcModule('pm2-axon');
+    const rpc = rpcModule('pm2-axon-rpc');
     const socket = axon.socket('req');
     const client = new rpc.Client(socket);
     let done = false;
