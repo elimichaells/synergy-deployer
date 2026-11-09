@@ -17,8 +17,10 @@ const diagnostics=Object.fromEntries([{check:'configuration',issues:['DATABASE_U
 const sanitizeDiagnostics=value=>diagnostics[value?.issueCode];
 async function processMemory(h) {
   if (process.platform === 'win32') {
-    const script = "$ErrorActionPreference='Stop';$m=Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory;$p=@(Get-CimInstance Win32_Process | Select-Object @{n='pid';e={[int]$_.ProcessId}},@{n='ppid';e={[int]$_.ParentProcessId}},@{n='name';e={$_.Name}},@{n='privateBytes';e={[double]$_.PrivatePageCount}},@{n='workingBytes';e={[double]$_.WorkingSetSize}},@{n='started';e={if($_.CreationDate){([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds()}else{0}}});$f=@(Get-CimInstance Win32_PageFileUsage);@{processes=$p;commitMb=[double]$m.CommittedBytes/1MB;commitLimitMb=[double]$m.CommitLimit/1MB;pageFileMb=[double](($f|Measure-Object AllocatedBaseSize -Sum).Sum);pageFileUsedMb=[double](($f|Measure-Object CurrentUsage -Sum).Sum)}|ConvertTo-Json -Depth 5 -Compress";
-    return JSON.parse(await h.run('powershell.exe', ['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')], {timeout:20000,stdoutOnly:true}));
+    // Use the same OS commit counters as the host. The formatted performance
+    // provider can take tens of seconds to initialize on a fresh Windows VM.
+    const script = "$ErrorActionPreference='Stop';$m=Get-CimInstance Win32_OperatingSystem;$p=@(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name,PrivatePageCount,WorkingSetSize,CreationDate | Select-Object @{n='pid';e={[int]$_.ProcessId}},@{n='ppid';e={[int]$_.ParentProcessId}},@{n='name';e={$_.Name}},@{n='privateBytes';e={[double]$_.PrivatePageCount}},@{n='workingBytes';e={[double]$_.WorkingSetSize}},@{n='started';e={if($_.CreationDate){([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds()}else{0}}});$f=@(Get-CimInstance Win32_PageFileUsage);@{processes=$p;commitMb=([double]$m.TotalVirtualMemorySize-[double]$m.FreeVirtualMemory)/1024;commitLimitMb=[double]$m.TotalVirtualMemorySize/1024;pageFileMb=[double](($f|Measure-Object AllocatedBaseSize -Sum).Sum);pageFileUsedMb=[double](($f|Measure-Object CurrentUsage -Sum).Sum)}|ConvertTo-Json -Depth 5 -Compress";
+    return JSON.parse(await h.run('powershell.exe', ['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')], {timeout:45000,stdoutOnly:true}));
   }
   const processes=[];
   for (const pid of (await fs.readdir('/proc')).filter(n=>/^\d+$/.test(n)).slice(0,4000)) {

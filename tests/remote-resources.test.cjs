@@ -8,7 +8,7 @@ test('wire agent bundle is self contained and carries resource capability',async
   const source=await require('../scripts/agent-bundle.cjs').agentBundle();assert.doesNotMatch(source,/require\('\.\/manager-agent-resources/);const module={exports:{}};vm.runInNewContext(source,{require,module,process,Buffer,console,setTimeout,setInterval,clearTimeout,clearInterval,URL,fetch,AbortSignal});assert.equal(module.exports.AGENT_VERSION,'1.7.0');assert.ok(module.exports.sanitizeMetrics({...metrics(),capabilities:[resources.CAPABILITY]}).capabilities.includes(resources.CAPABILITY));
 });
 function metrics(){return{platform:'win32',hostname:'test',version:'1.7.0',cpuPercent:1,memoryTotal:8*1024**3,memoryFree:4*1024**3,diskTotal:100*1024**3,diskFree:50*1024**3,uptime:100,tools:{},apps:[]};}
-test('real operating-system memory collector reports bounded process usage without commands or environment',{timeout:30000},async t=>{
+test('real operating-system memory collector reports bounded process usage without commands or environment',{timeout:60000},async t=>{
   const {root}=await fixture(t),sample=await resources.telemetry(root,{},[],h);assert.equal(sample.error,null);assert.ok(sample.processes.length>0);assert.ok(sample.processes.some(p=>p.privateBytes>0));assert.ok(sample.processes.every(p=>!('commandLine' in p)&&!('env' in p)));if(process.platform==='win32')assert.ok(sample.commitLimitMb>0);
 });
 test('telemetry strips secrets, commands and unrecognized fields and bounds process counts',()=>{
