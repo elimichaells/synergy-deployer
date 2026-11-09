@@ -37,15 +37,17 @@ async function verifyProxy({origin,caFile,version,timeoutMs=60000,pollMs=1000}) 
   const target=new URL(origin),hostname=target.hostname.replace(/^\[|\]$/g,'');
   if(target.protocol!=='https:'||target.username||target.password||target.pathname!=='/'||target.search||target.hash)throw Error('Proxy verification requires an HTTPS origin');
   const https=require('node:https'),tls=require('node:tls'),fs=require('node:fs/promises'),{isIP}=require('node:net');
+  const localAddresses=new Set(['127.0.0.1','::1',...Object.values(require('node:os').networkInterfaces()).flat().map(address=>address?.address)]);
+  if(isIP(hostname)&&!localAddresses.has(hostname))throw Error('Proxy verification IP must belong to this server');
   const deadline=Date.now()+timeoutMs;let last='No HTTPS response';
   while(Date.now()<deadline){
     const nonce=randomUUID();
     try {
       const ca=await fs.readFile(caFile);
       const health=await new Promise((resolve,reject)=>{
-        // Use the selected certificate identity while always connecting locally.
-        // A newly installed institution hostname may not have a DNS record yet.
-        const request=https.get({hostname:'127.0.0.1',port:Number(target.port||443),servername:isIP(hostname)?undefined:hostname,
+        // IP clients send no SNI: Caddy selects their certificate using the local
+        // destination address. DNS names can use loopback before DNS is configured.
+        const request=https.get({hostname:isIP(hostname)?hostname:'127.0.0.1',port:Number(target.port||443),servername:isIP(hostname)?undefined:hostname,
           ca,rejectUnauthorized:true,checkServerIdentity:(_name,certificate)=>tls.checkServerIdentity(hostname,certificate),
           path:'/api/manager-health?nonce='+nonce,headers:{Host:target.host},signal:AbortSignal.timeout(Math.max(1,Math.min(5000,deadline-Date.now())))},response=>{
           let body='';response.on('data',chunk=>{body+=chunk;if(body.length>65536)request.destroy(Error('HTTPS readiness response was too large'))});
