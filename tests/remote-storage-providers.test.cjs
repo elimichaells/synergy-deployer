@@ -15,7 +15,7 @@ test('standalone agent provisions and rotates disposable MySQL, MariaDB, MongoDB
     const administrator={provider,host:'127.0.0.1',port,username,database,password:'Fixture-Storage-Password-2026',tls:false},serviceId=randomUUID();
     const archive=await require('../scripts/agent-postgres-runtime.cjs').packagePostgresRuntime(process.cwd(),[driver]);
     const run=input=>agent.infrastructureJob(root,{payload:{action:'resource',resource:{action:'storage',serviceId,connection:administrator,driverArchive:archive,...input},expiresAt:Date.now()+60000}},{},()=>{});
-    let ready=false;for(let attempt=0;attempt<45;attempt++){try{await run({operation:'test'});ready=true;break}catch{await new Promise(resolve=>setTimeout(resolve,2000))}}assert.equal(ready,true,provider+' becomes ready');
+    let ready=false,last;for(let attempt=0;attempt<12;attempt++){try{await run({operation:'test'});ready=true;break}catch(error){last=error;await new Promise(resolve=>setTimeout(resolve,2000))}}if(!ready)throw last;
     if(provider==='redis'){assert.equal((await run({operation:'test',connection:{...administrator,database:'2'}})).connected,true);return}
     const suffix=randomUUID().replaceAll('-','').slice(0,16),app={...administrator,database:'fixture_'+suffix,username:'app_'+suffix,password:randomUUID()+randomUUID()};
     const result=await run({operation:'provision',connection:app,administrator});assert.equal(result.connected,true);

@@ -4,7 +4,7 @@ const path=require('node:path');
 const {randomUUID}=require('node:crypto');
 async function postgres(_root,_helpers){return require('pg');}
 const providers=require('./remote-storage-providers.cjs');
-async function driver(_root,_helpers,name,_archive){return require(name);}
+async function driver(_root,_helpers,name,_archive){switch(name){case 'mysql2/promise':return require('mysql2/promise');case 'mssql':return require('mssql');case 'mongodb':return require('mongodb');case 'redis':return require('redis');default:throw Error('Unknown database driver');}}
 const ID=/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 const identifier=value=>{if(typeof value!=='string'||!/^[a-zA-Z_][a-zA-Z0-9_$]{0,62}$/.test(value))throw Error('Invalid database identifier');return '"'+value+'"';};
 const quoted=value=>'"'+String(value).replace(/"/g,'""')+'"';

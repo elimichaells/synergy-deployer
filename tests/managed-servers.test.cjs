@@ -54,7 +54,7 @@ test('real PostgreSQL enrollment, concurrent claims, multi-app isolation and dur
   const concurrent=await Promise.allSettled([m.queueRemoteDeploy(server.id,a.id,userId),m.queueRemoteDeploy(server.id,a.id,userId)]);
   assert.equal(concurrent.filter(x=>x.status==='fulfilled').length,1);
   await m.queueRemoteDeploy(server.id,b.id,userId);
-  await assert.rejects(m.saveRemoteApp(server.id,a.id,fixture(),userId),/active deployment/);
+  await assert.rejects(m.saveRemoteApp(server.id,a.id,fixture(),userId),error=>error.status===409&&/active application or storage operation/.test(error.message));
   const [claim1,claim2]=await Promise.all([m.claimJob(server.id),m.claimJob(server.id)]);
   assert.equal(claim1.job.id,claim2.job.id);assert.equal(claim1.job.claimToken,claim2.job.claimToken);
   assert.equal(claim1.job.payload.environment.TOKEN,'application-secret');

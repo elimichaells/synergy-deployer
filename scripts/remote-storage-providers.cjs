@@ -57,7 +57,7 @@ async function execute(root,input,h,driver){
     return{ok:true,connected:true,database:d.database,...(provisioning?{username:d.username}:{}),...(rotating?{rotated:true}:{})};
   }catch(error){
     const safe=/^(?:The database|The administrator|Only a dedicated|Create MySQL|Database connection timed out)/.test(error.message);
-    throw Error(safe?error.message:`Database operation failed${error.code?' ('+String(error.code).replace(/[^A-Z0-9_]/gi,'').slice(0,30)+')':''}. Check the saved connection and permissions.`);
+    throw Error(safe?error.message:`Database operation failed${error.code?' ('+String(error.code).replace(/[^A-Z0-9_]/gi,'').slice(0,30)+')':''}. Check the saved connection and permissions.`,{cause:error});
   }
 }
 module.exports={execute};

@@ -19,7 +19,7 @@ async function agentBundle(root = process.cwd()) {
   let storage=await fs.readFile(path.join(root,'scripts/remote-storage-agent.cjs'),'utf8');
   const providers=await fs.readFile(path.join(root,'scripts/remote-storage-providers.cjs'),'utf8');
   storage=storage.replace("const providers=require('./remote-storage-providers.cjs');",`const providers=(()=>{const module={exports:{}};\n${providers}\nreturn module.exports;})();`);
-  storage=storage.replace("async function driver(_root,_helpers,name,_archive){return require(name);}","async function driver(root,helpers,name,archive){return loadPostgresRuntime(root,archive,helpers,name);}");
+  storage=storage.replace("async function driver(_root,_helpers,name,_archive){switch(name){case 'mysql2/promise':return require('mysql2/promise');case 'mssql':return require('mssql');case 'mongodb':return require('mongodb');case 'redis':return require('redis');default:throw Error('Unknown database driver');}}","async function driver(root,helpers,name,archive){return loadPostgresRuntime(root,archive,helpers,name);}");
   storage=storage.replace("async function postgres(_root,_helpers){return require('pg');}",`const {loadPostgresRuntime}=(()=>{const module={exports:{}};\n${loader}\nreturn module.exports;})();\nasync function postgres(root,helpers){return loadPostgresRuntime(root,${JSON.stringify(postgresArchive)},helpers);}`);
   resources=resources.replace("const storage = require('./remote-storage-agent.cjs');",`const storage=(()=>{const module={exports:{}};\n${storage}\nreturn module.exports;})();`);
   resources=resources.replace("require('./manager-agent-windows-memory.cjs')",JSON.stringify(require('./manager-agent-windows-memory.cjs')));

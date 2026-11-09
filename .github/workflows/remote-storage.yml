@@ -36,4 +36,6 @@ jobs:
           MANAGER_STORAGE_PROVIDER_LAB: '1'
       - name: Stop disposable databases
         if: always()
-        run: docker rm -f storage-mysql storage-mariadb storage-mongodb storage-redis storage-sqlserver
+        run: |
+          for container in storage-mysql storage-mariadb storage-mongodb storage-redis storage-sqlserver; do docker logs --tail 35 "$container"; done
+          docker rm -f storage-mysql storage-mariadb storage-mongodb storage-redis storage-sqlserver

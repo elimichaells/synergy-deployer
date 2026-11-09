@@ -44,7 +44,8 @@ test('remote storage isolates metadata, requires agent receipts, encrypts query 
   const fs=require('node:fs/promises'),path=require('node:path'),root=await fs.mkdtemp(path.join(require('node:os').tmpdir(),'manager-storage-api-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
   const execute=async()=>{const job=await claim(),result=await agent.infrastructureJob(root,job,{},()=>{});await finish(job,result);return result};
   await servers.refreshRemoteStorageInventory(a.id,actor);await execute();
-  assert.equal((await servers.remoteStorageEngines(a.id))[0].localOnly,true);
+  const listen=(await query('show listen_addresses')).rows[0].listen_addresses;
+  assert.equal((await servers.remoteStorageEngines(a.id))[0].localOnly,listen.split(',').every(value=>['localhost','127.0.0.1','::1',''].includes(value.trim())));
   let inventory=await servers.remoteServerDatabases(a.id,connection.id);assert.ok(inventory.databases.find(d=>d.name===input.databaseName).dropBlocker);
   await assert.rejects(servers.remoteServerDatabases(b.id,connection.id),e=>e.status===404);
   await assert.rejects(servers.changeRemoteServerDatabase(a.id,connection.id,input.databaseName,{confirm:input.databaseName},actor),e=>e.status===409);
