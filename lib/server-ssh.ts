@@ -309,7 +309,9 @@ export async function setupServerSsh(serverId: string, body: Record<string, unkn
     const command = server.platform === 'win32' ? powershell(`& ${psQuote(windowsStage+'\\'+installer)}`) : `${privileged ? '' : sudo.prefix}/bin/bash ${shQuote(stage+'/'+installer)}`
     await sshExec(connection,command,server.platform === 'linux' && !privileged ? sudo.input : '',20*60*1000,safeLog)
     let online = false
-    for (let attempt = 0; attempt < 15; attempt++) {
+    // A cold Windows service can spend up to 45 seconds collecting its first
+    // memory sample. Keep waiting for verified telemetry after enrollment.
+    for (let attempt = 0; attempt < 45; attempt++) {
       const row = (await lease.query('select last_seen_at,metrics from managed_servers where id=$1',[serverId])).rows[0]
       if (row?.metrics && new Date(row.last_seen_at).getTime() >= started) { online = true; break }
       await new Promise(resolve => setTimeout(resolve,2000))
