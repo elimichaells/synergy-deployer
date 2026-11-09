@@ -45,6 +45,43 @@ test('memory limits restart only the selected app, preserve other Node flags and
 test('ambiguous shell commands and pinned runtimes cannot silently change to a direct launch',async t=>{
   const {launch}=await application(t);assert.equal((await resources.directPlan(launch,h)).ok,true);for(const command of ['node app.cjs && echo bad','node ../outside.cjs','npm run custom','node app.cjs --flag="space value"'])assert.equal((await resources.directPlan({...launch,command},h)).ok,false);assert.equal((await resources.directPlan({...launch,env:{MANAGER_NODE_VERSION:'24.1.0'}},h)).ok,false);
 });
+test('saving a memory limit for the next start never restarts a running or stopped app',async t=>{
+  const {root,id,ecosystem}=await application(t),calls=[],tools={pm:async args=>{calls.push(args);if(args[0]==='jlist')return '[]';throw Error('Must not mutate processes during deferred save')}};
+  const result=await resources.execute(root,{payload:{resource:{action:'memory',id,limitMb:512,restart:false}}},tools,{...h,healthy:async()=>{throw Error('Deferred save must not require a running app')}});
+  assert.equal(result.restart,null);assert.equal(result.limitMb,512);assert.ok(calls.every(args=>args[0]==='jlist'));
+  assert.match((await h.readJson(path.join(path.dirname(ecosystem),'launch.json'))).env.NODE_OPTIONS,/max-old-space-size=384/);
+  await resources.execute(root,{payload:{resource:{action:'memory',id,limitMb:null,restart:false}}},tools,h);
+  assert.doesNotMatch((await h.readJson(path.join(path.dirname(ecosystem),'launch.json'))).env.NODE_OPTIONS,/max-old-space-size/);
+});
+
+test('application readiness uses the host profile, follows only local redirects and saves without restarting',async t=>{
+  const {root,id}=await application(t),calls=[];let foreignHits=0;
+  const foreign=http.createServer((_req,res)=>{foreignHits++;res.end('must never be probed')});await new Promise(r=>foreign.listen(0,'127.0.0.1',r));
+  const server=http.createServer((req,res)=>{if(req.url==='/ready'){res.writeHead(302,{location:'/signed-out'});res.end()}else if(req.url==='/external'){res.writeHead(302,{location:`http://127.0.0.1:${foreign.address().port}/`});res.end()}else{res.writeHead(401);res.end('Authentication required')}});await new Promise(r=>server.listen(0,'127.0.0.1',r));
+  t.after(()=>Promise.all([new Promise(r=>server.close(r)),new Promise(r=>foreign.close(r))]));
+  const saved=await h.readJson(path.join(root,'apps.json'));saved[id].app.port=server.address().port;await h.atomicJson(path.join(root,'apps.json'),saved);
+  const tools={pm:async args=>{calls.push(args);throw Error('Readiness save must not touch PM2')}},profile={path:'/ready',statuses:[401],timeoutMs:5000};
+  const job={payload:{action:'resource',id,expiresAt:Date.now()+60000,resource:{action:'health',id,profile}}};
+  await agent.infrastructureJob(root,job,tools,()=>{});assert.equal(calls.length,0);
+  const current=await h.readJson(path.join(root,'apps.json'));assert.deepEqual(current[id].app.health_profile,profile);await agent.healthy(current[id].app,500);
+  const processes=[{name:`manager-remote-${id}`,pm2_env:{status:'online'},monit:{}}];
+  assert.equal((await agent.sampleApplications(current,processes,false))[0].check.ok,true);
+  current[id].app.health_profile.path='/external';assert.equal((await agent.sampleApplications(current,processes,false))[0].check.ok,false);assert.equal(foreignHits,0);
+  await assert.rejects(agent.infrastructureJob(root,{payload:{...job.payload,id:randomUUID()}},tools,()=>{}),/Deploy this application/);
+});
+test('application log streams and clearing affect only the requested private file and redact secrets',async t=>{
+  const {root,id,ecosystem,launch}=await application(t),dir=path.join(root,'pm2','logs');await fs.mkdir(dir,{recursive:true});
+  const out=path.join(dir,'app-out.log'),err=path.join(dir,'app-error.log'),peer=path.join(dir,'peer.log');
+  launch.env.LOG_FIXTURE_SECRET='private-test-secret';await h.atomicJson(path.join(path.dirname(ecosystem),'launch.json'),launch);
+  await fs.writeFile(out,'output private-test-secret');await fs.writeFile(err,'error stream');await fs.writeFile(peer,'preserved peer');
+  const tools={pm:async()=>JSON.stringify([{name:`manager-remote-${id}`,pm2_env:{pm_out_log_path:out,pm_err_log_path:err}}])};
+  const read=(type,clear=false)=>resources.execute(root,{payload:{resource:{action:'app-logs',id,type,clear}}},tools,h);
+  assert.match((await read('out')).log,/redacted/);assert.doesNotMatch((await read('out')).log,/private-test-secret/);assert.equal((await read('err')).log,'error stream');
+  await read('out',true);assert.equal(await fs.readFile(out,'utf8'),'');assert.equal(await fs.readFile(err,'utf8'),'error stream');assert.equal(await fs.readFile(peer,'utf8'),'preserved peer');
+  await assert.rejects(read('other'),/Invalid application log/);
+  await assert.rejects(resources.execute(root,{payload:{resource:{action:'app-logs',id:randomUUID(),type:'out',clear:true}}},tools,h),/Deploy this managed/);
+  await assert.rejects(resources.execute(root,{payload:{resource:{action:'app-logs',id,type:'out',clear:true}}},{pm:async()=>JSON.stringify([{name:`manager-remote-${id}`,pm2_env:{pm_out_log_path:path.join(root,'foreign.log')}}])},h),/outside the private/);
+});
 test('staging gateway scopes Caddy routing, forwards requests and survives enabling/disabling sleep',async t=>{
   const {root,id}=await application(t),backend=http.createServer((_req,res)=>res.end('fixture app'));await new Promise(r=>backend.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>backend.close(r)));
   const saved=await h.readJson(path.join(root,'apps.json'));saved[id].app.port=backend.address().port;await h.atomicJson(path.join(root,'apps.json'),saved);const routes=[],tools={pm:async args=>args[0]==='jlist'?JSON.stringify([{name:`manager-remote-${id}`,pm2_env:{status:'online'}}]):''},helpers={...h,managedCaddyConfig:async(_root,apps)=>resources.proxyApps(root,apps,h),proxyConfig:async(_root,apps)=>routes.push(apps)};
@@ -84,12 +121,20 @@ test('resource API rejects viewer mutations, cross-origin requests and wrong-ser
   const context={params:Promise.resolve({id:serverId,path:['apps',randomUUID(),'memory']})},request=origin=>new Request('https://manager.test/api/servers/'+serverId+'/resources/apps/x/memory',{method:'POST',headers:{host:'manager.test',origin,'content-type':'application/json'},body:'{"limitMb":512}'});
   assert.equal((await route.POST(request('https://manager.test'),context)).status,403);role='admin';assert.equal((await route.POST(request('https://foreign.test'),context)).status,403);assert.equal((await route.POST(request('https://manager.test'),context)).status,404);assert.equal(calls,0);
 });
+
+test('viewers can read application logs but cannot clear them or change readiness',async()=>{
+  const calls=[],serverId=randomUUID(),appId=randomUUID(),api={ApiError,jsonError:e=>Response.json({error:e.message},{status:e.status||500})};
+  const route=load('app/api/servers/[id]/resources/[[...path]]/route.ts',{'next/server':{NextResponse:Response},'@/lib/api':api,'@/lib/auth':{getSessionFromCookie:async()=>({id:randomUUID(),role:'viewer'})},'@/lib/rbac':{requireRole:(u,roles)=>{if(!roles.includes(u.role))throw new ApiError('Forbidden',403)}},'@/lib/request-body':load('lib/request-body.ts',{'@/lib/api':api}),'@/lib/managed-servers':{},'@/lib/remote-resources':{queueResource:async(...args)=>{calls.push(args);return{jobId:randomUUID()}}},'@/lib/remote-automation':{},'@/lib/remote-operations':{},'@/lib/remote-databases':{},'@/lib/update-maintenance':{updateProtected:(_label,run)=>run()}});
+  const invoke=(method,section)=>route[method](new Request(`https://manager.test/api/servers/${serverId}/resources/apps/${appId}/${section}?type=err`,{method,headers:{host:'manager.test',origin:'https://manager.test','content-type':'application/json'},body:JSON.stringify({clear:true,action:'health'})}),{params:Promise.resolve({id:serverId,path:['apps',appId,section]})});
+  assert.equal((await invoke('POST','logs')).status,200);assert.deepEqual(calls[0].slice(0,2),[serverId,{action:'app-logs',id:appId,type:'err',clear:false}]);
+  assert.equal((await invoke('DELETE','logs')).status,403);assert.equal((await invoke('PATCH','health')).status,403);assert.equal(calls.length,1);
+});
 test('real database resource operations isolate servers, serialize admission, retain samples and dispatch schedules once',{skip:!process.env.MANAGER_REMOTE_TEST_DATABASE_URL},async t=>{
   const url=new URL(process.env.MANAGER_REMOTE_TEST_DATABASE_URL);assert.equal(url.hostname,'127.0.0.1');assert.match(url.pathname,/^\/manager_remote_test_/);
   const pool=new(require('pg').Pool)({connectionString:url.href,max:12}),query=(sql,args)=>pool.query(sql,args);t.after(()=>pool.end());
   await query('create extension if not exists pgcrypto;create table if not exists users(id uuid primary key);create table if not exists github_connections(id uuid primary key);create table if not exists audit_logs(id uuid primary key default gen_random_uuid(),user_id uuid references users(id),action text,resource text,details jsonb)');
   const user=randomUUID();await query('insert into users values($1)',[user]);process.env.MANAGER_ENCRYPTION_KEY='isolated-resources-test-key';const secret=load('lib/secret-crypto.ts',{}),db={db:pool,query},api={ApiError};
-  const mocks={'@/lib/api':api,'@/lib/db':db,'@/lib/audit':{audit:async()=>{}},'@/lib/secret-crypto':secret,'@/lib/git-provider-policy':{},'@/lib/github-connections':{},'@/lib/remote-setup-policy':{},'@/scripts/manager-agent.cjs':agent};
+  const mocks={'@/lib/api':api,'@/lib/db':db,'@/lib/audit':{audit:async()=>{}},'@/lib/secret-crypto':secret,'@/lib/git-provider-policy':{},'@/lib/github-connections':{},'@/lib/remote-security-gate-policy':load('lib/remote-security-gate-policy.ts',{}),'@/lib/deployment-cache':{loadAuditExceptions:()=>[]},'@/lib/security-gate-policy':load('lib/security-gate-policy.ts',{}),'@/lib/remote-setup-policy':{},'@/scripts/manager-agent.cjs':agent};
   const managed=load('lib/managed-servers.ts',mocks),policy=load('lib/server-memory-policy.ts',{});
   const res=load('lib/remote-resources.ts',{'./api':api,'./db':db,'./secret-crypto':secret,'./managed-servers':managed,'./server-memory-policy':policy,'@/scripts/manager-agent-resources.cjs':resources});
   const automation=load('lib/remote-automation.ts',{'./api':api,'./db':db,'./managed-servers':managed,'./remote-resources':res});mocks['@/lib/remote-automation']=automation;
@@ -109,5 +154,11 @@ test('real database resource operations isolate servers, serialize admission, re
   await automation.changeAutomation(a.id,'cron',undefined,'save',cfg,user);const schedule=(await automation.automationList(a.id,'cron'))[0];await query('update remote_automations set next_run_at=now()-interval \'1 minute\' where id=$1',[schedule.id]);await automation.remoteResourceTick();await automation.remoteResourceTick();assert.equal((await query("select count(*)::int n from remote_jobs where server_id=$1 and resource_action='cron-run'",[a.id])).rows[0].n,1);
   await query("update remote_jobs set status='cancelled' where server_id=$1 and status='queued'",[a.id]);
   const queued=await automation.changeAutomation(a.id,'worker',undefined,'save',{name:'Owned worker',description:'',command:'node worker.cjs',workingDirectory:'C:\\fixture',enabled:false,pm2Name:'worker-label'},user);const reserved=(await automation.automationList(a.id,'worker'))[0];assert.ok(reserved);const claimed=(await managed.claimJob(a.id)).job;assert.equal(claimed.id,queued.jobId);await managed.reportJob(a.id,{id:claimed.id,claimToken:claimed.claimToken,status:'success',sequence:1,log:'saved',result:{ok:true}});assert.equal((await automation.automationList(a.id,'worker'))[0].name,'Owned worker');assert.equal((await automation.automationList(b.id,'worker')).length,0);
+  const profile={path:'/ready',statuses:[401],timeoutMs:15000};
+  await assert.rejects(res.changeRemoteApplicationHealth(a.id,app.id,profile,user),e=>e.status===409);
+  sample.capabilities.push(agent.APPLICATION_CONTROL_CAPABILITY);await query('update managed_servers set metrics=$2 where id=$1',[a.id,JSON.stringify(sample)]);
+  await assert.rejects(res.changeRemoteApplicationHealth(b.id,app.id,profile,user),e=>e.status===404);
+  await res.changeRemoteApplicationHealth(a.id,app.id,profile,user);assert.equal((await res.remoteApplicationHealth(a.id,app.id)).profile.path,'/');
+  const healthJob=(await managed.claimJob(a.id)).job;await managed.reportJob(a.id,{id:healthJob.id,claimToken:healthJob.claimToken,status:'success',sequence:1,log:'Readiness saved',result:{ok:true,profile}});assert.deepEqual((await res.remoteApplicationHealth(a.id,app.id)).profile,profile);
   await query('update managed_servers set last_seen_at=$2 where id=$1',[a.id,new Date(0)]);await assert.rejects(res.queueResource(a.id,{action:'disk',mode:'scan'},user),e=>e.status===409);
 });

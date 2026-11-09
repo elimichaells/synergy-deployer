@@ -17,7 +17,7 @@ export async function remoteInfrastructureJob(serverId:string,jobId:string,admin
   if(job.resource_action==='database-inspect'&&job.result)job.result=(await import('./remote-databases')).decorateDatabaseResult(job.result,admin)
   return {job}
 }
-export async function queueInfrastructure(serverId:string,appId:string|null,action:unknown,userId:string,domain?:{id:string;hostname:string;remove:boolean;restoreHostname?:string;restoreAccessMode?:string}) {
+export async function queueInfrastructure(serverId:string,appId:string|null,action:unknown,userId:string,domain?:{id:string;hostname:string;remove:boolean;restoreHostname?:string;restoreAccessMode?:string;routes?:{id:string;appId:string;prefix:string;stripPrefix:boolean}[]}) {
   await ensureManagedServers();uuid(serverId);if(appId)uuid(appId)
   if(typeof action!=='string'||!(appId?['start','stop','restart','domain']:['start','stop','restart','reload','validate','read-config']).includes(action))throw new ApiError('Unknown operation',400)
   const client=await db.connect();let id:string
@@ -30,7 +30,8 @@ export async function queueInfrastructure(serverId:string,appId:string|null,acti
     if(!appId&&server.metrics.caddy?.mode==='shared'&&['start','stop','restart'].includes(action))throw new ApiError('Shared Caddy serves existing sites. Use Reload Config to update only managed routes.',409)
     if((await client.query("select 1 from remote_jobs where server_id=$1 and status in ('queued','running') union all select 1 from remote_service_operations where server_id=$1 and status in ('running','interrupted') union all select 1 from remote_agent_updates where server_id=$1 and status in ('queued','installing','recovery_required')",[serverId])).rowCount)throw new ApiError('Wait for the current server operation to finish',409)
     if(domain)try{validateLanSelection(domain.hostname,server.metrics)}catch(error){throw new ApiError((error as Error).message,409)}
-    const payload={id:appId,action,domain,expiresAt:Date.now()+60000,requiredCapability:parseLanAddress(domain?.hostname)?LAN_CAPABILITY:INFRASTRUCTURE_CAPABILITY}
+    if(domain?.routes!==undefined&&!server.metrics?.capabilities?.includes('application-control-v1'))throw new ApiError('Update the agent to enable shared domain controls',409)
+    const payload={id:appId,action,domain,expiresAt:Date.now()+60000,requiredCapability:domain?.routes!==undefined?'application-control-v1':parseLanAddress(domain?.hostname)?LAN_CAPABILITY:INFRASTRUCTURE_CAPABILITY}
     id=(await client.query("insert into remote_jobs(server_id,app_id,user_id,kind,operation_type,payload_ciphertext) values($1,$2,$3,'console','infrastructure',$4) returning id",[serverId,appId,userId,encryptSecret(JSON.stringify(payload))])).rows[0].id
     await client.query('commit')
   }catch(error){await client.query('rollback');throw error}finally{client.release()}

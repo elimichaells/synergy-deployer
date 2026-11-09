@@ -1,3 +1,4 @@
+import { tailRuntimeLog } from '@/lib/runtime-log-reader'
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { getSessionFromCookie } from '@/lib/auth'
@@ -5,16 +6,10 @@ import { requireRole } from '@/lib/rbac'
 import { jsonError } from '@/lib/api'
 import { exec } from 'child_process'
 import { promisify } from 'util'
-import { readFile } from 'fs/promises'
 
 const execAsync = promisify(exec)
 
-async function tailLines(filePath: string, lines: number) {
-  const content = await readFile(filePath, 'utf8')
-  const parts = content.split(/\r?\n/)
-  if (parts.length <= lines) return parts.join('\n')
-  return parts.slice(-lines).join('\n')
-}
+const tailLines=tailRuntimeLog
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
@@ -33,7 +28,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
 
     const url = new URL(request.url)
     const type = url.searchParams.get('type') === 'err' ? 'err' : 'out'
-    const lines = Math.min(parseInt(url.searchParams.get('lines') || '200', 10), 2000)
+    const lines = Math.max(1,Math.min(parseInt(url.searchParams.get('lines') || '200', 10)||200, 2000))
 
     const { stdout } = await execAsync('pm2 jlist', {
       windowsHide: true,
@@ -54,25 +49,30 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
 
     const encoder = new TextEncoder()
     let interval: NodeJS.Timeout | null = null
+    let cancelled=false,reading=false
+    const stop=()=>{cancelled=true;if(interval)clearInterval(interval);request.signal.removeEventListener('abort',stop)}
+    request.signal.addEventListener('abort',stop,{once:true})
 
     const stream = new ReadableStream({
       async start(controller) {
         const send = async () => {
+          if(cancelled||reading)return
+          reading=true
           try {
             const log = await tailLines(logPath, lines)
             const payload = `data: ${JSON.stringify({ log, logPath })}\n\n`
-            controller.enqueue(encoder.encode(payload))
+            if(!cancelled)controller.enqueue(encoder.encode(payload))
           } catch (error) {
             const payload = `event: error\ndata: ${JSON.stringify({ error: 'Failed to read logs' })}\n\n`
-            controller.enqueue(encoder.encode(payload))
-          }
+            if(!cancelled)controller.enqueue(encoder.encode(payload))
+          }finally{reading=false}
         }
 
         await send()
-        interval = setInterval(send, 2000)
+        if(!cancelled)interval = setInterval(send, 2000)
       },
       cancel() {
-        if (interval) clearInterval(interval)
+        stop()
       },
     })
 

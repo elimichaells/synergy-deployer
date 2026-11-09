@@ -7,6 +7,39 @@ import { decryptSecret } from './secret-crypto'
 import { serverDetail,uuid } from './managed-servers'
 import { queueInfrastructure } from './remote-infrastructure'
 import { lanAddress, parseLanAddress } from '../scripts/lan-address.cjs'
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
+import { normalizeRoutePrefix,orderRoutes,stackRouteProblem } from './domain-route-policy'
+import type { DomainRoute } from './domain-routes'
+
+let routeSchema:Promise<unknown>|undefined
+export function ensureRemoteDomainRoutes(){return routeSchema??=ensureCloudflareSchema().then(async()=>query(await readFile(path.join(process.cwd(),'db/migrations/032_remote_domain_routes.sql'),'utf8'))).catch(error=>{routeSchema=undefined;throw error})}
+export async function listRemoteDomainRoutes(serverId:string,appId?:string){
+  await ensureRemoteDomainRoutes();await serverDetail(serverId);if(appId)uuid(appId)
+  return orderRoutes((await query<DomainRoute & {server_id:string;deleting:boolean;operation_status:string;last_error:string|null}>(`select r.*,d.hostname,d.project_id as domain_project_id,dp.name as domain_project_name,p.name as project_name,p.component_role,j.status as operation_status,d.last_error
+    from remote_domain_routes r join remote_domains d on d.id=r.domain_id join remote_apps dp on dp.id=d.project_id join remote_apps p on p.id=r.project_id left join remote_jobs j on j.id=d.job_id
+    where r.server_id=$1 and ($2::uuid is null or r.project_id=$2 or d.project_id=$2)`,[serverId,appId||null])).rows)
+}
+export async function changeRemoteDomainRoute(serverId:string,id:string|null,body:Record<string,unknown>,userId:string){
+  await ensureRemoteDomainRoutes()
+  return locked(serverId,async()=>{
+    let domainId:string
+    if(id){uuid(id);const row=(await query('select * from remote_domain_routes where server_id=$1 and id=$2',[serverId,id])).rows[0];if(!row)throw new ApiError('Route not found on this server',404);domainId=row.domain_id;await query('update remote_domain_routes set deleting=true where id=$1',[id])}
+    else {
+      const targetId=uuid(body.projectId);domainId=uuid(body.domainId)
+      const domain=await domainRow(serverId,domainId),{apps}=await serverDetail(serverId),owner=apps.find(a=>a.id===domain.project_id),target=apps.find(a=>a.id===targetId)
+      if(!owner||!target)throw new ApiError('Domain and application must belong to this server',404)
+      const problem=stackRouteProblem({domainProjectId:owner.id,domainGroupId:owner.application_group_id||null,domainEnvironment:owner.environment_name||'production',targetProjectId:target.id,targetGroupId:target.application_group_id||null,targetEnvironment:target.environment_name||'production',targetPort:target.live_commit?target.port:null})
+      if(problem)throw new ApiError(problem,400)
+      let prefix:string;try{prefix=normalizeRoutePrefix(body.pathPrefix)}catch(error){throw new ApiError((error as Error).message,400)}
+      if(Number((await query('select count(*) as count from remote_domain_routes where domain_id=$1',[domainId])).rows[0].count)>=100)throw new ApiError('This domain already has 100 shared paths. Remove an unused path before adding another.',409)
+      try{await query('insert into remote_domain_routes(server_id,domain_id,project_id,path_prefix,strip_prefix) values($1,$2,$3,$4,$5)',[serverId,domainId,targetId,prefix,body.stripPrefix===true])}catch(error){if((error as {code?:string}).code==='23505')throw new ApiError('This path already exists. Sync its domain to retry an interrupted operation.',409);throw error}
+    }
+    const row=await domainRow(serverId,domainId)
+    try{await queueRoute(row,userId);await waitRoute(serverId,domainId);await query('delete from remote_domain_routes where domain_id=$1 and deleting=true',[domainId]);return{ok:true}}
+    catch(error){await query('update remote_domains set last_error=$2 where id=$1',[domainId,(error as Error).message]);throw error}
+  })
+}
 
 async function domainRow(serverId:string,id:string){await ensureCloudflareSchema();uuid(serverId);uuid(id);const row=(await query('select * from remote_domains where server_id=$1 and id=$2',[serverId,id])).rows[0];if(!row)throw new ApiError('Domain not found on this server',404);return row}
 export async function listRemoteDomains(serverId:string){
@@ -27,7 +60,9 @@ async function waitRoute(serverId:string,id:string){
   throw new ApiError('The server has not confirmed the route yet. Its operation is retained; use Sync after it reconnects.',409)
 }
 async function queueRoute(row:Record<string,any>,userId:string,remove=false){
-  const operation=await queueInfrastructure(row.server_id,row.project_id,'domain',userId,{id:row.id,hostname:row.hostname,remove,...(remove&&row.is_primary?{restoreHostname:row.previous_hostname,restoreAccessMode:row.previous_access_mode}:{})})
+  await ensureRemoteDomainRoutes()
+  const routes=remove?[]:(await query<{id:string;appId:string;prefix:string;stripPrefix:boolean}>('select id,project_id as "appId",path_prefix as prefix,strip_prefix as "stripPrefix" from remote_domain_routes where server_id=$1 and domain_id=$2 and not deleting order by length(path_prefix) desc,path_prefix',[row.server_id,row.id])).rows
+  const operation=await queueInfrastructure(row.server_id,row.project_id,'domain',userId,{id:row.id,hostname:row.hostname,remove,routes,...(remove&&row.is_primary?{restoreHostname:row.previous_hostname,restoreAccessMode:row.previous_access_mode}:{})})
   await query('update remote_domains set job_id=$2,deleting=$3,last_error=null where id=$1',[row.id,operation.jobId,remove])
 }
 async function createDomain(serverId:string,input:Record<string,unknown>,userId:string){
@@ -52,8 +87,9 @@ async function syncDomain(serverId:string,id:string,userId:string){
   if(row.deleting)return deleteDomain(serverId,id,userId)
   try{
     const job=row.job_id?(await query('select status from remote_jobs where id=$1 and server_id=$2',[row.job_id,serverId])).rows[0]:null
-    if(!job||['failed','cancelled'].includes(job.status)){await queueRoute(row,userId);row=await domainRow(serverId,id)}
+    if(!job||['failed','cancelled'].includes(job.status)||row.last_error&&!['queued','running'].includes(job.status)){await queueRoute(row,userId);row=await domainRow(serverId,id)}
     await waitRoute(serverId,id)
+    await ensureRemoteDomainRoutes();await query('delete from remote_domain_routes where domain_id=$1 and deleting=true',[id])
     if(row.is_primary){
       const changed=await query("update remote_apps set hostname=$3,access_mode=$5 where id=$1 and server_id=$2 and hostname in ($3,$4)",[row.project_id,serverId,row.hostname,row.previous_hostname,parseLanAddress(row.hostname)?'lan':'wan']);
       if(!changed.rowCount)throw new ApiError('Application hostname changed during domain setup. Review it before retrying.',409)

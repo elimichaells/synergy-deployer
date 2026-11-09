@@ -77,11 +77,11 @@ test('project runtime versions remain separate from the default and reject missi
 
 function consoleModule(overrides={}){
   const calls=[],server={enabled:true,enrolled_at:'now',last_seen_at:new Date().toISOString(),metrics:{capabilities:[agent.CONSOLE_CAPABILITY]}},id=randomUUID();
-  const query=async(sql,args)=>{calls.push({sql,args});if(sql.includes('select * from managed_servers'))return {rows:[{...server,...overrides.server}],rowCount:1};if(sql.includes('select 1 from remote_service_operations'))return {rows:[],rowCount:overrides.busy?1:0};if(sql.includes('insert into remote_jobs'))return {rows:[{id}],rowCount:1};return {rows:[],rowCount:0}};
+  const query=async(sql,args)=>{calls.push({sql,args});if(sql.includes('pg_try_advisory'))return {rows:[{ok:!overrides.setupBusy}]};if(sql.includes('select 1 from remote_agent_updates'))return {rows:[],rowCount:overrides.updateBusy?1:0};if(sql.includes('select * from managed_servers'))return {rows:[{...server,...overrides.server}],rowCount:1};if(sql.includes('select 1 from remote_service_operations'))return {rows:[],rowCount:overrides.busy?1:0};if(sql.includes('insert into remote_jobs'))return {rows:[{id}],rowCount:1};return {rows:[],rowCount:0}};
   const mod=load('lib/remote-console.ts',{'./api':{ApiError},'./audit':{audit:async()=>{}},'./db':{query,db:{connect:async()=>({query,release(){}})}},'./managed-servers':{ensureManagedServers:async()=>{},uuid:v=>v},'./secret-crypto':{encryptSecret:x=>x,decryptSecret:x=>x},'./project-console':{validateConsoleCommand:x=>typeof x==='string'&&x.trim()?null:'Enter a command'},'@/scripts/manager-agent.cjs':agent});return {mod,calls,id};
 }
 test('console admission requires a connected capable server and waits for service operations',async()=>{
-  for(const overrides of [{server:{enabled:false}},{server:{last_seen_at:'2000-01-01'}},{server:{metrics:{capabilities:[]}}},{busy:true}]){
+  for(const overrides of [{server:{enabled:false}},{server:{last_seen_at:'2000-01-01'}},{server:{metrics:{capabilities:[]}}},{busy:true},{setupBusy:true},{updateBusy:true}]){
     const {mod,calls}=consoleModule(overrides);await assert.rejects(mod.queueRemoteConsole(randomUUID(),null,{action:'run',command:'echo test'},randomUUID()));assert.ok(!calls.some(x=>x.sql.includes('insert into')));
   }
   const {mod,calls,id}=consoleModule();assert.equal((await mod.queueRemoteConsole(randomUUID(),null,{action:'run',command:'echo test'},randomUUID())).id,id);
@@ -93,7 +93,7 @@ test('real PostgreSQL serializes console and service work and preserves cancella
   const pool=new (require('pg').Pool)({connectionString:url.href});t.after(()=>pool.end());const query=(s,p)=>pool.query(s,p);
   await query('create extension if not exists pgcrypto;create table if not exists users(id uuid primary key);create table if not exists github_connections(id uuid primary key)');
   process.env.MANAGER_ENCRYPTION_KEY='isolated-console-integration-key';const secret=load('lib/secret-crypto.ts',{});
-  const managed=load('lib/managed-servers.ts',{'@/lib/db':{db:pool,query},'@/lib/api':{ApiError},'@/lib/audit':{audit:async()=>{}},'@/lib/secret-crypto':secret,'@/lib/github-connections':{},'@/lib/git-provider-policy':{},'@/scripts/manager-agent.cjs':agent,'@/lib/remote-setup-policy':require('../lib/remote-setup-policy.ts')});
+  const managed=load('lib/managed-servers.ts',{'@/lib/db':{db:pool,query},'@/lib/api':{ApiError},'@/lib/audit':{audit:async()=>{}},'@/lib/secret-crypto':secret,'@/lib/github-connections':{},'@/lib/git-provider-policy':{},'@/scripts/manager-agent.cjs':agent,'@/lib/remote-security-gate-policy':load('lib/remote-security-gate-policy.ts',{}),'@/lib/deployment-cache':{loadAuditExceptions:()=>[]},'@/lib/security-gate-policy':load('lib/security-gate-policy.ts',{}),'@/lib/remote-setup-policy':require('../lib/remote-setup-policy.ts')});
   const user=randomUUID();await query('insert into users values($1)',[user]);const server=await managed.addServer({name:'Console fixture',platform:'win32'},user);
   await managed.enroll({protocol:1,platform:'win32',serverId:server.id,enrollmentToken:server.enrollmentToken,agentToken:require('crypto').randomBytes(32).toString('base64url')});
   await query('update managed_servers set last_seen_at=now(),metrics=$2 where id=$1',[server.id,JSON.stringify({capabilities:[agent.CONSOLE_CAPABILITY]})]);
@@ -107,11 +107,11 @@ test('real PostgreSQL serializes console and service work and preserves cancella
   assert.equal((await managed.claimJob(server.id)).paused,true);await assert.rejects(mod.queueRemoteConsole(server.id,null,{action:'run',command:'Get-Date'},user),/service operation/);
   await query("update remote_service_operations set status='success' where id=$1",[operation]);const next=await mod.queueRemoteConsole(server.id,null,{action:'run',command:'Get-Date'},user);assert.ok(next.id);
   await mod.cancelRemoteConsole(server.id,next.id,user);assert.equal((await managed.claimJob(server.id)).job,null);
-  await query('update managed_servers set metrics=$2 where id=$1',[server.id,JSON.stringify({capabilities:[agent.CONSOLE_CAPABILITY,agent.RUNTIME_CAPABILITY],runtimeVersions:{node:['22.23.4']}})]);
+  await query('update managed_servers set metrics=$2 where id=$1',[server.id,JSON.stringify({capabilities:[agent.CONSOLE_CAPABILITY,agent.RUNTIME_CAPABILITY,agent.APPLICATION_CONTROL_CAPABILITY],runtimeVersions:{node:['22.23.4']}})]);
   const appConfig={name:'Pinned runtime fixture',repo_url:'https://github.com/example/test',branch:'main',start_cmd:'node app.cjs',port:45001,access_mode:'lan',hostname:randomUUID()+'.example.test',runtime_versions:{node:'22.23.4'}};
   const app=await managed.saveRemoteApp(server.id,null,appConfig,user);assert.deepEqual((await query('select runtime_versions from remote_apps where id=$1',[app.id])).rows[0].runtime_versions,{node:'22.23.4'});
   await assert.rejects(managed.saveRemoteApp(server.id,app.id,{...appConfig,runtime_versions:{node:'24.0.0'}},user),/this server/);
-  const deployment=await managed.queueRemoteDeploy(server.id,app.id,user);const pinned=(await managed.claimJob(server.id)).job;assert.equal(pinned.payload.requiredCapability,agent.RUNTIME_CAPABILITY);assert.equal(pinned.payload.runtime_versions.node,'22.23.4');
+  const deployment=await managed.queueRemoteDeploy(server.id,app.id,user);const pinned=(await managed.claimJob(server.id)).job;assert.equal(pinned.payload.requiredCapability,agent.APPLICATION_CONTROL_CAPABILITY);assert.equal(pinned.payload.runtime_versions.node,'22.23.4');
   await managed.reportJob(server.id,{id:deployment.id,claimToken:pinned.claimToken,status:'failed',sequence:1,log:'End of isolated queue fixture'});
 });
 

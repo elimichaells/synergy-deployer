@@ -15,6 +15,9 @@ const PROTOCOL_VERSION = 1;
 const AGENT_VERSION = '1.8.0';
 const LAN_CAPABILITY = 'lan-ip-v1';
 const resources = require('./manager-agent-resources.cjs');
+const { probeHttp, validateHealthProfile } = require('./http-health.cjs');
+const { assertAuditPassed, formatAuditFindings } = require('./dependency-audit.cjs');
+const releaseData = require('./remote-release-data.cjs');
 const { parseLanAddress, lanCaddyDirectives, lanProxyHeaders, assertLanInterface } = require('./lan-address.cjs');
 const { checkLanListeners } = require('./lan-listener.cjs');
 const INFRASTRUCTURE_CAPABILITY = 'remote-infrastructure-v1';
@@ -22,6 +25,7 @@ const CONSOLE_CAPABILITY = 'remote-console-v1';
 const RUNTIME_CAPABILITY = 'runtime-versions-v1';
 const SETUP_CAPABILITY = 'guided-setup-v1';
 const UPDATE_CAPABILITY = 'agent-update-v1';
+const APPLICATION_CONTROL_CAPABILITY = 'application-control-v1';
 const ID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 let configuredTools = {};
@@ -100,9 +104,9 @@ function validateApp(input) {
   const branch = requireText(input.branch || 'main', 'branch');
   if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(branch) || branch.includes('..') || branch.includes('//') || branch.endsWith('/') || branch.endsWith('.') || branch.endsWith('.lock')) throw new Error('Invalid Git branch');
   const commands = {};
-  for (const field of ['install_cmd', 'build_cmd', 'start_cmd']) {
+  for (const field of ['install_cmd', 'build_cmd', 'start_cmd','deploy_script','pre_deploy_cmd','post_deploy_cmd']) {
     const value = input[field] ?? '';
-    if (typeof value !== 'string' || value.length > 4000 || value.includes('\0')) throw new Error('Invalid application command');
+    if (typeof value !== 'string' || value.length > (field==='deploy_script'?64000:4000) || value.includes('\0')) throw new Error('Invalid application command');
     commands[field] = value.trim();
   }
   if (!commands.start_cmd) throw new Error('Start command is required');
@@ -131,7 +135,7 @@ function validateApp(input) {
     cleanEnv[key] = value;
   }
   if (JSON.stringify(cleanEnv).length > 65536) throw new Error('Environment exceeds 64 KB');
-  return { name, repo_url, branch, ...commands, port: appPort, health_path, access_mode: input.access_mode, hostname, ip_address, ip_port, environment: cleanEnv, runtime_versions:validateRuntimeVersions(input.runtime_versions) };
+  return { name, repo_url, branch, ...commands, port: appPort, health_path, ...(input.health_profile?{health_profile:validateHealthProfile({...input.health_profile,path:health_path})}:{}), access_mode: input.access_mode, hostname, ip_address, ip_port, environment: cleanEnv, runtime_versions:validateRuntimeVersions(input.runtime_versions) };
 }
 
 function validateRuntimeVersions(value={}) {
@@ -188,7 +192,7 @@ function sanitizeMetrics(raw) {
     caddy:raw.caddy?{mode:raw.caddy.mode==='shared'?'shared':'pm2',status:['running','stopped','unknown'].includes(raw.caddy.status)?raw.caddy.status:'unknown',configPath:str(raw.caddy.configPath,1024),version:str(raw.caddy.version)}:null,
     proxyError: raw.proxyError ? str(raw.proxyError, 500) : null,
     resources:resources.sanitize(raw.resources),
-    capabilities: [LAN_CAPABILITY,SETUP_CAPABILITY,UPDATE_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY].filter(value => Array.isArray(raw.capabilities) && raw.capabilities.includes(value)) };
+    capabilities: [APPLICATION_CONTROL_CAPABILITY,LAN_CAPABILITY,SETUP_CAPABILITY,UPDATE_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY].filter(value => Array.isArray(raw.capabilities) && raw.capabilities.includes(value)) };
   if (result.memoryFree > result.memoryTotal || (result.diskFree !== null && result.diskTotal !== null && result.diskFree > result.diskTotal)) throw new Error('Invalid capacity');
   return result;
 }
@@ -226,10 +230,17 @@ function caddyConfig(apps, storageRoot) {
   const quotePath = JSON.stringify(storageRoot.replace(/\\/g, '/'));
   const sites = apps.map(raw => {
     const app = validateApp(raw);
+    const routes=(raw.pathRoutes||[]).map(route=>{
+      if(typeof route.prefix!=='string'||route.prefix.length>100||!/^\/[a-z0-9][a-z0-9._~-]*(?:\/[a-z0-9][a-z0-9._~-]*)*$/i.test(route.prefix)||route.prefix.toLowerCase().startsWith('/.well-known')||typeof route.stripPrefix!=='boolean')throw Error('Invalid shared domain path');
+      return {...route,port:port(route.port,'route port')};
+    }).sort((a,b)=>b.prefix.length-a.prefix.length||a.prefix.localeCompare(b.prefix));
+    if(routes.length>100)throw Error('Too many shared domain paths');
     const block = (address, internal) => {
       const lan=lanCaddyDirectives(address.replace(/^https:\/\//,''));
       const headers=lanProxyHeaders(address.replace(/^https:\/\//,''));
-      return `${address} {\n${internal ? '\ttls internal\n' : ''}${lan}${lan?'\thandle {\n':''}\treverse_proxy 127.0.0.1:${app.port}${headers?' {\n'+headers+'\t}':''}\n${lan?'\t}\n':''}}\n`;
+      const proxy=n=>`reverse_proxy 127.0.0.1:${n}${headers?' {\n'+headers+'\t}':''}`;
+      const routed=routes.length?`\troute {\n${routes.map((r,i)=>`\t\t@path${i} path ${r.prefix} ${r.prefix}/*\n\t\thandle @path${i} {\n${r.stripPrefix?`\t\t\turi strip_prefix ${r.prefix}\n`:''}\t\t\t${proxy(r.port)}\n\t\t}`).join('\n')}\n\t\thandle {\n\t\t\t${proxy(app.port)}\n\t\t}\n\t}\n`:`\t${proxy(app.port)}\n`;
+      return `${address} {\n${internal ? '\ttls internal\n' : ''}${lan}${lan?'\thandle {\n':''}${routed}${lan?'\t}\n':''}}\n`;
     };
     const ip = net.isIP(app.ip_address) === 6 ? `[${app.ip_address}]` : app.ip_address;
     return block(`https://${app.hostname}`, app.access_mode === 'lan') + (ip ? block(`https://${ip}:${app.ip_port}`, true) : '');
@@ -294,7 +305,8 @@ function run(file, args = [], options = {}) {
     const finish = (error, code) => {
       if (settled) return; settled = true; clearTimeout(timer); options.signal?.removeEventListener('abort',kill); stdout.end(); stderr.end();
       if(options.signal?.aborted){reject(new Error('Command cancelled'));return;}
-      if (error || code !== 0 || timedOut) reject(new Error(timedOut ? 'Command exceeded its time limit' : error ? error.message : `Command exited ${code}: ${output.slice(-1500)}`));
+      if (options.returnResult&&!error&&!timedOut)resolve({code,output:output.trim()});
+      else if (error || code !== 0 || timedOut) reject(new Error(timedOut ? 'Command exceeded its time limit' : error ? error.message : `Command exited ${code}: ${output.slice(-1500)}`));
       else resolve(output.trim());
     };
     child.on('error', error => finish(error)); child.on('close', code => finish(null, code));
@@ -365,19 +377,20 @@ async function checkPort(portNumber) {
     server.listen(portNumber, '127.0.0.1', () => server.close(resolve));
   });
 }
-async function healthy(app, timeout = 60000) {
-  const until = Date.now()+timeout;
+async function healthy(app, timeout, signal) {
+  const profile=validateHealthProfile(app.health_profile||{path:app.health_path||'/'});
+  const until = Date.now()+(timeout??profile.timeoutMs);
   let reason = 'No response';
   while (Date.now()<until) {
+    if(signal?.aborted)throw Error('Deployment cancelled');
     try {
-      const response = await fetch(`http://127.0.0.1:${app.port}${app.health_path}`, { redirect:'manual',signal:AbortSignal.timeout(3000) });
-      await response.body?.cancel();
-      if (response.status >= 200 && response.status < 300) return;
-      reason = `HTTP ${response.status}`;
+      const response = await probeHttp(`http://127.0.0.1:${app.port}${profile.path}`, { statuses:profile.statuses,signal:signal?AbortSignal.any([signal,AbortSignal.timeout(3000)]):AbortSignal.timeout(3000) });
+      if (response.ok) return;
+      reason = response.reason;
     } catch (error) { reason = error.message; }
     await wait(1000);
   }
-  throw new Error(`Health check failed: ${reason}. Configure a path that returns HTTP 2xx.`);
+  throw new Error(`Health check failed: ${reason}. Check this application's readiness settings.`);
 }
 
 function canonical(value) {
@@ -458,11 +471,43 @@ async function sharedProxyConfig(root,text,tools,settings) {
 }
 
 async function managedCaddyConfig(root,apps,domains) {
+  const detached=await readJson(path.join(root,'detached-apps.json'),{});
+  apps=apps.filter(app=>!detached[app.id]);
   apps=await resources.proxyApps(root,apps,resourceHelpers());
   domains=domains||await readJson(path.join(root,'domains.json'),{});
-  const aliases=Object.values(domains).flatMap(domain=>{const app=apps.find(a=>a.id===domain.appId);return app&&app.hostname!==domain.hostname?[{...app,hostname:domain.hostname,access_mode:parseLanAddress(domain.hostname)?'lan':'wan',ip_address:'',ip_port:null}]:[]});
-  for(const app of [...apps,...aliases])assertLanInterface(app.hostname,os.networkInterfaces());
-  return caddyConfig([...apps,...aliases],path.join(root,'caddy-storage'));
+  const domainPaths=domain=>(domain.paths||[]).map(route=>{const target=apps.find(a=>a.id===route.appId);if(!target)throw Error('Shared domain target is unavailable; existing proxy routes were preserved');return {...route,port:target.port};});
+  apps=apps.map(app=>{const domain=Object.values(domains).find(d=>d.appId===app.id&&d.hostname===app.hostname);return domain?{...app,pathRoutes:domainPaths(domain)}:app;});
+  const aliases=Object.values(domains).flatMap(domain=>{const app=apps.find(a=>a.id===domain.appId);return app&&app.hostname!==domain.hostname?[{...app,hostname:domain.hostname,access_mode:parseLanAddress(domain.hostname)?'lan':'wan',ip_address:'',ip_port:null,pathRoutes:domainPaths(domain)}]:[]});
+  const retained=Object.values(detached).filter(item=>item.saved).flatMap(item=>[item.saved.app,...Object.values(item.domains).filter(d=>d.hostname!==item.saved.app.hostname).map(d=>({...item.saved.app,hostname:d.hostname,access_mode:parseLanAddress(d.hostname)?'lan':'wan',ip_address:'',ip_port:null}))]);
+  const routes=[...apps,...aliases,...retained];
+  const addresses=new Map();
+  for(const app of routes){assertLanInterface(app.hostname,os.networkInterfaces());const owner=addresses.get(app.hostname);if(owner&&owner!==app.id)throw Error('This address belongs to another application or a preserved site');addresses.set(app.hostname,app.id);}
+  return caddyConfig(routes,path.join(root,'caddy-storage'));
+}
+
+/** Persist the preservation record BEFORE removing management. Replaying after a
+ * crash is safe; proxy reloads always include this record, even mid-transition. */
+async function detachApplication(root,id,log) {
+  if(!ID.test(id))throw Error('Invalid application identifier');
+  const file=path.join(root,'apps.json'),saved=await readJson(file,{}),archiveFile=path.join(root,'detached-apps.json'),archive=await readJson(archiveFile,{});
+  const domainFile=path.join(root,'domains.json'),domains=await readJson(domainFile,{});
+  const settings=await readJson(path.join(root,'resources.json'),{apps:{}});
+  if(await readJson(path.join(root,'resource-transaction.json')))throw Error('Complete application settings recovery before removing an application');
+  if(settings.apps?.[id]?.sleepAfterMinutes||settings.apps?.[id]?.sleepingSince)throw Error('Disable staging sleep and wake this application before removing it');
+  const workers=await readJson(path.join(root,'workers.json'),{});
+  if(Object.values(workers).some(w=>w.projectId===id))throw Error('Remove or reassign this application’s workers first');
+  if(Object.values(domains).some(d=>(d.paths||[]).some(r=>r.appId===id)||d.appId===id&&d.paths?.length))throw Error('Remove shared domain paths before removing this application');
+  if(!archive[id]){
+    // Failed setup/deployments may never have created an active registry entry.
+    archive[id]={saved:saved[id]||null,domains:Object.fromEntries(Object.entries(domains).filter(([,d])=>d.appId===id)),detachedAt:new Date().toISOString()};
+    if(!archive[id].saved&&Object.keys(archive[id].domains).length)throw Error('Domain ownership exists without application state. Inspect this application before removal');
+    await atomicJson(archiveFile,archive);
+  }
+  delete saved[id];await atomicJson(file,saved);
+  for(const [key,d] of Object.entries(domains))if(d.appId===id)delete domains[key];
+  await atomicJson(domainFile,domains);
+  log('[success] Removed from Manager. Running processes, files, databases, DNS and proxy routes were preserved.\n');
+  return {ok:true,detachedAppId:id,preservedResources:true};
 }
 
 async function proxyConfig(root, text, tools) {
@@ -509,13 +554,14 @@ async function proxyConfig(root, text, tools) {
   }
 }
 
-async function writeEnv(release, environment) {
+async function writeEnv(release, environment, files) {
   const content = Object.entries(environment).map(([key,value])=>`${key}=${JSON.stringify(value)}`).join('\n')+'\n';
+  if(files&&(typeof files!=='object'||Array.isArray(files)||Object.keys(files).some(name=>!['.env','.env.local'].includes(name))||Object.values(files).some(value=>typeof value!=='string'||value.length>100000)))throw Error('Invalid application environment files');
   for (const name of ['.env','.env.local']) {
     const filename = path.join(release,name);
     const stat = await fs.lstat(filename).catch(error => { if(error.code!=='ENOENT')throw error;return null; });
     if (stat && (!stat.isFile() || stat.isSymbolicLink())) throw new Error('Environment file must be a regular file');
-    await fs.writeFile(filename,content,{mode:0o600});
+    await fs.writeFile(filename,files?(files[name]||'')+'\n# Manager runtime and managed database settings\n'+content:content,{mode:0o600});
   }
 }
 
@@ -526,19 +572,29 @@ async function restoreActivation(root, journal, tools, log, dependencies = {}) {
   const name = `manager-remote-${journal.appId}`;
   const list = await processList(tools.pm);
   if (list.some(p=>p.name===name)) await tools.pm(['delete',name]);
-  if (activation.previous) {
+  for(const worker of activation.workers||[])if(list.some(p=>p.name===`manager-worker-${worker.id}`))await tools.pm(['delete',`manager-worker-${worker.id}`]);
+  await releaseData.restore(activation.dataMoves||[],dependencies.persist||(()=>atomicJson(path.join(root,'current-job.json'),journal)));
+  await atomicJson(path.join(root,'apps.json'),activation.previousApps);
+  for(const worker of activation.workers||[]){
+    await fs.writeFile(worker.ecosystem,worker.definition,{mode:0o600});await atomicJson(path.join(path.dirname(worker.ecosystem),'launch.json'),worker.launch);
+    if(worker.wasRunning)await tools.pm(['start',worker.ecosystem]);
+  }
+  if(activation.workers?.length){const current=await readJson(path.join(root,'workers.json'),{});for(const worker of activation.workers)current[worker.id]=worker.config;await atomicJson(path.join(root,'workers.json'),current);}
+  if (activation.previous && activation.wasRunning !== false) {
     await tools.pm(['start',activation.previous.ecosystem]);
     await (dependencies.healthy || healthy)(activation.previous.app);
   }
   await (dependencies.proxyConfig || proxyConfig)(root,await managedCaddyConfig(root,Object.values(activation.previousApps).map(x=>x.app)),tools);
   await atomicJson(path.join(root,'apps.json'),activation.previousApps);
   await tools.pm(['save','--force']);
-  log(activation.previous ? '[rollback] Previous release is healthy\n' : '[rollback] Failed first release stopped\n');
+  log(activation.previous ? activation.wasRunning === false ? '[rollback] Previous release restored and remains stopped\n' : '[rollback] Previous release is healthy\n' : '[rollback] Failed first release stopped\n');
 }
 
 async function deploy(root, job, journal, tools, persist, log, dependencies = {}) {
   // Dependency injection is used by integration tests to avoid production services.
-  const command = dependencies.run || run;
+  const checkCancelled=()=>{if(dependencies.signal?.aborted)throw Error('Deployment cancelled');};
+  const command = (file,args,options={})=>{checkCancelled();return (dependencies.run||run)(file,args,{...options,signal:dependencies.signal});};
+  checkCancelled();
   const checkHealth = dependencies.healthy || healthy;
   const configureProxy = dependencies.proxyConfig || proxyConfig;
   const availablePort = dependencies.checkPort || checkPort;
@@ -546,6 +602,8 @@ async function deploy(root, job, journal, tools, persist, log, dependencies = {}
   const app = { ...validateApp(job.payload), id:job.payload.id };
   if (!tools.tools.git || !tools.tools.caddy) throw new Error('Git and Caddy must be installed before deploying');
   const applications = await readJson(path.join(root,'apps.json'),{});
+  const detached=await readJson(path.join(root,'detached-apps.json'),{});
+  if(detached[app.id]||Object.values(detached).some(item=>item.saved&&[item.saved.app.port,item.saved.app.ip_port].filter(Boolean).some(port=>port===app.port||port===app.ip_port)))throw Error('This application or port belongs to a site preserved after removal from Manager');
   const previous = applications[app.id] || null;
   const release = await contained(root,'releases',app.id,job.id);
   await fs.mkdir(path.dirname(release),{recursive:true,mode:0o700});
@@ -568,22 +626,67 @@ async function deploy(root, job, journal, tools, persist, log, dependencies = {}
     GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null',GIT_CONFIG_COUNT:String(gitConfig.length) };
   gitConfig.forEach(([key,value],i)=>{gitEnv[`GIT_CONFIG_KEY_${i}`]=key;gitEnv[`GIT_CONFIG_VALUE_${i}`]=value;});
   const secrets = [...Object.values(app.environment),git?.token,git?.token?Buffer.from(`${git.username}:${git.token}`).toString('base64'):''].filter(Boolean);
-  try { await command(executable('git'),['clone','--depth','1','--single-branch','--branch',app.branch,'--',app.repo_url,release],{env:gitEnv,timeout:600000,log,secrets}); }
+  const targetCommit=job.payload.commitSha;
+  if(targetCommit&&!/^[a-f0-9]{40,64}$/.test(targetCommit))throw Error('Invalid rollback commit');
+  const promotion=job.payload.promotion;
+  if(promotion){
+    if(!['commit','merge'].includes(promotion.mode)||!/^[a-f0-9]{40,64}$/.test(promotion.sourceCommit)||!ID.test(promotion.stagingId))throw Error('Invalid staging promotion');
+    validateApp({...app,branch:promotion.branch});
+    if(promotion.mode==='commit'&&targetCommit!==promotion.sourceCommit||promotion.mode==='merge'&&targetCommit)throw Error('Promotion commit does not match its review');
+  }
+  try {
+    await command(executable('git'),['clone','--depth','1',...(targetCommit?['--no-checkout']:['--single-branch','--branch',app.branch]),'--',app.repo_url,release],{env:gitEnv,timeout:600000,log,secrets});
+    if(targetCommit){
+      log(`[checkout] Building recorded commit ${targetCommit} with the application's current settings. Database contents are not rolled back.\n`);
+      await command(executable('git'),['-C',release,'fetch','--depth','1','origin',targetCommit],{env:gitEnv,timeout:600000,log,secrets});
+      await command(executable('git'),['-C',release,'checkout','--detach',targetCommit],{env:gitEnv,timeout:600000,log,secrets});
+    }
+    if(promotion?.mode==='merge'){
+      log(`[promotion] Merging tested staging commit ${promotion.sourceCommit} into ${app.branch}\n`);
+      await command(executable('git'),['-C',release,'fetch','--unshallow','origin'],{env:gitEnv,timeout:600000,log,secrets});
+      await command(executable('git'),['-C',release,'fetch','origin',promotion.sourceCommit],{env:gitEnv,timeout:600000,log,secrets});
+      await command(executable('git'),['-C',release,'-c','user.name=Manager','-c','user.email=manager@localhost','merge','--no-ff','--no-edit',promotion.sourceCommit],{env:gitEnv,timeout:600000,log,secrets});
+    }
+  }
   finally { if(caFile)await fs.unlink(caFile); }
   const commit = await command(executable('git'),['-C',release,'rev-parse','HEAD'],{env:{...baseEnv(),GIT_CONFIG_NOSYSTEM:'1'}});
   if (!/^[a-f0-9]{40,64}$/.test(commit)) throw new Error('Git did not identify the checked-out commit');
+  if(targetCommit&&commit!==targetCommit)throw Error('Checked-out commit does not match the requested rollback');
   const appEnv = {...app.environment,...(job.payload.project_type==='go'?{APP_PORT:String(app.port)}:{}),PORT:String(app.port),HOST:'127.0.0.1',HOSTNAME:'127.0.0.1',NODE_ENV:'production'};
-  const env = {...baseEnv(),...appEnv,...await runtimeEnvironment(root,app.runtime_versions)};
-  await writeEnv(release,appEnv);
-  for (const [stage, appCommand] of [['install',app.install_cmd],['build',app.build_cmd]]) {
+  const env = {...baseEnv(),...appEnv,BRANCH:app.branch,...await runtimeEnvironment(root,app.runtime_versions)};
+  await writeEnv(release,job.payload.environmentFiles?{...job.payload.managedEnvironment,...(job.payload.project_type==='go'?{APP_PORT:String(app.port)}:{}),PORT:String(app.port),HOST:'127.0.0.1',HOSTNAME:'127.0.0.1',NODE_ENV:'production'}:appEnv,job.payload.environmentFiles);
+  const inspectAudit=(cmd)=>command(cmd,[],{cwd:release,env,shell:true,timeout:180000,secrets,returnResult:true});
+  const security=async(final)=>{
+    const exists=async name=>!!await fs.stat(path.join(release,name)).catch(()=>null),manifest=await exists('package.json'),lock=await exists('package-lock.json')||await exists('npm-shrinkwrap.json');
+    if(!final&&(!manifest||!lock))return;
+    log('[stage] security\n');journal.securityStatus='running';await persist();
+    const gate=job.payload.securityGate,accepted=gate?.off===true&&(gate.indefinite||gate.once||Date.parse(gate.until)>Date.now())&&typeof gate.reason==='string'&&gate.reason.length>=15;
+    const override=error=>{if(!accepted)throw error;journal.securityStatus='overridden';log(`[security] OVERRIDE: ${error.message}\n[security] OVERRIDE: continuing because an administrator turned the security gate off for this app. Reason given: ${job.payload.securityGate.reason.replace(/[\x00-\x1f\x7f]/g,' ').slice(0,300)}\n`);};
+    try{
+      if(manifest){
+        if(!lock)throw Error('Security gate requires an npm lockfile. Commit package-lock.json before deployment');
+        log(final?'[security] Checking the final candidate\n':'[security] Checking committed dependencies before installation\n');
+        const audit=await inspectAudit('npm audit --json --package-lock-only --omit=dev --audit-level=high');log(formatAuditFindings(audit.output));
+        try{assertAuditPassed(audit,'production dependencies',{projectId:app.id,exceptions:job.payload.auditExceptions||[],accepted:entry=>log(`[security] EXCEPTION: ${entry.package} ${entry.advisory}; expires ${entry.expiresAt}; reason: ${entry.reason}\n`)});log('[security] Production dependency audit passed\n');}catch(error){override(error)}
+      }else log('[security] npm audit not applicable: no Node dependency manifest\n');
+      if(final&&await exists('composer.lock')){const audit=await inspectAudit('composer audit --locked --no-interaction');if(audit.output)log(audit.output+'\n');if(audit.code!==0)override(Error('Composer security audit failed; release blocked'));else log('[security] Composer audit passed\n');}
+      if(journal.securityStatus!=='overridden')journal.securityStatus=manifest||await exists('composer.lock')?'passed':'not_applicable';
+    }catch(error){journal.securityStatus='failed';throw error}finally{await persist()}
+  };
+  await security(false);
+  const commands=app.deploy_script?app.deploy_script.replace(/\r\n/g,'\n').split('\n').map((line,index)=>['script',line.trim(),index+1]).filter(([,line])=>line&&!String(line).startsWith('#')):[['install',app.install_cmd],['pre-deploy',app.pre_deploy_cmd],['build',app.build_cmd]];
+  for (const [stage, source, line] of commands) {
+    const appCommand=process.platform==='win32'?String(source).replace(/\$\{BRANCH\}|\$BRANCH\b/g,'%BRANCH%'):String(source);
     if (!appCommand) continue;
     const minimum=Math.max(1536*1024**2,Math.round(os.totalmem()*.1));
     const deadline=Date.now()+300000;
-    while(os.freemem()<minimum){if(Date.now()>deadline)throw Error('Not enough free memory to build safely; retry when memory is available');log('[memory] Waiting for free memory before '+stage+'\n');await wait(10000);}
+    while(os.freemem()<minimum){checkCancelled();if(Date.now()>deadline)throw Error('Not enough free memory to build safely; retry when memory is available');log('[memory] Waiting for free memory before '+stage+'\n');await wait(1000);}
     log(`[stage] ${stage}\n`);
+    if(line)log(`[script:${line}] ${source}\n`);
     await command(appCommand,[],{cwd:release,env,shell:true,timeout:1800000,log,secrets});
   }
   const releaseState = await contained(root,'release-state',job.id);
+  await security(true);
   await fs.mkdir(releaseState,{recursive:true,mode:0o700});
   const runner = path.join(releaseState,'runner.cjs');
   // The command is data in JSON. It is never interpolated into JavaScript source.
@@ -607,27 +710,71 @@ child.on('error',e=>{console.error(e.message);process.exit(1)});child.on('exit',
   await fs.writeFile(ecosystem,`module.exports=${JSON.stringify(definition)};\n`,{mode:0o600});
   await resources.applyLaunchSettings(root,app.id,ecosystem,resourceHelpers());
   log('[stage] activate\n');
+  checkCancelled();
   // Journal precedes ANY change to the live process. Startup recovery restores it after a crash.
-  journal.activation={previous,previousApps:JSON.parse(JSON.stringify(applications))};
+  const previousProcesses=await processList(tools.pm);
+  const previousProcess=previousProcesses.find(p=>p.name===`manager-remote-${app.id}`);
+  const previousLaunch=previous?await readJson(path.join(path.dirname(previous.ecosystem),'launch.json')):null;
+  let dataMoves=[];
+  if(previous){
+    if(!previousLaunch?.cwd)throw Error('Previous release launch settings are missing; inspect this application before replacing it');
+    const oldRoot=await contained(root,path.relative(root,previousLaunch.cwd));
+    if(path.dirname(oldRoot)!==path.join(root,'releases',app.id))throw Error('Previous release belongs to another application');
+    const local=await command(executable('git'),['-C',oldRoot,'ls-files','--others','--exclude-standard','--directory','-z'],{env:gitEnv});
+    const ignored=await command(executable('git'),['-C',oldRoot,'ls-files','--others','--ignored','--exclude-standard','--directory','-z'],{env:gitEnv});
+    dataMoves=await releaseData.plan(oldRoot,release,path.join(releaseState,'candidate-data'),[...local.split('\0'),...ignored.split('\0')]);
+  }
+  const workerConfig=await readJson(path.join(root,'workers.json'),{}),workers=[];
+  for(const [id,config] of Object.entries(workerConfig)){
+    const associated=config.projectId===app.id||previousLaunch?.cwd&&(path.resolve(config.workingDirectory)===path.resolve(previousLaunch.cwd)||releaseData.inside(previousLaunch.cwd,config.workingDirectory));
+    if(!associated)continue;
+    if(!ID.test(id)||!previousLaunch)throw Error('Invalid application worker registration');
+    const ecosystem=await contained(root,'workers',id,'ecosystem.config.js'),definition=await fs.readFile(ecosystem,'utf8'),launch=await readJson(path.join(path.dirname(ecosystem),'launch.json'));
+    if(!launch)throw Error('Worker launch settings are missing');
+    workers.push({id,config,ecosystem,definition,launch,wasRunning:previousProcesses.some(p=>p.name===`manager-worker-${id}`&&!['stopped','errored'].includes(p.pm2_env?.status))});
+  }
+  journal.activation={previous,previousApps:JSON.parse(JSON.stringify(applications)),dataMoves,workers,wasRunning:!!previousProcess&&!['stopped','errored'].includes(previousProcess.pm2_env?.status)};
   await persist();
   try {
     const list=await processList(tools.pm);
     if(list.some(p=>p.name===`manager-remote-${app.id}`))await tools.pm(['delete',`manager-remote-${app.id}`]);
+    for(const worker of workers)if(list.some(p=>p.name===`manager-worker-${worker.id}`))await tools.pm(['delete',`manager-worker-${worker.id}`]);
+    if(dataMoves.length)log(`[data] Preserving ${dataMoves.length} application data paths\n`);
+    await releaseData.activate(dataMoves,persist);
     await availablePort(app.port);
     await tools.pm(['start',ecosystem]);
     log('[stage] health\n');
-    await checkHealth(app);
+    await checkHealth(app,undefined,dependencies.signal);checkCancelled();
     log('[stage] caddy\n');
     const savedApp={...app,environment:{}}; // Environment values stay in protected per-release files, never telemetry.
     applications[app.id]={app:savedApp,ecosystem,commit};
     await configureProxy(root,await managedCaddyConfig(root,Object.values(applications).map(x=>x.app)),tools);
+    checkCancelled();
     await atomicJson(path.join(root,'apps.json'),applications);
+    for(const worker of workers){
+      const config={...worker.config,projectId:app.id,projectRoot:worker.config.projectRoot||previousLaunch.cwd,enabled:worker.wasRunning};
+      await resources.execute(root,{payload:{resource:{action:'worker-save',id:worker.id,config}}},tools,{...resourceHelpers(),...(dependencies.resourceHelpers||{})});
+      workerConfig[worker.id]={...config,enabled:worker.config.enabled};
+    }
+    if(workers.length)await atomicJson(path.join(root,'workers.json'),workerConfig);
+    checkCancelled();
     await tools.pm(['save','--force']);
+    journal.activation.accepted=true;journal.commitSha=commit;await persist();
+    if(!app.deploy_script&&app.post_deploy_cmd){log('[stage] post-deploy\n');try{await command(app.post_deploy_cmd,[],{cwd:release,env,shell:true,timeout:1800000,log,secrets});}catch(error){log('[post-deploy] Command did not finish; activated release remains active\n');}}
+    if(promotion?.mode==='merge'){
+      try{
+        if(caFile)await fs.writeFile(caFile,[...rootCertificates,git.caPem].join('\n'),{mode:0o600});
+        await command(executable('git'),['-C',release,'push','origin',`HEAD:refs/heads/${app.branch}`],{env:gitEnv,timeout:600000,log,secrets});
+        log(`[promotion] ${app.branch} on the Git server now matches production\n`);
+      }catch(error){log(`[promotion] WARNING: production is live on ${commit}, but the Git server push did not finish. Reconcile ${app.branch} with this release before deploying again.\n`);}
+      finally{if(caFile)await fs.unlink(caFile).catch(()=>{});}
+    }
     log(`[success] ${commit}\nApplication healthy; Caddy routes loaded. DNS and client certificate trust must be configured.\n`);
     return commit;
   } catch(error) {
-    try { await restoreActivation(root,journal,tools,log,dependencies); }
-    catch(rollbackError){log(`[rollback failed] ${rollbackError.message}\n`);}
+    if(journal.activation.accepted){log('[release] Activation was committed. The healthy release remains active.\n');throw error;}
+    try { await restoreActivation(root,journal,tools,log,{...dependencies,persist}); }
+    catch(rollbackError){error.recoveryFailed=true;log(`[rollback failed] ${rollbackError.message}\n`);}
     throw error;
   }
 }
@@ -641,9 +788,9 @@ async function sampleApplications(saved,list,pm2Error) {
     let check=null,logBytes=0;
     if(!pm2Error&&!['stopped','stopping'].includes(p?.pm2_env?.status)){
       const at=Date.now();try{
-        const response=await fetch(`http://127.0.0.1:${port(app.port,'port')}${app.health_path}`,{redirect:'manual',signal:AbortSignal.timeout(2000)});
-        const diagnostics=response.ok?undefined:await resources.readDiagnostics(response);
-        await response.body?.cancel().catch(()=>{});check={ok:response.status>=200&&response.status<300,status:response.status,ms:Date.now()-at,reason:response.ok?'':'Readiness must return HTTP 2xx',diagnostics};
+        const profile=validateHealthProfile(app.health_profile||{path:app.health_path||'/'});
+        const response=await probeHttp(`http://127.0.0.1:${port(app.port,'port')}${profile.path}`,{statuses:profile.statuses,diagnostics:true,signal:AbortSignal.timeout(2000)});
+        check={...response,ms:Date.now()-at};
       }catch{check={ok:false,status:null,ms:Date.now()-at,reason:'Readiness endpoint did not respond within 2 seconds'}}
     }
     for(const file of [p?.pm2_env?.pm_out_log_path,p?.pm2_env?.pm_err_log_path])if(file)logBytes=Math.max(logBytes,await fs.stat(file).then(s=>s.size).catch(()=>0));
@@ -654,6 +801,15 @@ async function sampleApplications(saved,list,pm2Error) {
 async function infrastructureJob(root,job,tools,log) {
   const {action,id,expiresAt}=job.payload;
   if(!Number.isFinite(expiresAt)||Date.now()>expiresAt)throw Error('Operation expired; review the current server state and retry');
+  if(action==='detach')return detachApplication(root,id,log);
+  if(id&&(await readJson(path.join(root,'detached-apps.json'),{}))[id])throw Error('This application was removed from Manager');
+  if(action==='resource'&&job.payload.resource?.action==='health'){
+    await resources.recover(root,tools,resourceHelpers());
+    const profile=validateHealthProfile(job.payload.resource.profile),saved=await readJson(path.join(root,'apps.json'),{});
+    if(!saved[id])throw Error('Deploy this application before updating its live readiness settings');
+    saved[id].app={...saved[id].app,health_path:profile.path,health_profile:profile};
+    await atomicJson(path.join(root,'apps.json'),saved);return{ok:true,profile};
+  }
   if(action==='resource')return resources.execute(root,job,tools,resourceHelpers());
   const saved=await readJson(path.join(root,'apps.json'),{});
   if(action==='domain'){
@@ -666,7 +822,10 @@ async function infrastructureJob(root,job,tools,log) {
       if(saved[id].app.hostname===domain.hostname&&domain.restoreHostname){
         const restored=validateApp({...saved[id].app,hostname:domain.restoreHostname,access_mode:domain.restoreAccessMode});saved[id].app={...saved[id].app,...restored};
       }
-    }else next[domain.id]={appId:id,hostname:domain.hostname};
+    }else {
+      if(domain.routes!==undefined&&(!Array.isArray(domain.routes)||domain.routes.length>100||domain.routes.some(route=>!ID.test(route.id)||!ID.test(route.appId)||!saved[route.appId]||route.appId===id)))throw Error('Invalid shared domain targets');
+      next[domain.id]={appId:id,hostname:domain.hostname,paths:domain.routes||previous[domain.id]?.paths||[]};
+    }
     const apps=Object.values(saved).map(x=>x.app);
     await proxyConfig(root,await managedCaddyConfig(root,apps,next),tools);
     await atomicJson(path.join(root,'apps.json'),saved);await atomicJson(file,next);log('[success] Managed domain routes verified and loaded\n');return{ok:true};
@@ -844,7 +1003,7 @@ async function runAgent(root) {
     if(!journal||reportBusy)return;reportBusy=true;
     try{
       journal.sequence++;
-      const snapshot={id:journal.id,claimToken:journal.claimToken,status:journal.status,log:journal.log,sequence:journal.sequence,commitSha:journal.commitSha,result:journal.result};
+      const snapshot={id:journal.id,claimToken:journal.claimToken,status:journal.status,log:journal.log,sequence:journal.sequence,commitSha:journal.commitSha,result:journal.result,securityStatus:journal.securityStatus};
       await persist();
       const reply=await request(config,'report',snapshot);
       if(consoleAbort){lastConsoleReport=Date.now();if(reply.cancelRequested)consoleAbort.abort();}
@@ -853,13 +1012,14 @@ async function runAgent(root) {
   };
   if(journal?.status==='running'){
     log('[interrupted] Agent restarted. This deployment will not be replayed.\n');
-    try{await restoreActivation(root,journal,tools,log);}catch(error){log(`[rollback failed] ${error.message}\n`);}
-    journal.status='failed';await persist();
+    if(journal.activation?.accepted&&journal.commitSha){log('[recovery] Completed activation retained. Check the deployment log for any interrupted post-deploy command or Git push.\n');journal.status='success';}
+    else{try{await restoreActivation(root,journal,tools,log,{persist});}catch(error){log(`[rollback failed] ${error.message}\n`);}journal.status='failed';}
+    await persist();
   }
   let heartbeatBusy=false;
   const pulse=async()=>{
     if(heartbeatBusy)return;heartbeatBusy=true;
-    try{const data=await sample(root,tools,prior);prior=data.cpu;data.metrics.capabilities=[LAN_CAPABILITY,SETUP_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY,...(supervised?[UPDATE_CAPABILITY]:[])];await request(config,'heartbeat',{protocol:PROTOCOL_VERSION,metrics:data.metrics,caPem:data.caPem});send({type:'heartbeat',version:AGENT_VERSION,metrics:data.metrics});}
+    try{const data=await sample(root,tools,prior);prior=data.cpu;data.metrics.capabilities=[APPLICATION_CONTROL_CAPABILITY,LAN_CAPABILITY,SETUP_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY,...(supervised?[UPDATE_CAPABILITY]:[])];await request(config,'heartbeat',{protocol:PROTOCOL_VERSION,metrics:data.metrics,caPem:data.caPem});send({type:'heartbeat',version:AGENT_VERSION,metrics:data.metrics});}
     finally{heartbeatBusy=false;}
   };
   const describe=error=>console.error(`[agent] ${redact(error.message,[config.agentToken])}`);
@@ -888,7 +1048,7 @@ async function runAgent(root) {
         journal={id:job.id,appId:job.payload.id,claimToken:job.claimToken,status:'running',sequence:0,log:'',commitSha:null};
         await persist();
         try{
-          if (!job.kind || job.kind==='deploy') journal.commitSha=await deploy(root,job,journal,tools,persist,log);
+          if (!job.kind || job.kind==='deploy') {consoleAbort=new AbortController();lastConsoleReport=Date.now();journal.commitSha=await deploy(root,job,journal,tools,persist,log,{signal:consoleAbort.signal});}
           else if (job.kind==='inspect') { journal.result=await inspectRepository(root,job,tools,log); journal.commitSha=journal.result.commit; }
           else if (job.kind==='infrastructure') journal.result=await infrastructureJob(root,job,tools,log);
           else if (job.kind==='database') journal.result=await setupDatabase(root,job,log);
@@ -897,7 +1057,7 @@ async function runAgent(root) {
           else throw new Error('Unknown agent operation; upgrade the agent');
           journal.status='success';
         }
-        catch(error){log(`[failed] ${error.message}\n`);journal.status='failed';}
+        catch(error){log(`[failed] ${error.message}\n`);journal.status='failed';if(job.kind==='deploy'&&consoleAbort?.signal.aborted&&!error.recoveryFailed)journal.result={cancelled:true};}
         consoleAbort=null;await persist();await report();logSecrets=[];await resources.setBusy(root,false);
       }catch(error){describe(error);if(error.status===401){stopped=true;break;}await wait(10000);}
     }
@@ -1125,5 +1285,5 @@ async function main(){
 
 function resourceHelpers(){return {run,readJson,atomicJson,contained,processList,healthy,baseEnv,proxyConfig,managedCaddyConfig,redact};}
 
-module.exports={publicCertificate,LAN_CAPABILITY,validateLanSelection,managedCaddyConfig,sampleApplications,infrastructureJob,INFRASTRUCTURE_CAPABILITY,toolVersion,validateRuntimeSelection,RUNTIME_CAPABILITY,validateRuntimeVersions,runtimeEnvironment,installedRuntimeVersions,CONSOLE_CAPABILITY,consoleJob,PROTOCOL_VERSION,AGENT_VERSION,SETUP_CAPABILITY,UPDATE_CAPABILITY,validateApp,sanitizeMetrics,redact,streamRedactor,caddyConfig,managerAddress,contained,run,request,deploy,restoreActivation,healthy,atomicJson,readJson,enrollCli,detectFramework,inspectRepository,validateDatabase,databaseEnvironment,setupDatabase,validateSetup,jobSecrets,findStaticRoot,serveStatic,loadToolPaths,checkConfiguredTools,privatePm2Environment,findTools,proxyConfig,sharedProxySettings,sharedProxyState,configDigest};
+module.exports={APPLICATION_CONTROL_CAPABILITY,publicCertificate,LAN_CAPABILITY,validateLanSelection,managedCaddyConfig,sampleApplications,infrastructureJob,INFRASTRUCTURE_CAPABILITY,toolVersion,validateRuntimeSelection,RUNTIME_CAPABILITY,validateRuntimeVersions,runtimeEnvironment,installedRuntimeVersions,CONSOLE_CAPABILITY,consoleJob,PROTOCOL_VERSION,AGENT_VERSION,SETUP_CAPABILITY,UPDATE_CAPABILITY,validateApp,sanitizeMetrics,redact,streamRedactor,caddyConfig,managerAddress,contained,run,request,deploy,restoreActivation,healthy,atomicJson,readJson,enrollCli,detectFramework,inspectRepository,validateDatabase,databaseEnvironment,setupDatabase,validateSetup,jobSecrets,findStaticRoot,serveStatic,loadToolPaths,checkConfiguredTools,privatePm2Environment,findTools,proxyConfig,sharedProxySettings,sharedProxyState,configDigest};
 if(require.main===module)main().catch(error=>{console.error(error.message);process.exitCode=1;});

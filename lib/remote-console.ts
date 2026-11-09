@@ -28,6 +28,8 @@ export async function queueRemoteConsole(serverId: string, appId: string | null,
     if(!server.metrics?.capabilities?.includes(CONSOLE_CAPABILITY))throw new ApiError('Update the agent to enable remote console and runtime logs',409)
     if((await client.query("select 1 from remote_service_operations where server_id=$1 and status in ('running','interrupted')",[serverId])).rowCount)throw new ApiError('Finish the service operation before opening the console',409)
     if((await client.query("select 1 from remote_jobs where server_id=$1 and status in ('queued','running')",[serverId])).rowCount)throw new ApiError('Wait for the current server operation to finish',409)
+    if((await client.query("select 1 from remote_agent_updates where server_id=$1 and status in ('queued','installing','recovery_required')",[serverId])).rowCount)throw new ApiError('Finish the agent update or recovery before opening the console',409)
+    if(!(await client.query("select pg_try_advisory_xact_lock(hashtext('manager-ssh-setup'),hashtext($1)) as ok",[serverId])).rows[0]?.ok)throw new ApiError('Server setup is running',409)
     let environment={}
     if(appId){
       const app=(await client.query('select * from remote_apps where id=$1 and server_id=$2',[appId,serverId])).rows[0]
@@ -44,13 +46,13 @@ export async function queueRemoteConsole(serverId: string, appId: string | null,
   return {id}
 }
 
-export async function cancelRemoteConsole(serverId: string, id: unknown, userId: string) {
+export async function cancelRemoteConsole(serverId: string, id: unknown, userId: string, appId: string | null = null) {
   await ensureManagedServers();uuid(serverId);uuid(id)
   const result=await query(`update remote_jobs set cancel_requested=true,
     status=case when status='queued' then 'cancelled' else status end,
     payload_ciphertext=case when status='queued' then null else payload_ciphertext end,
     finished_at=case when status='queued' then now() else finished_at end
-    where server_id=$1 and id=$2 and operation_type is null and kind in ('console','logs') and status in ('queued','running') returning id`,[serverId,id])
+    where server_id=$1 and id=$2 and app_id is not distinct from $3::uuid and operation_type is null and kind in ('console','logs') and status in ('queued','running') returning id`,[serverId,id,appId?uuid(appId):null])
   if(!result.rowCount)throw new ApiError('This console operation has already finished',409)
   await audit(userId,'remote.console.cancel',String(id),{serverId});return {ok:true}
 }

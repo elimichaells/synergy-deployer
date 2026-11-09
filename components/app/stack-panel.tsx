@@ -8,6 +8,7 @@ import { FrameworkLogo } from '@/components/synergy/framework-logo'
 import { StatusDot, type DeployStatus } from '@/components/synergy/status'
 import { ChoiceCard, Section, roleLabels } from './section'
 import { cn } from '@/lib/utils'
+import { remoteAppHref, remoteProjectHref } from '@/lib/remote-workspace'
 
 interface Member { id: string; name: string; component_role: string; environment: string; project_type: string; port: number | null; url: string | null; database_count: number; deployment_status: DeployStatus | null }
 interface Candidate { id: string; name: string; project_type: string; component_role: string }
@@ -44,7 +45,8 @@ export function RolePicker({ value, onChange, disabled }: { value: string; onCha
   )
 }
 
-export function StackPanel({ projectId, environment, compact = false }: { projectId: string; environment: string; compact?: boolean }) {
+export function StackPanel({ projectId, environment, compact = false, serverId, onChanged }: { projectId: string; environment: string; compact?: boolean; serverId?:string; onChanged?:()=>void }) {
+  const endpoint=serverId?`/api/servers/${serverId}/apps/${projectId}/related`:`/api/sites/${projectId}/related`
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -53,22 +55,22 @@ export function StackPanel({ projectId, environment, compact = false }: { projec
   const [form, setForm] = useState({ relatedId: '', role: 'frontend', relatedRole: 'backend' })
 
   const load = useCallback(async () => {
-    const response = await fetch(`/api/sites/${projectId}/related`, { cache: 'no-store' })
+    const response = await fetch(endpoint, { cache: 'no-store' })
     const body = await response.json()
     if (!response.ok) throw new Error(body.error || 'Could not load the project')
     setSnapshot(body)
     setForm(current => ({ ...current, role: body.component_role === 'application' ? current.role : body.component_role }))
-  }, [projectId])
+  }, [endpoint])
 
   useEffect(() => { void load().catch(err => setError(err.message)) }, [load])
 
   const act = async (action: () => Promise<void>) => {
     setBusy(true); setError('')
-    try { await action(); await load() } catch (err) { setError((err as Error).message) } finally { setBusy(false) }
+    try { await action(); await load();onChanged?.() } catch (err) { setError((err as Error).message) } finally { setBusy(false) }
   }
 
   const request = async (method: string, body?: unknown) => {
-    const response = await fetch(`/api/sites/${projectId}/related`, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
+    const response = await fetch(endpoint, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
     const result = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(result.error || 'Project update failed')
   }
@@ -137,8 +139,8 @@ export function StackPanel({ projectId, environment, compact = false }: { projec
       )}
       description={<>This app is the <strong className="font-medium text-foreground">{roleLabels[snapshot.component_role] || snapshot.component_role}</strong> of this project. Apps in a project can share databases and a domain.</>}
       action={<>
-        <Button asChild variant="outline" size="sm"><Link href={`/projects/${snapshot.application_group_id}`}>Open project</Link></Button>
-        {snapshot.canWrite && <Button asChild variant="outline" size="sm"><Link href={`/sites/new?project=${snapshot.application_group_id}`}><Github className="mr-1.5 h-4 w-4" />Import app from Git</Link></Button>}
+        <Button asChild variant="outline" size="sm"><Link href={serverId?remoteProjectHref(serverId,snapshot.application_group_id!):`/projects/${snapshot.application_group_id}`}>Open project</Link></Button>
+        {snapshot.canWrite && <Button asChild variant="outline" size="sm"><Link href={serverId?`/infrastructure/servers/${serverId}?project=${snapshot.application_group_id}#new`:`/sites/new?project=${snapshot.application_group_id}`}><Github className="mr-1.5 h-4 w-4" />Import app from Git</Link></Button>}
         {snapshot.canWrite && !linking && <Button variant="ghost" size="sm" onClick={() => setLinking(true)} disabled={!snapshot.candidates.length}><Link2 className="mr-1.5 h-4 w-4" />Add existing app</Button>}
         {snapshot.canWrite && visible.length > 1 && <Button variant="ghost" size="sm" onClick={() => void leave()} disabled={busy}><Unlink className="mr-1.5 h-4 w-4" />Move out</Button>}
       </>}
@@ -151,7 +153,7 @@ export function StackPanel({ projectId, environment, compact = false }: { projec
           return (
             <div key={member.id} className="flex flex-1 flex-col items-stretch gap-2 lg:flex-row lg:items-center">
               {index > 0 && <div className="flex justify-center text-muted-foreground lg:px-1"><ArrowRight className="h-4 w-4 rotate-90 lg:rotate-0" /></div>}
-              <Link href={`/sites/${member.id}`} aria-current={current ? 'page' : undefined}
+              <Link href={serverId?remoteAppHref(serverId,member.id):`/sites/${member.id}`} aria-current={current ? 'page' : undefined}
                 className={cn('flex min-w-0 flex-1 items-center gap-3 rounded-lg border p-3 transition-colors', current ? 'border-foreground/50 bg-white/[0.04]' : 'border-border hover:border-white/25')}>
                 <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-well"><FrameworkLogo type={member.project_type} className="h-5 w-5" />
                   <span className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border border-border bg-card"><Icon className="h-2.5 w-2.5" /></span></span>

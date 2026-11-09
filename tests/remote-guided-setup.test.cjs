@@ -103,7 +103,7 @@ test('the environment editor loads legacy and guided apps only from the requeste
     '@/lib/db':{query:async(sql,[id,server])=>({rows:records.filter(row=>row.id===id && row.server_id===server && (!sql.includes('guided_setup=true') || row.guided_setup))})},
     '@/lib/api':{ApiError},'@/lib/audit':{},'@/lib/secret-crypto':{decryptSecret:value=>JSON.stringify({API_KEY:value})},
     '@/lib/github-connections':{},'@/lib/git-provider-policy':{},'@/lib/managed-servers':{ensureManagedServers:async()=>{},uuid:value=>value},
-    '@/scripts/agent-bundle.cjs':require('../scripts/agent-bundle.cjs'),'@/scripts/manager-agent.cjs':{},'@/lib/remote-setup-policy':{},'@/lib/project-setup-policy':{},
+    '@/scripts/agent-bundle.cjs':require('../scripts/agent-bundle.cjs'),'@/scripts/manager-agent.cjs':{},'@/lib/remote-security-gate-policy':load('lib/remote-security-gate-policy.ts',{}),'@/lib/deployment-cache':{loadAuditExceptions:()=>[]},'@/lib/security-gate-policy':load('lib/security-gate-policy.ts',{}),'@/lib/remote-setup-policy':{},'@/lib/project-setup-policy':{},
   });
   assert.deepEqual(await setup.remoteSetupEnvironment('one','legacy'),{environment:{API_KEY:'legacy-encrypted'}});
   assert.deepEqual(await setup.remoteSetupEnvironment('two','guided'),{environment:{API_KEY:'guided-encrypted'}});
@@ -118,7 +118,7 @@ test('real database: import modes, setup reports, per-server isolation, provisio
   const userId=randomUUID();await query('insert into users values($1)',[userId]);
   process.env.MANAGER_ENCRYPTION_KEY='isolated-guided-setup-test-key';
   const crypto=load('lib/secret-crypto.ts',{});
-  const mocks={'@/lib/db':{db:pool,query},'@/lib/api':{ApiError},'@/lib/audit':{audit:async()=>{}},'@/lib/secret-crypto':crypto,'@/lib/github-connections':{},'@/lib/git-provider-policy':{},'@/scripts/agent-bundle.cjs':require('../scripts/agent-bundle.cjs'),'@/scripts/manager-agent.cjs':agent,'@/lib/remote-setup-policy':policy};
+  const mocks={'@/lib/db':{db:pool,query},'@/lib/api':{ApiError},'@/lib/audit':{audit:async()=>{}},'@/lib/secret-crypto':crypto,'@/lib/github-connections':{},'@/lib/git-provider-policy':{},'@/scripts/agent-bundle.cjs':require('../scripts/agent-bundle.cjs'),'@/scripts/manager-agent.cjs':agent,'@/lib/remote-security-gate-policy':load('lib/remote-security-gate-policy.ts',{}),'@/lib/deployment-cache':{loadAuditExceptions:()=>[]},'@/lib/security-gate-policy':load('lib/security-gate-policy.ts',{}),'@/lib/remote-setup-policy':policy};
   const managed=load('lib/managed-servers.ts',mocks);
   const setup=load('lib/remote-app-setup.ts',{...mocks,'@/lib/managed-servers':managed,'@/lib/project-setup-policy':require('../lib/project-setup-policy.ts')});
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'manager-guided-db-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
@@ -126,7 +126,7 @@ test('real database: import modes, setup reports, per-server isolation, provisio
   await managed.enroll({protocol:1,serverId:server.id,platform:'win32',agentToken:randomBytes(32).toString('base64url'),enrollmentToken:server.enrollmentToken});
   const body={name:'Library',repo_url:'https://github.com/example/library',branch:'main',stagingBranch:'develop',environmentMode:'staging'};
   await assert.rejects(setup.importRemoteApp(server.id,body,userId),/agent 1.1/);
-  await query('update managed_servers set metrics=$2::jsonb where id=$1',[server.id,JSON.stringify({capabilities:['guided-setup-v1']})]);
+  await query('update managed_servers set metrics=$2::jsonb where id=$1',[server.id,JSON.stringify({capabilities:['guided-setup-v1','application-control-v1']})]);
   const imported=await setup.importRemoteApp(server.id,body,userId);assert.equal(imported.apps.length,1);assert.equal(imported.apps[0].environment,'staging');
   let snapshot=await setup.remoteSetup(server.id,imported.id);assert.equal(snapshot.app.production_id,null);
   await assert.rejects(setup.remoteSetup(other.id,imported.id),/not found/);
@@ -134,7 +134,7 @@ test('real database: import modes, setup reports, per-server isolation, provisio
   const claim=(await managed.claimJob(server.id)).job;assert.equal(claim.kind,'inspect');
   // Old agents cannot claim or replay a setup operation, even after a service downgrade.
   await query("update managed_servers set metrics='{}'::jsonb where id=$1",[server.id]);assert.equal((await managed.claimJob(server.id)).job,null);
-  await query('update managed_servers set metrics=$2::jsonb where id=$1',[server.id,JSON.stringify({capabilities:['guided-setup-v1']})]);
+  await query('update managed_servers set metrics=$2::jsonb where id=$1',[server.id,JSON.stringify({capabilities:['guided-setup-v1','application-control-v1']})]);
   const inspection={framework:'next',commit:'a'.repeat(40),commands:{install_cmd:'npm ci',build_cmd:'npm run build',start_cmd:'npm start'},tools:{node:'24',git:'2',pm2:'6',caddy:'2',npm:'11'},packageManager:'npm'};
   await managed.reportJob(server.id,{id:claim.id,claimToken:claim.claimToken,status:'success',sequence:1,log:'Inspected',commitSha:inspection.commit,result:inspection});
   assert.equal((await managed.serverDetail(server.id)).apps.find(x=>x.id===imported.id).live_commit,null);

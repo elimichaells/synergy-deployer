@@ -9,13 +9,19 @@ import { applicationHealthLabels, applicationState } from '@/lib/application-hea
 import { AppToolGrid } from '@/components/app/app-tools'
 import { DomainsPanel } from '@/components/app/domains-panel'
 import { MemorySetting } from '@/components/app/memory-setting'
+import { DeploymentScript } from '@/components/app/deployment-script'
+import { ApplicationRemoval } from '@/components/app/application-removal'
+import { ApplicationProcess } from '@/components/app/application-process'
+import { RuntimeLogs } from '@/components/app/runtime-logs'
+import { RuntimeView } from '@/components/app/runtime-view'
 import { PromoteSheet } from '@/components/app/promote-sheet'
 import { Section, StatusLine, roleLabels } from '@/components/app/section'
 import { SecurityGateBanner, SecurityGateSetting, useSecurityGate } from '@/components/app/security-gate'
 import { StackPanel } from '@/components/app/stack-panel'
 import { StagingAsleepBanner, StagingSleepSetting } from '@/components/app/staging-sleep'
 import { StoragePanel, providerMeta } from '@/components/app/storage-panel'
-import { EnvEditor } from '@/components/env-editor'
+import { GitAutomation } from '@/components/app/git-automation'
+import { EnvironmentSettings } from '@/components/app/environment-settings'
 import { AppShell } from '@/components/layout/app-shell'
 import { useWorkspace } from '@/components/layout/workspace-provider'
 import { ProjectSetup } from '@/components/project-setup'
@@ -141,6 +147,29 @@ export default function SitePage() {
 }
 
 function ApplicationWorkspace({ siteId }: { siteId: string }) {
+const [savingAutoDeploy, setSavingAutoDeploy] = useState(false)
+const handleToggleAutoDeploy = async () => {
+    if (!siteId || !project || savingAutoDeploy) return
+    const previousValue = project.auto_deploy
+    const nextValue = !previousValue
+    setSavingAutoDeploy(true)
+    setError(null)
+    setProject({ ...project, auto_deploy: nextValue })
+    setProjectForm(current => ({ ...current, autoDeploy: nextValue }))
+    try {
+      const res = await fetch(`/api/sites/${siteId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ autoDeploy: nextValue }) })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error || 'Failed to update auto deployment')
+      }
+    } catch (err) {
+      setProject({ ...project, auto_deploy: previousValue })
+      setProjectForm(current => ({ ...current, autoDeploy: previousValue }))
+      setError(err instanceof Error ? err.message : 'Failed to update auto deployment')
+    } finally {
+      setSavingAutoDeploy(false)
+    }
+  }
   const { navigate } = useWorkspace()
   const { health, error: healthError } = useServerHealth()
   const router = useRouter()
@@ -159,19 +188,10 @@ function ApplicationWorkspace({ siteId }: { siteId: string }) {
   const [healthCheck, setHealthCheck] = useState(true)
   const [promoteOpen, setPromoteOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [envFile, setEnvFile] = useState('.env')
-  const [envContent, setEnvContent] = useState('')
-  const [envBaseline, setEnvBaseline] = useState('')
-  const [envSaved, setEnvSaved] = useState(false)
-  const [savingEnv, setSavingEnv] = useState(false)
-  const [logsType, setLogsType] = useState<'out' | 'err'>('out')
-  const [logs, setLogs] = useState('')
-  const [logsPath, setLogsPath] = useState('')
-  const [logsStatus, setLogsStatus] = useState<string | null>(null)
+  const [environmentDirty,setEnvironmentDirty]=useState(false)
   const [clock, setClock] = useState(() => Date.now())
   const [savingProject, setSavingProject] = useState(false)
   const [projectSaved, setProjectSaved] = useState(false)
-  const [savingAutoDeploy, setSavingAutoDeploy] = useState(false)
   const [actionBusy, setActionBusy] = useState<string | null>(null)
   const [projectForm, setProjectForm] = useState({
     name: '', projectType: 'next' as ProjectType, repoUrl: '', defaultBranch: '', rootPath: '', pm2Name: '', port: '', url: '',
@@ -180,18 +200,8 @@ function ApplicationWorkspace({ siteId }: { siteId: string }) {
   })
   const [settingsBaseline, setSettingsBaseline] = useState('')
   const formSignature = JSON.stringify({ ...projectForm, autoDeploy: undefined })
-  const unsavedChanges = envContent !== envBaseline || (!!settingsBaseline && formSignature !== settingsBaseline)
+  const unsavedChanges = environmentDirty || (!!settingsBaseline && formSignature !== settingsBaseline)
   const [githubConnections, setGithubConnections] = useState<GitHubConnectionOption[]>([])
-  const [webhookUrl, setWebhookUrl] = useState('')
-  const [webhookSecret, setWebhookSecret] = useState<string | null>(null)
-  const [webhookHasSecret, setWebhookHasSecret] = useState(false)
-  const [webhookGenerating, setWebhookGenerating] = useState(false)
-  const [webhookCopied, setWebhookCopied] = useState<'url' | 'secret' | null>(null)
-  const [ghHookInstalled, setGhHookInstalled] = useState<boolean | null>(null)
-  const [ghHookInstalling, setGhHookInstalling] = useState(false)
-  const [ghHookRemoving, setGhHookRemoving] = useState(false)
-  const [ghHookError, setGhHookError] = useState<string | null>(null)
-  const [clearingLogs, setClearingLogs] = useState(false)
   const [consoleCommands, setConsoleCommands] = useState<string[]>([])
   const [npmScripts, setNpmScripts] = useState<Record<string, string>>({})
   const [npmCommand, setNpmCommand] = useState('')
@@ -207,8 +217,6 @@ function ApplicationWorkspace({ siteId }: { siteId: string }) {
   const [cancellingDeploy, setCancellingDeploy] = useState<string | null>(null)
   const [rollingBack, setRollingBack] = useState<string | null>(null)
   const [toolchainRuntimes, setToolchainRuntimes] = useState<ToolchainRuntime[]>([])
-  const [deleteConfirm, setDeleteConfirm] = useState('')
-  const [deleting, setDeleting] = useState(false)
 
   const canWrite = userRole === 'admin' || userRole === 'operator'
   const securityGate = useSecurityGate(siteId)
@@ -230,11 +238,11 @@ function ApplicationWorkspace({ siteId }: { siteId: string }) {
     const tab = tabFromParam(value)
     if (tab === activeTab) return
     navigate(() => {
-      setEnvContent(envBaseline)
+      setEnvironmentDirty(false)
       if (settingsBaseline) setProjectForm(current => ({ ...current, ...JSON.parse(settingsBaseline) }))
       setActiveTab(tab)
       window.history.replaceState(null, '', `?tab=${tab}`)
-      if (tab === 'settings') void loadWebhook()
+
     })
   }
 
@@ -298,53 +306,9 @@ function ApplicationWorkspace({ siteId }: { siteId: string }) {
     }
   }, [siteId])
 
-  const loadEnv = useCallback(async (file: string) => {
-    try {
-      const res = await fetch(`/api/sites/${siteId}/env?file=${encodeURIComponent(file)}`)
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.error || 'Failed to load env file')
-      }
-      const content = (await res.json()).content || ''
-      setEnvContent(content)
-      setEnvBaseline(content)
-    } catch (err) {
-      setEnvContent('')
-      setEnvBaseline('')
-      setError(err instanceof Error ? err.message : 'Failed to load env file')
-    }
-  }, [siteId])
 
   useEffect(() => { if (siteId) void refresh() }, [siteId, refresh])
-  useEffect(() => { if (siteId && activeTab === 'environment') void loadEnv(envFile) }, [envFile, siteId, loadEnv, activeTab])
 
-  useEffect(() => {
-    if (!siteId || activeTab !== 'logs') return
-    setLogsStatus('Connecting…')
-    const eventSource = new EventSource(`/api/sites/${siteId}/logs/stream?type=${logsType}&lines=200`)
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data)
-        setLogs(data.log || '')
-        setLogsPath(data.logPath || '')
-        setLogsStatus(null)
-      } catch { /* ignore malformed frames */ }
-    }
-    eventSource.onerror = () => {
-      eventSource.close()
-      setLogsStatus('Live stream unavailable. Showing a snapshot.')
-      fetch(`/api/sites/${siteId}/logs?type=${logsType}&lines=200`)
-        .then(res => (res.ok ? res.json() : null))
-        .then(data => {
-          if (!data) return
-          setLogs(data.log || '')
-          setLogsPath(data.logPath || '')
-          setLogsStatus(data.log ? null : 'No logs yet.')
-        })
-        .catch(() => setLogsStatus('Unable to load logs.'))
-    }
-    return () => eventSource.close()
-  }, [logsType, siteId, activeTab])
 
   const handleDeploy = async () => {
     if (!siteId) return
@@ -367,24 +331,6 @@ function ApplicationWorkspace({ siteId }: { siteId: string }) {
     }
   }
 
-  const handleSaveEnv = async () => {
-    setSavingEnv(true)
-    setError(null)
-    try {
-      const res = await fetch(`/api/sites/${siteId}/env`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ file: envFile, content: envContent }) })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.error || 'Failed to save env file')
-      }
-      setEnvSaved(true)
-      setEnvBaseline(envContent)
-      window.setTimeout(() => setEnvSaved(false), 2500)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save env file')
-    } finally {
-      setSavingEnv(false)
-    }
-  }
 
   const handleSaveProject = async () => {
     if (!siteId) return
@@ -425,44 +371,6 @@ function ApplicationWorkspace({ siteId }: { siteId: string }) {
     }
   }
 
-  const handleToggleAutoDeploy = async () => {
-    if (!siteId || !project || savingAutoDeploy) return
-    const previousValue = project.auto_deploy
-    const nextValue = !previousValue
-    setSavingAutoDeploy(true)
-    setError(null)
-    setProject({ ...project, auto_deploy: nextValue })
-    setProjectForm(current => ({ ...current, autoDeploy: nextValue }))
-    try {
-      const res = await fetch(`/api/sites/${siteId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ autoDeploy: nextValue }) })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.error || 'Failed to update auto deployment')
-      }
-    } catch (err) {
-      setProject({ ...project, auto_deploy: previousValue })
-      setProjectForm(current => ({ ...current, autoDeploy: previousValue }))
-      setError(err instanceof Error ? err.message : 'Failed to update auto deployment')
-    } finally {
-      setSavingAutoDeploy(false)
-    }
-  }
-
-  const handleDelete = async () => {
-    if (!siteId || deleteConfirm !== project?.name) return
-    setDeleting(true)
-    setError(null)
-    try {
-      const res = await fetch(`/api/sites/${siteId}`, { method: 'DELETE' })
-      const body = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(body.error || 'Application could not be removed')
-      router.push('/projects?view=apps')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Application could not be removed')
-      setDeleting(false)
-    }
-  }
-
   // Keep the history moving while a release is in flight.
   const deploymentInFlight = deployments.some(d => d.status === 'running' || d.status === 'queued')
   useEffect(() => {
@@ -493,97 +401,6 @@ function ApplicationWorkspace({ siteId }: { siteId: string }) {
     }
   }
 
-  const loadWebhook = async () => {
-    if (!siteId) return
-    setGhHookError(null)
-    try {
-      const [secretRes, ghRes] = await Promise.all([fetch(`/api/projects/${siteId}/webhook`), fetch(`/api/projects/${siteId}/webhook/git`)])
-      if (secretRes.ok) {
-        const data = await secretRes.json()
-        setWebhookHasSecret(data.hasSecret); setWebhookUrl(data.webhookUrl || '')
-        setWebhookSecret(data.secret)
-      }
-      const hook = await ghRes.json().catch(() => ({}))
-      setGhHookInstalled(ghRes.ok ? hook.installed ?? false : false)
-      if (!ghRes.ok) setGhHookError(hook.error || 'Could not check Git webhook')
-    } catch { /* webhook status is optional */ }
-  }
-
-  const handleGenerateSecret = async () => {
-    if (!siteId) return
-    setWebhookGenerating(true)
-    try {
-      const res = await fetch(`/api/projects/${siteId}/webhook`, { method: 'POST' })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || 'Failed to generate secret')
-      setWebhookSecret(data.secret)
-      setWebhookHasSecret(true); setWebhookUrl(data.webhookUrl || '')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to generate secret')
-    } finally {
-      setWebhookGenerating(false)
-    }
-  }
-
-  const handleInstallGithubWebhook = async () => {
-    if (!siteId) return
-    setGhHookInstalling(true)
-    setGhHookError(null)
-    try {
-      const res = await fetch(`/api/projects/${siteId}/webhook/git`, { method: 'POST' })
-      const body = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(body.error || 'Failed to install webhook')
-      setGhHookInstalled(true)
-    } catch (err) {
-      setGhHookError(err instanceof Error ? err.message : 'Failed to install webhook on the Git server')
-    } finally {
-      setGhHookInstalling(false)
-    }
-  }
-
-  const handleRemoveGithubWebhook = async () => {
-    if (!siteId) return
-    setGhHookRemoving(true)
-    setGhHookError(null)
-    try {
-      const res = await fetch(`/api/projects/${siteId}/webhook/git`, { method: 'DELETE' })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.error || 'Failed to remove webhook')
-      }
-      setGhHookInstalled(false)
-    } catch (err) {
-      setGhHookError(err instanceof Error ? err.message : 'Failed to remove webhook from the Git server')
-    } finally {
-      setGhHookRemoving(false)
-    }
-  }
-
-
-  const handleCopyWebhook = async (type: 'url' | 'secret') => {
-    const text = type === 'url' ? webhookUrl : webhookSecret
-    if (!text) return
-    await navigator.clipboard.writeText(text)
-    setWebhookCopied(type)
-    setTimeout(() => setWebhookCopied(null), 2000)
-  }
-
-  const handleClearLogs = async () => {
-    if (!siteId) return
-    setClearingLogs(true)
-    try {
-      const res = await fetch(`/api/sites/${siteId}/logs?type=${logsType}`, { method: 'DELETE' })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.error || 'Failed to clear logs')
-      }
-      setLogs('')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to clear logs')
-    } finally {
-      setClearingLogs(false)
-    }
-  }
 
   const loadNpmScripts = useCallback(async () => {
     if (!siteId) return
@@ -773,13 +590,7 @@ function ApplicationWorkspace({ siteId }: { siteId: string }) {
   const sameAsProduction = !!deployments[0]?.commit_sha && deployments[0].commit_sha === productionDeployment?.commit_sha
   const inputClass = 'control-input'
 
-  const runtimeSwitch = (
-    <div className="mb-4 flex h-8 w-fit items-center rounded-md border border-border p-0.5" role="group" aria-label="Runtime view">
-      {(['logs', 'console'] as const).map(value => (
-        <button key={value} type="button" onClick={() => changeTab(value)} aria-pressed={activeTab === value} className={cn('h-full rounded-[5px] px-3 text-xs', activeTab === value ? 'bg-white/[0.09] text-foreground' : 'text-muted-foreground hover:text-foreground')}>{value === 'logs' ? 'Logs' : 'Console'}</button>
-      ))}
-    </div>
-  )
+  const runtimeSwitch = <RuntimeView active={activeTab} onChange={changeTab}/>
 
   const tabs = <ApplicationTabs showSetupTab={!!showSetupTab} activeTab={activeTab} />
 
@@ -931,21 +742,7 @@ function ApplicationWorkspace({ siteId }: { siteId: string }) {
         </TabsContent>
 
         <TabsContent value="environment" className="mt-0 space-y-4">
-          <Section
-            title="Environment variables"
-            description={<>Save these settings before deploying. Every deployment reads the saved <span className="font-mono text-xs">.env</span> and <span className="font-mono text-xs">.env.local</span> for the candidate and live application; .env.local takes precedence for Node apps. Managed database connections provide standard variables automatically. Custom names such as DATABASE_OWNER_URL still need their correct credentials here.</>}
-            action={<div className="flex h-8 items-center rounded-md border border-border p-0.5" role="group" aria-label="File">
-              {['.env', '.env.local'].map(file => <button key={file} type="button" onClick={() => { if (file !== envFile) navigate(() => { setEnvContent(envBaseline); setEnvFile(file) }) }} aria-pressed={envFile === file} className={cn('h-full rounded-[5px] px-2.5 font-mono text-xs', envFile === file ? 'bg-white/[0.09] text-foreground' : 'text-muted-foreground hover:text-foreground')}>{file}</button>)}
-            </div>}
-            footer={<>
-              <span>{browserApp ? 'Browser builds expose these values to visitors. Never store secrets here.' : 'Stored only on this server, inside the application directory.'}</span>
-              <Button size="sm" onClick={() => void handleSaveEnv()} disabled={savingEnv || !canWrite}>{envSaved ? <><Check className="mr-1.5 h-3.5 w-3.5" />Saved</> : savingEnv ? 'Saving…' : 'Save'}</Button>
-            </>}
-          >
-            <div className="overflow-hidden rounded-lg border border-border">
-              <EnvEditor className="h-[28rem] rounded-none border-0" value={envContent} onChange={setEnvContent} placeholder={`# ${envFile}\nKEY=value`} />
-            </div>
-          </Section>
+          <EnvironmentSettings projectId={siteId} canWrite={canWrite} browserApp={browserApp} onDirtyChange={setEnvironmentDirty}/>
           <Section title="How it's built" description="What Synergy runs on every deployment." action={<Button variant="outline" size="sm" onClick={() => changeTab('settings')}>Edit</Button>}>
             <dl className="summary-list">
               <div><dt>Framework</dt><dd>{projectTypeDefaults[project.project_type]?.label}</dd></div>
@@ -960,23 +757,7 @@ function ApplicationWorkspace({ siteId }: { siteId: string }) {
           </Section>
         </TabsContent>
 
-        <TabsContent value="logs" className="mt-0">
-          {runtimeSwitch}
-          <Section
-            title="Logs"
-            description={<>What the app prints while it runs. When something is not working, look here first. This is the live output from the running process{logsPath && <> · <span className="font-mono text-xs">{logsPath}</span></>}</>}
-            action={<>
-              <div className="flex h-8 items-center rounded-md border border-border p-0.5" role="group" aria-label="Log stream">
-                {(['out', 'err'] as const).map(type => <button key={type} type="button" onClick={() => setLogsType(type)} aria-pressed={logsType === type} className={cn('h-full rounded-[5px] px-2.5 text-xs', logsType === type ? 'bg-white/[0.09] text-foreground' : 'text-muted-foreground hover:text-foreground')}>{type === 'out' ? 'Output' : 'Errors'}</button>)}
-              </div>
-              <Button variant="outline" size="sm" onClick={() => void handleClearLogs()} disabled={clearingLogs || !canWrite}>{clearingLogs ? 'Clearing…' : 'Clear'}</Button>
-            </>}
-          >
-            <div className="h-[520px] overflow-y-auto rounded-lg border border-border bg-well p-4 font-mono text-xs leading-5">
-              {logs ? renderLogLines(logs) : <p className="py-10 text-center text-white/40">{logsStatus || 'No output yet. Logs appear once the app is running.'}</p>}
-            </div>
-          </Section>
-        </TabsContent>
+        <TabsContent value="logs" className="mt-0">{runtimeSwitch}<RuntimeLogs projectId={project.id} canWrite={canWrite}/></TabsContent>
 
         <TabsContent value="console" className="mt-0 space-y-4">
           {runtimeSwitch}
@@ -1022,50 +803,15 @@ function ApplicationWorkspace({ siteId }: { siteId: string }) {
           </Section>
 
           <Section title="Security gate" description="Stops a release that would put packages with serious known vulnerabilities online.">
-            <SecurityGateSetting projectId={project.id} appName={project.name} gate={securityGate.gate} canTurnOff={securityGate.canTurnOff} canWrite={canWrite} onChanged={securityGate.setGate} />
+            <SecurityGateSetting loadError={securityGate.loadError} onRetry={securityGate.reload} projectId={project.id} appName={project.name} gate={securityGate.gate} canTurnOff={securityGate.canTurnOff} canWrite={canWrite} onChanged={securityGate.setGate} />
           </Section>
 
-          <Section title="Git & automatic deploys" description={project.production_id ? `Pushes to ${project.default_branch} deploy this staging copy. The Git webhook is managed on the production application.` : 'Connect a Git webhook so pushes trigger deployments.'}>
-            <div className="space-y-4">
-              <label className="flex items-center justify-between gap-4 rounded-lg border border-border px-4 py-3 text-sm">
-                <span><span className="block font-medium">Deploy on every push</span><span className="block text-xs text-muted-foreground">To <span className="font-mono">{project.default_branch}</span></span></span>
-                <Switch checked={project.auto_deploy} disabled={!canWrite || savingAutoDeploy || project.setup_required} onCheckedChange={() => void handleToggleAutoDeploy()} aria-label="Deploy on every push" />
-              </label>
-              {project.production_id ? (
-                <Button asChild variant="outline" size="sm"><Link href={`/sites/${project.production_id}?tab=settings`}>Open production webhook settings<ArrowUpRight className="ml-1.5 h-3.5 w-3.5" /></Link></Button>
-              ) : !webhookHasSecret ? (
-                <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed border-border px-4 py-4 text-sm">
-                  <span className="text-muted-foreground">No webhook yet. Generate a secret to connect your Git server.</span>
-                  <Button size="sm" onClick={() => void handleGenerateSecret()} disabled={webhookGenerating || !canWrite}>{webhookGenerating ? 'Generating…' : 'Set up webhook'}</Button>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <div className={cn('flex items-center justify-between rounded-lg border px-4 py-3', ghHookInstalled ? 'border-status-ready/30 bg-status-ready/5' : 'border-border')}>
-                    <span className="flex items-center gap-2 text-sm"><span className={cn('h-2 w-2 rounded-full', ghHookInstalled ? 'bg-status-ready' : 'bg-white/25')} />{ghHookInstalled === null ? 'Checking Git server…' : ghHookInstalled ? 'Connected to Git server' : 'Not connected to Git server'}</span>
-                    {ghHookInstalled
-                      ? <Button variant="ghost" size="sm" onClick={() => void handleRemoveGithubWebhook()} disabled={ghHookRemoving || !canWrite}>{ghHookRemoving ? 'Removing…' : 'Disconnect'}</Button>
-                      : <Button size="sm" onClick={() => void handleInstallGithubWebhook()} disabled={ghHookInstalling || !canWrite}>{ghHookInstalling ? 'Connecting…' : 'Connect'}</Button>}
-                  </div>
-                  {ghHookError && <p className="rounded-md border border-red-500/20 bg-red-500/10 p-2 text-xs text-red-300">{ghHookError}</p>}
-                  <details className="group rounded-lg border border-border">
-                    <summary className="cursor-pointer select-none px-4 py-2.5 text-xs text-muted-foreground hover:text-foreground">Manual webhook values</summary>
-                    <div className="space-y-3 border-t border-border p-4">
-                      {([['url', 'Payload URL', webhookUrl], ['secret', 'Secret', webhookSecret || '••••••••••••••••']] as const).map(([key, label, value]) => (
-                        <label key={key} className="field-label">{label}<div className="flex gap-2"><code className="flex-1 truncate rounded-md border border-border bg-well px-3 py-2 text-xs">{value}</code><Button size="icon" variant="outline" className="h-9 w-9 shrink-0" onClick={() => void handleCopyWebhook(key)} aria-label={`Copy ${label}`}>{webhookCopied === key ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}</Button></div></label>
-                      ))}
-                    </div>
-                  </details>
-                </div>
-              )}
-            </div>
-          </Section>
+          <GitAutomation projectId={project.id} branch={project.default_branch} autoDeploy={project.auto_deploy} productionId={project.production_id} canWrite={userRole==='admin'} onChanged={()=>void refresh()}/>
 
           <Section title="Build & runtime" description="Override how the app is built and started. Leave fields empty to use the framework defaults."
             footer={<><span>Commands run from the app directory and stop at the first failure. <code className="font-mono text-xs">$BRANCH</code> is the deployed branch.</span><Button size="sm" onClick={() => void handleSaveProject()} disabled={savingProject || !canWrite}>{savingProject ? 'Saving…' : 'Save'}</Button></>}>
             <div className="space-y-4">
-              <label className="field-label">Deployment script <span className="font-normal text-muted-foreground">Replaces install and build when set</span>
-                <textarea rows={10} className="control-textarea min-h-56 bg-well font-mono" value={projectForm.deployScript} onChange={e => setProjectForm({ ...projectForm, deployScript: e.target.value })} placeholder={'composer install --no-interaction --prefer-dist --optimize-autoloader\nphp artisan migrate --force\nnpm ci\nnpm run build'} spellCheck={false} />
-              </label>
+              <DeploymentScript value={projectForm.deployScript} disabled={!canWrite} onChange={deployScript=>setProjectForm({...projectForm,deployScript})}/>
               <label className="field-label">Start command<input className={cn(inputClass, 'font-mono')} value={projectForm.startCmd} onChange={e => setProjectForm({ ...projectForm, startCmd: e.target.value })} placeholder={projectTypeDefaults[projectForm.projectType].startCmd ?? 'Synergy static server'} /></label>
               {visibleToolchains.length > 0 && <>
                 <div className="grid gap-3 md:grid-cols-2">
@@ -1087,21 +833,12 @@ function ApplicationWorkspace({ siteId }: { siteId: string }) {
               <label className="field-label">Port<input className={cn(inputClass, 'font-mono')} type="number" value={projectForm.port} onChange={e => setProjectForm({ ...projectForm, port: e.target.value })} /></label>
               <label className="field-label">Public URL<input className={inputClass} value={projectForm.url} onChange={e => setProjectForm({ ...projectForm, url: e.target.value })} placeholder="Set by the primary domain" /></label>
             </div>
-            {canWrite && project.is_active && <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-4 text-sm"><span className="mr-auto text-muted-foreground">Process</span>
-              <Button variant="outline" size="sm" onClick={() => void handleServiceAction('restart')} disabled={actionBusy !== null}><RotateCw className={cn('mr-1.5 h-3.5 w-3.5', actionBusy === 'restart' && 'animate-spin')} />Restart</Button>
-              <Button variant="outline" size="sm" className="text-red-300" onClick={() => void handleServiceAction('stop')} disabled={actionBusy !== null}><Square className="mr-1.5 h-3.5 w-3.5" />Stop</Button>
-            </div>}
+            {project.is_active && <div className="mt-4 border-t border-border pt-4"><ApplicationProcess appId={project.id} name={project.name} canWrite={canWrite} onChanged={()=>void refresh()}/></div>}
           </Section>
 
           {showSetupTab ? null : <Section title="Setup wizard" description="Walk through source, build, database, environment and domain again." action={<Button variant="outline" size="sm" onClick={() => changeTab('setup')}>Open setup</Button>} />}
 
-          {userRole === 'admin' && (
-            <Section tone="danger" title="Remove application" description={<>Removes {project.name} from Synergy, including its deployment history and domain records. The running process and the files in <span className="font-mono text-xs">{project.root_path}</span> stay on the server.</>}
-              footer={<>
-                <input className="control-input h-8 max-w-xs text-xs" value={deleteConfirm} onChange={e => setDeleteConfirm(e.target.value)} placeholder={`Type ${project.name} to confirm`} aria-label="Confirm application name" />
-                <Button variant="destructive" size="sm" onClick={() => void handleDelete()} disabled={deleting || deleteConfirm !== project.name}><Trash2 className="mr-1.5 h-3.5 w-3.5" />{deleting ? 'Removing…' : 'Remove'}</Button>
-              </>} />
-          )}
+          {userRole === 'admin' && <ApplicationRemoval appId={project.id} name={project.name} onRemoved={()=>router.push('/projects?view=apps')}/>}
         </TabsContent>
       </AppShell>
       {project.environment === 'staging' && project.production_id && <PromoteSheet stagingId={project.id} open={promoteOpen} onOpenChange={setPromoteOpen} onStarted={deploymentId => { setPromoteOpen(false); router.push(`/deployments/${deploymentId}`) }} />}

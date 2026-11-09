@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Check, Copy, ExternalLink, Loader2, ShieldAlert, ShieldCheck, ShieldOff, Wrench } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
@@ -14,26 +14,33 @@ const day = (iso: string | null) => iso ? new Date(iso).toLocaleDateString(undef
 const gateOffLabel = (gate: GateState) => gate.indefinite ? 'until someone turns it back on' : `until ${day(gate.until)}`
 
 /** Loads an app's gate state once, for the banner and the Settings section to share. */
-export function useSecurityGate(projectId: string | undefined) {
+const gateEndpoint=(projectId:string|undefined,serverId?:string)=>serverId?`/api/servers/${serverId}/apps/${projectId}/security-gate`:`/api/sites/${projectId}/security-gate`
+export function useSecurityGate(projectId: string | undefined, serverId?:string) {
   const [gate, setGate] = useState<GateState | null>(null)
   const [canTurnOff, setCanTurnOff] = useState(false)
+  const [loadError,setLoadError]=useState(''),[revision,setRevision]=useState(0)
+  const sequence=useRef(0)
   const reload = useCallback(() => {
-    if (!projectId) return
-    void fetch(`/api/sites/${projectId}/security-gate`, { cache: 'no-store' }).then(response => response.ok ? response.json() : null)
-      .then(body => { if (body) { setGate(body.gate); setCanTurnOff(!!body.canTurnOff) } }).catch(() => {})
-  }, [projectId])
-  useEffect(reload, [reload])
-  return { gate, canTurnOff, reload, setGate }
+    setRevision(value=>value+1)
+  }, [])
+  useEffect(()=>{
+    const current=++sequence.current,controller=new AbortController();setGate(null);setCanTurnOff(false);setLoadError('')
+    if(projectId)void fetch(gateEndpoint(projectId,serverId),{cache:'no-store',signal:controller.signal}).then(async response=>{const body=await response.json();if(!response.ok)throw Error(body.error||'Could not read the security gate');return body})
+      .then(body=>{if(sequence.current===current&&!controller.signal.aborted){setGate(body.gate);setCanTurnOff(!!body.canTurnOff)}})
+      .catch(error=>{if(sequence.current===current&&!controller.signal.aborted)setLoadError(error.message)})
+    return()=>controller.abort()
+  },[projectId,serverId,revision])
+  return { gate, canTurnOff, reload, setGate,loadError }
 }
 
 /** Turning the gate back on is always allowed for anyone who can deploy. */
-function useTurnGateOn(projectId: string, onChanged: (gate: GateState) => void) {
+function useTurnGateOn(projectId: string, onChanged: (gate: GateState) => void, serverId?:string) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const turnOn = async () => {
     setBusy(true); setError('')
     try {
-      const response = await fetch(`/api/sites/${projectId}/security-gate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enforce: true }) })
+      const response = await fetch(gateEndpoint(projectId,serverId), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enforce: true }) })
       const body = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(body.error || 'Could not turn the gate back on')
       onChanged(body.gate)
@@ -98,7 +105,8 @@ interface OverridePlan { projectName: string; branch: string; kind: 'deploy' | '
  * The deliberate step for going past the gate: what is going online, what that risks, how long the
  * gate stays off, a written reason and an explicit acknowledgement.
  */
-export function SecurityOverrideSheet({ open, onOpenChange, target, appName, findings, onDone }: {
+export function SecurityOverrideSheet({ open, onOpenChange, target, appName, findings, onDone, serverId }: {
+  serverId?:string
   open: boolean
   onOpenChange: (open: boolean) => void
   /** A stopped deployment to release, or an app whose gate is being switched off. */
@@ -121,12 +129,12 @@ export function SecurityOverrideSheet({ open, onOpenChange, target, appName, fin
     if (!open) return
     setScope(scopes[0]); setReason(''); setUnderstood(false); setError(''); setPlan(null)
     if (!deploymentId) return
-    void fetch(`/api/deployments/${deploymentId}/deploy-anyway`, { cache: 'no-store' }).then(async response => {
+    void fetch(serverId?`/api/servers/${serverId}/jobs/${deploymentId}/deploy-anyway`:`/api/deployments/${deploymentId}/deploy-anyway`, { cache: 'no-store' }).then(async response => {
       const body = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(body.error || 'Could not work out what would be released')
       setPlan(body.plan)
     }).catch(err => setError((err as Error).message))
-  }, [open, deploymentId, scopes])
+  }, [open, deploymentId, scopes,serverId])
 
   const reasonLength = cleanReason(reason).length
   const ready = reasonLength >= MIN_REASON_LENGTH && understood && (!deploymentId || (plan && !plan.blocker))
@@ -134,7 +142,7 @@ export function SecurityOverrideSheet({ open, onOpenChange, target, appName, fin
   const submit = async () => {
     setWorking(true); setError('')
     try {
-      const response = await fetch(deploymentId ? `/api/deployments/${deploymentId}/deploy-anyway` : `/api/sites/${projectId}/security-gate`, {
+      const response = await fetch(deploymentId ? (serverId?`/api/servers/${serverId}/jobs/${deploymentId}/deploy-anyway`:`/api/deployments/${deploymentId}/deploy-anyway`) : gateEndpoint(projectId||undefined,serverId), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ scope, reason, understood, commit: plan?.staging?.commit }),
       })
@@ -231,7 +239,8 @@ export function SecurityOverrideSheet({ open, onOpenChange, target, appName, fin
 }
 
 /** Shown on a deployment the gate stopped: fix it, or (administrators) knowingly release it. */
-export function SecurityGateBlocked({ deploymentId, appName, branch, log, role, autoDeploy, onStarted }: {
+export function SecurityGateBlocked({ deploymentId, appName, branch, log, role, autoDeploy, onStarted, serverId }: {
+  serverId?:string
   deploymentId: string; appName: string; branch: string; log: string; role: Role | undefined; autoDeploy?: boolean; onStarted: (deploymentId: string) => void
 }) {
   const findings = useMemo(() => parseSecurityFindings(log), [log])
@@ -240,9 +249,9 @@ export function SecurityGateBlocked({ deploymentId, appName, branch, log, role, 
   const [plan, setPlan] = useState<OverridePlan | null>(null)
 
   useEffect(() => {
-    void fetch(`/api/deployments/${deploymentId}/deploy-anyway`, { cache: 'no-store' }).then(response => response.ok ? response.json() : null)
+    void fetch(serverId?`/api/servers/${serverId}/jobs/${deploymentId}/deploy-anyway`:`/api/deployments/${deploymentId}/deploy-anyway`, { cache: 'no-store' }).then(response => response.ok ? response.json() : null)
       .then(body => setPlan(body?.plan || null)).catch(() => {})
-  }, [deploymentId])
+  }, [deploymentId,serverId])
 
   return (
     <section className="mt-6 overflow-hidden rounded-xl border border-status-failed/30 bg-card">
@@ -293,7 +302,7 @@ export function SecurityGateBlocked({ deploymentId, appName, branch, log, role, 
         </div>
       </div>
 
-      <SecurityOverrideSheet open={open} onOpenChange={setOpen} target={{ deploymentId }} appName={appName} findings={findings}
+      <SecurityOverrideSheet open={open} onOpenChange={setOpen} target={{ deploymentId }} appName={appName} findings={findings} serverId={serverId}
         onDone={result => { setOpen(false); if (result.deploymentId) onStarted(result.deploymentId) }} />
     </section>
   )
@@ -327,8 +336,8 @@ export function SecurityGateOverridden({ log, branch }: { log: string; branch: s
 }
 
 /** A standing reminder on the app page while its gate is off. */
-export function SecurityGateBanner({ projectId, gate, canWrite, onChanged }: { projectId: string; gate: GateState | null; canWrite: boolean; onChanged: (gate: GateState) => void }) {
-  const { busy, error, turnOn } = useTurnGateOn(projectId, onChanged)
+export function SecurityGateBanner({ projectId, gate, canWrite, onChanged, serverId }: { projectId: string; gate: GateState | null; canWrite: boolean; onChanged: (gate: GateState) => void;serverId?:string }) {
+  const { busy, error, turnOn } = useTurnGateOn(projectId, onChanged,serverId)
   if (!gate?.off) return null
   return (
     <div role="status" className="mb-5 flex flex-wrap items-center gap-3 rounded-lg border border-status-building/40 bg-status-building/[0.06] px-4 py-3 text-sm">
@@ -344,11 +353,13 @@ export function SecurityGateBanner({ projectId, gate, canWrite, onChanged }: { p
 }
 
 /** The Settings control for an app's gate. */
-export function SecurityGateSetting({ projectId, appName, gate, canTurnOff, canWrite, onChanged }: {
+export function SecurityGateSetting({ projectId, appName, gate, canTurnOff, canWrite, onChanged, serverId,loadError,onRetry }: {
+  serverId?:string
+  loadError?:string;onRetry?:()=>void
   projectId: string; appName: string; gate: GateState | null; canTurnOff: boolean; canWrite: boolean; onChanged: (gate: GateState) => void
 }) {
   const [open, setOpen] = useState(false)
-  const { busy, error, turnOn } = useTurnGateOn(projectId, onChanged)
+  const { busy, error, turnOn } = useTurnGateOn(projectId, onChanged,serverId)
 
   return (
     <div className="space-y-3">
@@ -356,7 +367,7 @@ export function SecurityGateSetting({ projectId, appName, gate, canTurnOff, canW
         <span className="flex min-w-0 items-start gap-3">
           {gate?.off ? <ShieldOff className="mt-0.5 h-4 w-4 shrink-0 text-status-building" /> : <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-status-ready" />}
           <span>
-            <span className="block font-medium">{!gate ? 'Checking…' : gate.off ? `Off ${gateOffLabel(gate)}` : 'On: releases with serious known vulnerabilities are stopped'}</span>
+            <span className="block font-medium">{!gate ? loadError?'Status unavailable':'Checking…' : gate.off ? `Off ${gateOffLabel(gate)}` : 'On: releases with serious known vulnerabilities are stopped'}</span>
             <span className="block text-xs text-muted-foreground">
               {gate?.off
                 ? `${gate.by ? `Turned off by ${gate.by}${gate.at ? ` on ${day(gate.at)}` : ''}. ` : ''}${gate.reason ? `Reason: ${gate.reason}` : ''}`
@@ -371,8 +382,8 @@ export function SecurityGateSetting({ projectId, appName, gate, canTurnOff, canW
       {!gate?.off && <p className="text-xs leading-5 text-muted-foreground">
         If a deployment is stopped, its page shows what was found, how to fix it, and an option for administrators to release that one deployment anyway. You rarely need to turn the gate off here.
       </p>}
-      {error && <p role="alert" className="notice-error">{error}</p>}
-      <SecurityOverrideSheet open={open} onOpenChange={setOpen} target={{ projectId }} appName={appName} findings={[]}
+      {(error||loadError) && <p role="alert" className="notice-error">{error||loadError}{loadError&&onRetry&&<Button variant="ghost" size="sm" onClick={onRetry}>Retry</Button>}</p>}
+      <SecurityOverrideSheet open={open} onOpenChange={setOpen} target={{ projectId }} appName={appName} findings={[]} serverId={serverId}
         onDone={result => { setOpen(false); if (result.gate) onChanged(result.gate) }} />
     </div>
   )

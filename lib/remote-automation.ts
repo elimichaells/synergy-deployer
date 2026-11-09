@@ -13,7 +13,7 @@ function validate(body:Record<string,unknown>,kind:string,platform:string) {
   const c:Record<string,unknown>&{workingDirectory:string;enabled:boolean}={...body,name:text(body.name,'name',100),description:text(body.description||'','description',1000,true),command:text(body.command,'command',4000),workingDirectory:text(body.workingDirectory,'working directory',1024),enabled:body.enabled===true}
   if(typeof body.enabled!=='boolean'||!(platform==='win32'?/^[a-z]:[\\/]/i:/^\//).test(c.workingDirectory))throw new ApiError('Provide an absolute working directory on the selected server',400)
   if(kind==='cron'){if(!['laravel','php','node','python','go','custom'].includes(String(body.language)))throw new ApiError('Invalid job language',400);if(!Number.isInteger(body.timeoutSeconds)||Number(body.timeoutSeconds)<10||Number(body.timeoutSeconds)>3600)throw new ApiError('Timeout must be 10–3600 seconds',400);next(c)}
-  else if(body.pm2Name&&!/^[a-zA-Z0-9_-]{1,100}$/.test(String(body.pm2Name)))throw new ApiError('Use letters, numbers, underscores and hyphens for the process label',400)
+  else if(body.pm2Name&&!/^[a-zA-Z0-9_:.\-]{1,100}$/.test(String(body.pm2Name)))throw new ApiError('Use letters, numbers, dots, colons, underscores and hyphens for the process label',400)
   return c
 }
 export async function automationList(serverId:string,kind:'cron'|'worker') {
@@ -59,6 +59,7 @@ export async function finishResource(client:PoolClient,serverId:string,job:{id:s
     await client.query('update remote_recovery_reviews set status=$2 where job_id=$1 and server_id=$3',[job.id,status,serverId])
   }
   if(!success)return
+  if(job.resource_action==='health')await client.query('update remote_apps set health_profile=$3,health_path=$4 where server_id=$1 and id=$2',[serverId,payload.id,JSON.stringify(payload.resource.profile),payload.resource.profile.path])
   if(job.resource_action==='worker-save')await client.query("insert into remote_automations(id,server_id,kind,config) values($1,$2,'worker',$3) on conflict(id) do update set config=$3,updated_at=now()",[job.resource_target,serverId,JSON.stringify(payload.resource.config)])
   if(job.resource_action==='worker-delete')await client.query('delete from remote_automations where id=$1 and server_id=$2',[job.resource_target,serverId])
 }

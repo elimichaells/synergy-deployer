@@ -1,7 +1,8 @@
 'use client'
+import { DeploymentScript } from '@/components/app/deployment-script'
 
 import { ChoiceCard } from '@/components/app/section'
-import { EnvEditor } from '@/components/env-editor'
+import { EnvironmentSettings } from '@/components/app/environment-settings'
 import { SetupSteps } from '@/components/setup-steps'
 import { FrameworkLogo } from '@/components/synergy/framework-logo'
 import { Button } from '@/components/ui/button'
@@ -26,7 +27,7 @@ export function RemoteAppSetup({ server, appId, canWrite, canDeploy, onChanged, 
 }) {
   const endpoint=`/api/servers/${server.id}/apps/${appId}`
   const [snapshot,setSnapshot]=useState<Snapshot|null>(null), [step,setStep]=useState<SetupStep>('repository')
-  const [form,setForm]=useState({runtime_versions:{} as Record<string,string>,project_type:'next' as RemoteFramework,install_cmd:'',build_cmd:'',start_cmd:'',port:'3000',health_path:'/',access_mode:'lan' as 'lan'|'wan',hostname:'',ip_address:'',ip_port:'8443'})
+  const [form,setForm]=useState({runtime_versions:{} as Record<string,string>,deploy_script:'',project_type:'next' as RemoteFramework,install_cmd:'',build_cmd:'',start_cmd:'',port:'3000',health_path:'/',access_mode:'lan' as 'lan'|'wan',hostname:'',ip_address:'',ip_port:'8443'})
   const [database,setDatabase]=useState({mode:'none',serviceOperationId:'',provider:'postgresql',host:'127.0.0.1',port:'5432',database:'',username:'',password:'',adminUsername:'postgres',adminPassword:'',tls:false})
   const [installedServices,setInstalledServices]=useState<{id:string;service_id:string;result:{port:number};status:string}[]>([])
   useEffect(()=>{if(!canWrite)return;void fetch(`/api/servers/${server.id}/services`,{cache:'no-store'}).then(r=>r.json()).then(v=>setInstalledServices((v.operations||[]).filter((o:{status:string;service_id:string;result?:{username?:string}})=>o.status==='success'&&['postgresql','mysql','mariadb'].includes(o.service_id)&&o.result?.username))).catch(()=>{})},[server.id,canWrite])
@@ -41,7 +42,7 @@ export function RemoteAppSetup({ server, appId, canWrite, canDeploy, onChanged, 
     const data=result as Snapshot;setSnapshot(data)
     if(!initialized.current || (!inspected.current && data.app.inspection)) {
       const app=data.app
-      setForm({runtime_versions:app.runtime_versions||{},project_type:app.project_type || 'next',install_cmd:app.install_cmd,build_cmd:app.build_cmd,start_cmd:app.start_cmd,port:String(app.port),health_path:app.health_path,access_mode:app.access_mode,hostname:app.hostname.endsWith('.invalid')?'':app.hostname,ip_address:app.ip_address,ip_port:String(app.ip_port || 8443)})
+      setForm({deploy_script:app.deploy_script||'',runtime_versions:app.runtime_versions||{},project_type:app.project_type || 'next',install_cmd:app.install_cmd,build_cmd:app.build_cmd,start_cmd:app.start_cmd,port:String(app.port),health_path:app.health_path,access_mode:app.access_mode,hostname:app.hostname.endsWith('.invalid')?'':app.hostname,ip_address:app.ip_address,ip_port:String(app.ip_port || 8443)})
       setStep(section || app.setup_step);setBranch(app.branch);inspected.current=!!app.inspection
       if(app.database_config)setDatabase(current=>({...current,mode:'existing',...app.database_config,port:String(app.database_config!.port)}))
       initialized.current=true
@@ -50,12 +51,6 @@ export function RemoteAppSetup({ server, appId, canWrite, canDeploy, onChanged, 
   },[endpoint,section])
   useEffect(()=>{void load().catch(error=>setError(error.message));const timer=setInterval(()=>void load().catch(error=>setError(error.message)),5000);return()=>clearInterval(timer)},[load])
   useEffect(()=>{if(dirty)setSaved(false);onDirtyChange(dirty);return()=>onDirtyChange(false)},[dirty,onDirtyChange])
-  useEffect(()=>{
-    if(step!=='environment'||envLoaded||!canWrite)return
-    const abort=new AbortController()
-    void fetch(endpoint+'/environment',{cache:'no-store',signal:abort.signal}).then(async response=>{const result=await response.json();if(!response.ok)throw new Error(result.error);setEnvironment(environmentText(result.environment));setEnvLoaded(true)}).catch(error=>{if(error.name!=='AbortError')setError(error.message)})
-    return ()=>abort.abort()
-  },[step,envLoaded,canWrite,endpoint])
   const active=snapshot?.jobs.find(job=>job.status==='running'||job.status==='queued')
   const locked=busy||!!active||!canWrite||!server.enabled
   const app=snapshot?.app
@@ -69,10 +64,10 @@ export function RemoteAppSetup({ server, appId, canWrite, canDeploy, onChanged, 
   async function run(action:()=>Promise<void>) {setBusy(true);setError('');try{await action()}catch(error){setError((error as Error).message)}finally{setBusy(false)}}
   async function save(next:SetupStep) {
     if(step==='repository' && dirty)throw new Error('Re-inspect the selected branch before continuing')
-    if(step==='runtime')await post({action:'save',step:next,runtime_versions:form.runtime_versions,project_type:form.project_type,install_cmd:form.install_cmd,build_cmd:form.build_cmd,start_cmd:form.start_cmd,port:form.port,health_path:form.health_path})
+    if(step==='runtime')await post({action:'save',step:next,runtime_versions:form.runtime_versions,deploy_script:form.deploy_script,project_type:form.project_type,install_cmd:form.install_cmd,build_cmd:form.build_cmd,start_cmd:form.start_cmd,port:form.port,health_path:section?undefined:form.health_path})
     else if(step==='environment') {
-      if(!envLoaded)throw new Error('Wait for environment variables to load')
-      await post({action:'save',step:next,environment:parseEnvironmentText(environment),environmentReviewed:true})
+      if(dirty)throw new Error('Save the environment file before continuing')
+      await post({action:'save',step:next,environmentReviewed:true})
     } else if(step==='domain')await post({action:'save',step:next,access_mode:form.access_mode,hostname:form.hostname,ip_address:form.ip_address,ip_port:form.ip_port,domainConfigured:true})
     else if(step==='database') {
       if(database.mode==='none')await post({action:'save',step:next,databaseNone:true})
@@ -110,9 +105,10 @@ export function RemoteAppSetup({ server, appId, canWrite, canDeploy, onChanged, 
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3" role="radiogroup" aria-label="Framework">{REMOTE_FRAMEWORKS.map(type=><ChoiceCard key={type} title={PROJECT_TYPES[type].label} description={app.inspection?.framework===type?'Detected from this repository':'Use these build defaults'} icon={<FrameworkLogo type={type} className="h-5 w-5" />} selected={form.project_type===type} onSelect={()=>chooseFramework(type)} />)}</div>
           <div className="rounded-lg border border-border bg-card p-4"><p className="text-sm font-medium">Tools on {server.name}</p><div className="mt-2 flex flex-wrap gap-2">{Object.entries(app.inspection?.tools||{}).filter(([tool])=>['node','git','pm2','caddy',app.inspection?.packageManager,form.project_type==='go'?'go':'',...(form.project_type==='laravel'?['php','composer']:[])].includes(tool)).map(([tool,value])=><span key={tool} className={`rounded-md border border-border px-2 py-1 text-xs ${value?'text-muted-foreground':'text-status-failed'}`}>{tool}: {value||'missing'}</span>)}</div><p className="mt-2 text-xs text-muted-foreground">Install missing tools for the agent account, then re-inspect. The final checks verify availability again.</p></div>
           <RemoteRuntimeSelection serverId={server.id} value={form.runtime_versions} onChange={runtime_versions=>update({runtime_versions})}/>
+          <DeploymentScript value={form.deploy_script} onChange={deploy_script=>update({deploy_script})}/>
           {(['install_cmd','build_cmd','start_cmd'] as const).map((key,i)=><label key={key} className="field-label">{['Install command','Build command','Start command'][i]}<input className="control-input font-mono" value={form[key]} onChange={event=>update({[key]:event.target.value})} /></label>)}
           {form.start_cmd==='@manager/static'&&<p className="text-xs text-muted-foreground">Synergy serves the built Angular site from dist with SPA routing. For SSR, enter your server start command.</p>}
-          <div className="grid gap-4 sm:grid-cols-2"><label className="field-label">Application port<input type="number" min={1024} max={65535} className="control-input" value={form.port} onChange={event=>update({port:event.target.value,...(form.project_type==='laravel'&&form.start_cmd.startsWith('php artisan serve ')?{start_cmd:`php artisan serve --host=127.0.0.1 --port=${event.target.value} --no-reload`}:{})})} /></label><label className="field-label">Health check path<input className="control-input" value={form.health_path} onChange={event=>update({health_path:event.target.value})} /><span className="text-xs text-muted-foreground">Must return HTTP 2xx without login or redirects.</span></label></div>
+          <div className="grid gap-4 sm:grid-cols-2"><label className="field-label">Application port<input type="number" min={1024} max={65535} className="control-input" value={form.port} onChange={event=>update({port:event.target.value,...(form.project_type==='laravel'&&form.start_cmd.startsWith('php artisan serve ')?{start_cmd:`php artisan serve --host=127.0.0.1 --port=${event.target.value} --no-reload`}:{})})} /></label>{!section&&<label className="field-label">Health check path<input className="control-input" value={form.health_path} onChange={event=>update({health_path:event.target.value})} /><span className="text-xs text-muted-foreground">Uses the application readiness settings. The default accepts HTTP 2xx and local redirects.</span></label>}</div>
         </fieldset>}
         {step==='database'&&<fieldset disabled={locked} className="space-y-5">
           <p className="text-sm text-muted-foreground">Connections are tested from {server.name}. A new database gets a separate app account and generated password for this environment.</p>
@@ -129,11 +125,11 @@ export function RemoteAppSetup({ server, appId, canWrite, canDeploy, onChanged, 
             <Button type="button" onClick={()=>void run(async()=>{await post({action:'database',...database});setDatabase(current=>({...current,password:'',adminPassword:''}));setDirty(false)})}>{database.mode==='create'?'Create and test database':'Save and test connection'}</Button>
           </>}
         </fieldset>}
-        {step==='environment'&&<fieldset disabled={locked||!envLoaded} className="space-y-4"><p className="text-sm text-muted-foreground">Variables are encrypted in Manager and written on {server.name} during deployment. Production and staging values are saved separately.</p>{canWrite?<EnvEditor className="h-[340px]" value={environment} disabled={locked || !envLoaded} onChange={value=>{setEnvironment(value);setDirty(true)}} />:<p className="text-sm">{app.env_names.length} variables configured. An administrator can edit their values.</p>}{app.database_config?.status==='ready'&&<p className="text-xs text-muted-foreground">DATABASE_URL, DATABASE_* and DB_* credentials are injected from the tested database connection and take precedence over duplicate variables. For TLS, configure your app’s database driver to verify its server certificate.</p>}<p className="text-xs text-muted-foreground">PORT, HOST, HOSTNAME and NODE_ENV are supplied by the agent. Both environments run production builds; staging is a separate deployment, not development mode.</p></fieldset>}
+        {step==='environment'&&<EnvironmentSettings projectId={appId} serverId={server.id} canWrite={!locked} browserApp={app.project_type==='angular'} onDirtyChange={setDirty} onSaved={()=>void load()}/>}
         {step==='domain'&&<fieldset disabled={locked}><RemoteAddressFields value={form} onChange={update} serverId={server.id}/></fieldset>}
         {step==='review'&&<div className="space-y-4"><p className="text-sm text-muted-foreground">Review this environment, then check the target server before deploying.</p><div className="divide-y divide-border rounded-xl border border-border bg-card">{snapshot.checks.map(check=><div key={check.id} className="p-4"><p className={`text-sm font-medium ${check.status==='pass'?'text-status-ready':'text-status-failed'}`}>{check.status==='pass'?'✓':'•'} {check.label}</p><p className="mt-1 text-xs text-muted-foreground">{check.detail}</p></div>)}</div><p className="break-all text-sm">{app.environment_name} · {app.branch} · https://{app.hostname} · port {app.port}</p><p className="text-xs leading-5 text-muted-foreground">Deployment installs dependencies, builds, activates and checks the app. A failed activation restores the previous release. Database migrations and external data changes are not reversed by an app rollback.</p><div className="flex flex-wrap gap-2"><Button disabled={locked||snapshot.checks.some(check=>check.status==='fail')} variant="outline" onClick={()=>void run(async()=>{await post({action:'validate'})})}>Run server checks</Button><Button disabled={!canDeploy||busy||!!active||!app.setup_completed_at||!server.enabled} onClick={()=>void run(onDeploy)}><Rocket className="mr-2 h-4 w-4" />Deploy {app.environment_name}</Button></div>{app.setup_completed_at&&<p role="status" className="text-sm text-status-ready">Server checks passed. This environment is ready to deploy.</p>}</div>}
         {section && saved && <p role="status" className="text-sm text-status-ready">Changes saved. Run the checks in Setup before deploying.</p>}
-        {section ? <div className="flex flex-wrap items-center gap-3 border-t border-border pt-5"><Button disabled={locked || (step === 'environment' && !envLoaded)} onClick={() => void run(() => save(step))}>Save changes</Button><p className="text-xs text-muted-foreground">After changes, run the checks in Setup before deploying.</p></div> : <div className="flex flex-wrap justify-between gap-2 border-t border-border pt-5"><Button disabled={busy||!!active||index===0} variant="outline" onClick={()=>navigate(SETUP_STEPS[index-1])}><ArrowLeft className="mr-2 h-4 w-4" />Back</Button>{index<SETUP_STEPS.length-1&&<Button disabled={busy||!!active||(step==='repository'&&!app.inspection)} onClick={()=>navigate(SETUP_STEPS[index+1])}>{canWrite?'Save and continue':'Continue'}<ArrowRight className="ml-2 h-4 w-4" /></Button>}</div>}
+        {section ? <div className="flex flex-wrap items-center gap-3 border-t border-border pt-5"><Button disabled={locked} onClick={() => void run(() => save(step))}>Save changes</Button><p className="text-xs text-muted-foreground">After changes, run the checks in Setup before deploying.</p></div> : <div className="flex flex-wrap justify-between gap-2 border-t border-border pt-5"><Button disabled={busy||!!active||index===0} variant="outline" onClick={()=>navigate(SETUP_STEPS[index-1])}><ArrowLeft className="mr-2 h-4 w-4" />Back</Button>{index<SETUP_STEPS.length-1&&<Button disabled={busy||!!active||(step==='repository'&&!app.inspection)} onClick={()=>navigate(SETUP_STEPS[index+1])}>{canWrite?'Save and continue':'Continue'}<ArrowRight className="ml-2 h-4 w-4" /></Button>}</div>}
 
       </section>
     </div>

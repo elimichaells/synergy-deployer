@@ -12,6 +12,7 @@ export function validateRuntimeSelection(value:unknown,metrics:unknown):Record<s
 export function validateRuntimeVersions(value:unknown):Record<string,string>
 export interface AgentApp {
   name: string; repo_url: string; branch: string; install_cmd: string; build_cmd: string; start_cmd: string;
+  deploy_script:string;pre_deploy_cmd:string;post_deploy_cmd:string;
   port: number; health_path: string; access_mode: 'lan' | 'wan'; hostname: string; ip_address: string; ip_port: number | null;
   environment: Record<string, string>;runtime_versions:Record<string,string>
 }

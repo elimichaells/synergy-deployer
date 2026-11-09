@@ -6,6 +6,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { createHash } = require('node:crypto');
 const { readDiagnostics, classifyReadiness } = require('./health-diagnostics.cjs');
+const { probeHttp, validateHealthProfile } = require('./http-health.cjs');
 const ID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 const CAPABILITY = 'remote-resources-v1';
 const MB = 1024 ** 2;
@@ -100,7 +101,7 @@ async function recover(root,tools,h) {
   const ecosystem=await h.contained(root,path.relative(root,tx.ecosystem));
   await fs.writeFile(ecosystem,tx.definition,{mode:0o600});await h.atomicJson(path.join(path.dirname(ecosystem),'launch.json'),tx.launch);
   await h.atomicJson(path.join(root,'resources.json'),tx.settings);
-  try {await tools.pm(['delete',`manager-remote-${tx.id}`]).catch(()=>{});await tools.pm(['start',ecosystem]);await h.healthy(item.app);await tools.pm(['save','--force']);}
+  try {if(tx.restart!==false){await tools.pm(['delete',`manager-remote-${tx.id}`]).catch(()=>{});await tools.pm(['start',ecosystem]);await h.healthy(item.app);await tools.pm(['save','--force']);}}
   catch(error){await h.atomicJson(file,{...tx,recoveryFailed:true});throw error;}
   await fs.unlink(file);invalidate(root);
 }
@@ -117,16 +118,17 @@ async function appChange(root,input,tools,h) {
     if(!['direct','runner'].includes(input.method))throw Error('Invalid start method');settings.method=input.method;
   } else throw Error('Unknown app resource operation');
   const ecosystem=await h.contained(root,path.relative(root,item.ecosystem)),launchFile=path.join(path.dirname(ecosystem),'launch.json'),launch=await h.readJson(launchFile);
+  const restart=input.action==='start-method'||input.restart!==false;
   const before=await h.processList(tools.pm);const own=before.find(p=>p.name===`manager-remote-${input.id}`);
-  if(own?.pm2_env?.status!=='online')throw Error('Start the app and verify it is healthy before changing its launch settings');
-  await h.healthy(item.app,5000);
-  await h.atomicJson(path.join(root,'resource-transaction.json'),{id:input.id,ecosystem,definition:await fs.readFile(ecosystem,'utf8'),launch,settings:previous});
+  if(restart&&own?.pm2_env?.status!=='online')throw Error('Start the app and verify it is healthy before changing its launch settings');
+  if(restart)await h.healthy(item.app,5000);
+  await h.atomicJson(path.join(root,'resource-transaction.json'),{id:input.id,ecosystem,definition:await fs.readFile(ecosystem,'utf8'),launch,settings:previous,restart});
   cfg.apps[input.id]=settings;
   try{
     if(input.action==='memory')launch.env.NODE_OPTIONS=heapOptions(launch.env.NODE_OPTIONS,input.limitMb);
     await h.atomicJson(launchFile,launch);await h.atomicJson(path.join(root,'resources.json'),cfg);await applyLaunchSettings(root,input.id,ecosystem,h);
-    await tools.pm(['delete',own.name]);await tools.pm(['start',ecosystem]);await h.healthy(item.app);await tools.pm(['save','--force']);
-    await fs.unlink(path.join(root,'resource-transaction.json'));invalidate(root);return {ok:true,healthy:true,limitMb:settings.limitMb||null,method:settings.method||'runner'};
+    if(restart){await tools.pm(['delete',own.name]);await tools.pm(['start',ecosystem]);await h.healthy(item.app);await tools.pm(['save','--force']);}
+    await fs.unlink(path.join(root,'resource-transaction.json'));invalidate(root);return {ok:true,healthy:true,restart:restart?{healthy:true,reason:null}:null,limitMb:settings.limitMb||null,method:settings.method||'runner'};
   }catch(error){await recover(root,tools,h);return {ok:true,healthy:false,restored:true,reason:error.message};}
 }
 async function ordinary(root,file) {
@@ -151,6 +153,7 @@ async function sizeTree(dir) {
 }
 async function diskPlan(root,input,tools,h) {
   const saved=await h.readJson(path.join(root,'apps.json'),{}),workers=await h.readJson(path.join(root,'workers.json'),{}),list=await h.processList(tools.pm);
+  const detached=await h.readJson(path.join(root,'detached-apps.json'),{});
   const journal=await h.readJson(path.join(root,'current-job.json'));
   const refs=[...list.flatMap(p=>[p.pm2_env?.pm_cwd,p.pm2_env?.pm_exec_path]),...Object.values(workers).map(w=>w.workingDirectory),...Object.values(saved).map(a=>a.ecosystem),journal?.activation?.previous?.ecosystem,...(input.protectedPaths||[])].filter(p=>typeof p==='string');
   for(const item of Object.values(saved)){const launch=await h.readJson(path.join(path.dirname(item.ecosystem),'launch.json'));if(launch?.cwd)refs.push(launch.cwd);}
@@ -158,6 +161,7 @@ async function diskPlan(root,input,tools,h) {
   const records=Array.isArray(input.releases)?input.releases:[];
   for(const app of input.apps||[]) {
     if(!ID.test(app.id))throw Error('Invalid cleanup application');
+    if(detached[app.id]){report.warnings.push('Removed application '+app.name+': all files are preserved');continue;}
     const project={projectId:app.id,projectName:app.name,entries:[],warnings:[]};report.projects.push(project);
     const history=records.filter(r=>r.app_id===app.id&&ID.test(r.id));
     const newest=history.filter(r=>r.status==='success').sort((a,b)=>Date.parse(b.finished_at)-Date.parse(a.finished_at)).slice(0,3).map(r=>r.id);
@@ -212,6 +216,7 @@ async function execute(root,job,tools,h) {
   if(!input||typeof input.action!=='string')throw Error('Missing resource operation');
   await recover(root,tools,h);
   if(input.action==='disk')return disk(root,input,tools,h);
+  if(input.action==='app-logs')return appLogs(root,input,tools,h);
   if(['memory','start-method'].includes(input.action))return appChange(root,input,tools,h);
   if(['sleep','wake'].includes(input.action))return sleepChange(root,input,tools,h);
   if(input.action==='recovery')return recovery(root,input,tools,h);
@@ -220,6 +225,23 @@ async function execute(root,job,tools,h) {
   if(input.action==='database-tune')return tuneDatabase(root,input,h);
   if(input.action.startsWith('worker-')||input.action==='cron-run')return automation(root,input,tools,h);
   throw Error('Unknown resource operation');
+}
+async function appLogs(root,input,tools,h) {
+  if(!ID.test(input.id)||!['out','err'].includes(input.type)||typeof input.clear!=='boolean')throw Error('Invalid application log request');
+  const item=(await h.readJson(path.join(root,'apps.json'),{}))[input.id];
+  if(!item)throw Error('Deploy this managed application first');
+  const launch=await h.readJson(path.join(path.dirname(item.ecosystem),'launch.json'));
+  const process=(await h.processList(tools.pm)).find(p=>p.name===`manager-remote-${input.id}`);
+  const filename=process?.pm2_env?.[input.type==='err'?'pm_err_log_path':'pm_out_log_path'];
+  if(!filename)throw Error('Log path not found for this application');
+  const relative=path.relative(path.join(root,'pm2'),filename);
+  if(relative.startsWith('..')||path.isAbsolute(relative))throw Error('Log path is outside the private process manager');
+  const safe=await h.contained(root,'pm2',relative),file=await fs.open(safe,input.clear?'r+':'r');
+  try {
+    if(input.clear){await file.truncate(0);return{ok:true,cleared:true,logPath:safe,type:input.type};}
+    const stat=await file.stat(),length=Math.min(stat.size,48000),buffer=Buffer.alloc(length);await file.read(buffer,0,length,Math.max(0,stat.size-length));
+    return{ok:true,logPath:safe,type:input.type,log:h.redact(buffer.toString('utf8').split(/\r?\n/).slice(-200).join('\n'),Object.values(launch?.env||{}).filter(v=>typeof v==='string'))};
+  } finally {await file.close();}
 }
 async function databaseSql(root,d,sql,h) {
   if(!['postgresql','mysql','mariadb'].includes(d.provider)||!['127.0.0.1','localhost','::1'].includes(d.host)||!Number.isInteger(d.port)||d.port<1||d.port>65535)throw Error('Only loopback database inspection is allowed');
@@ -271,7 +293,7 @@ async function recovery(root,input,tools,h) {
   const saved=await h.readJson(path.join(root,'apps.json'),{}),app=saved[input.id],before=await h.processList(tools.pm),name=`manager-remote-${input.id}`,p=before.find(p=>p.name===name);
   if(!ID.test(input.id)||!app||app.commit!==input.commit||p?.pid!==input.pid||p?.pm2_env?.restart_time!==input.restarts||!['online','errored'].includes(p?.pm2_env?.status)||app.app.port!==input.port||app.app.health_path!==input.health_path)throw Error('Application state changed after review; prepare a new review');
   let alreadyHealthy=false,databaseFailure=false;
-  try{const response=await fetch(`http://127.0.0.1:${app.app.port}${app.app.health_path||'/'}`,{redirect:'manual',signal:AbortSignal.timeout(5000)});alreadyHealthy=response.ok;const d=!response.ok?await readDiagnostics(response):null;databaseFailure=d?.issueCode?.startsWith('database')===true;await response.body?.cancel().catch(()=>{});}catch{}
+  try{const profile=validateHealthProfile(app.app.health_profile||{path:app.app.health_path||'/'}),response=await probeHttp(`http://127.0.0.1:${app.app.port}${profile.path}`,{statuses:profile.statuses,diagnostics:true,signal:AbortSignal.timeout(5000)});alreadyHealthy=response.ok;databaseFailure=response.diagnostics?.issueCode?.startsWith('database')===true;}catch{}
   if(alreadyHealthy)throw Error('The app is healthy now. No recovery restart was performed.');
   if(databaseFailure)throw Error('Readiness identifies a database dependency problem. No recovery restart was performed.');
   await tools.pm(['restart',name]);await tools.pm(['save','--force']);

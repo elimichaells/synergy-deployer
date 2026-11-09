@@ -1,3 +1,5 @@
+import { requireSameOrigin } from '@/lib/request-body'
+import { tailRuntimeLog } from '@/lib/runtime-log-reader'
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { getSessionFromCookie } from '@/lib/auth'
@@ -9,12 +11,7 @@ import { readFile, writeFile } from 'fs/promises'
 
 const execAsync = promisify(exec)
 
-async function tailLines(filePath: string, lines: number) {
-  const content = await readFile(filePath, 'utf8')
-  const parts = content.split(/\r?\n/)
-  if (parts.length <= lines) return parts.join('\n')
-  return parts.slice(-lines).join('\n')
-}
+const tailLines=tailRuntimeLog
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
@@ -64,6 +61,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
   try {
     const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator'])
+    requireSameOrigin(request)
 
     const { rows: projectRows } = await query<{ pm2_name: string }>(
       'select pm2_name from projects where id = $1',

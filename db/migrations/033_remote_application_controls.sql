@@ -1,0 +1,14 @@
+alter table remote_apps add column if not exists health_profile jsonb;
+alter table remote_jobs add column if not exists trigger text not null default 'manual';
+alter table remote_jobs add column if not exists branch text;
+alter table remote_jobs add column if not exists repo_url text;
+alter table remote_apps add column if not exists security_gate jsonb;
+alter table remote_jobs add column if not exists security_status text;
+alter table remote_jobs add column if not exists requested_commit text;
+alter table remote_apps add column if not exists env_files_ciphertext text;
+alter table remote_apps add column if not exists auto_deploy boolean not null default false;
+alter table remote_apps add column if not exists webhook_ciphertext text;
+alter table remote_apps add column if not exists webhook_user_id uuid references users(id) on delete set null;
+alter table remote_apps add column if not exists deploy_script text not null default '';
+alter table remote_apps add column if not exists pre_deploy_cmd text not null default '';
+alter table remote_apps add column if not exists post_deploy_cmd text not null default '';
