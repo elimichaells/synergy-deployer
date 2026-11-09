@@ -74,5 +74,11 @@ test('remote storage isolates metadata, requires agent receipts, encrypts query 
   const existingMongo=(await storage.remoteStorageServices(a.id,app.id)).find(s=>s.name==='existing_mongo');assert.match(storage.remoteStorageUrl(existingMongo,'private'),/authSource=users&tls=false/);
   await storage.createRemoteStorageService(a.id,app.id,{mode:'provision',connectionId:mongo.id,name:'new_mongo',databaseName:'new_inventory'},actor);
   const provisioned=await claim();assert.equal(provisioned.payload.resource.administrator.authSource,'identity');assert.equal(provisioned.payload.resource.connection.authSource,'new_inventory');await finish(provisioned,{ok:true,connected:true,database:'new_inventory',username:provisioned.payload.resource.connection.username});
+  const managedMongo=(await storage.remoteStorageServices(a.id,app.id)).find(s=>s.name==='new_mongo');
+  await query('update remote_storage_services set username=$2 where id=$1',[existingMongo.id,managedMongo.username]);
+  await storage.remoteStorageOperation(a.id,managedMongo.id,'rotate',{password:'new-isolated-mongo-password'},actor);const rotation=await claim();
+  assert.equal((await query('select pending_password_ciphertext from remote_storage_services where id=$1',[existingMongo.id])).rows[0].pending_password_ciphertext,null,'same username in another MongoDB authentication database remains unchanged');
+  await finish(rotation,{ok:true,connected:true,rotated:true});assert.equal(secret.decryptSecret((await query('select password_ciphertext from remote_storage_services where id=$1',[existingMongo.id])).rows[0].password_ciphertext),'isolated-app-password');
+
 
 });

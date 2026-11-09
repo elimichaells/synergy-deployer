@@ -104,6 +104,7 @@ test('console route passes the selected project connection and releases the oper
     '@/lib/project-console-git': git, '@/lib/runtimes': {}, '@/lib/project-databases': {}, '@/lib/data-services': {},
     '@/lib/exec': { runCommand: async (...args) => { run = args; args[3]('fatal: Authentication failed\n'); return { code: 128, output: 'Authentication failed' }; } },
   });
+  const foreign=await api.POST(new Request('http://localhost/console',{method:'POST',headers:{origin:'https://foreign.test',host:'localhost'},body:JSON.stringify({command:'git fetch origin'})}),{params:Promise.resolve({id:'fixture'})});assert.equal(foreign.status,403);assert.equal(run,undefined);
   const response = await api.POST(new Request('http://localhost/console', { method: 'POST',headers:{origin:'http://localhost',host:'localhost'}, body: JSON.stringify({ command: 'git fetch origin' }) }), { params: Promise.resolve({ id: 'fixture' }) });
   assert.equal(response.status, 200);
   const output = await response.text();

@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useEffect,useState } from 'react'
 import { Sheet,SheetContent,SheetHeader,SheetTitle,SheetDescription } from '@/components/ui/sheet'
 import { RuntimeManager } from '@/components/runtime-manager'
 import type { ManagedServer } from '@/lib/managed-server-types'
@@ -7,6 +7,7 @@ import { RemoteServices,type RequestedService } from './remote-services'
 
 export function RemoteRuntimes({server,fresh,admin,onChanged}:{server:ManagedServer;fresh:boolean;admin:boolean;onChanged:()=>void}){
   const [requested,setRequested]=useState<RequestedService>(),[revision,setRevision]=useState(0), [open,setOpen]=useState(false)
+  useEffect(()=>{setOpen(false);setRequested(undefined);setRevision(0)},[server.id])
   return <div className="space-y-6">{!fresh&&<p className="text-xs text-muted-foreground">Last reported inventory. Connect this server before changing application runtime versions.</p>}
     <RuntimeManager key={server.id+':'+revision} isAdmin={admin} workspace endpoint={`/api/servers/${server.id}/runtimes`} onRequestOperation={(runtime,action,version)=>{
       setRequested({service:runtime.id,mode:action==='install-version'||action==='update'?'install-version':action==='configure'?'reuse':'install',version:version||'',nonce:Date.now()});setOpen(true)
