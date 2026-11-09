@@ -22,7 +22,7 @@ const descriptions: Record<SetupStep, string> = {
   runtime: 'Pick the framework and, if you need to, override how the app is installed, built and started.',
   database: 'Give the app somewhere to store data: a new database, one shared with its project, or one you already have.',
   environment: 'Secrets and settings your app reads at runtime, like API keys. They stay on this server.',
-  domain: 'Choose the address people will use. HTTPS certificates are issued automatically.',
+  domain: 'Choose a private LAN IP or domain. HTTPS certificates are issued automatically; institutional devices must trust the local CA.',
   review: 'Synergy checks everything is in place. Then deploy: the app is built and verified before it goes live.',
 }
 
@@ -167,7 +167,7 @@ export function ProjectSetup({ projectId, onChanged, onDeploy, deploying }: { pr
       <section className="min-w-0" aria-label={SETUP_LABELS[step].title}>
         <div className="mb-6">
           <p className="eyebrow">Step {index + 1} of {SETUP_STEPS.length}</p>
-          <h2 className="text-2xl font-semibold tracking-[-0.02em]">{({ repository: 'Import the source', runtime: 'Build settings', database: 'Database', environment: 'Environment variables', domain: 'Domain', review: 'Ready to deploy' } as Record<SetupStep, string>)[step]}</h2>
+          <h2 className="text-2xl font-semibold tracking-[-0.02em]">{({ repository: 'Import the source', runtime: 'Build settings', database: 'Database', environment: 'Environment variables', domain: 'Application address', review: 'Ready to deploy' } as Record<SetupStep, string>)[step]}</h2>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{descriptions[step]}</p>
         </div>
         {error && <div role="alert" className="notice-error">{error}</div>}
@@ -270,7 +270,7 @@ export function ProjectSetup({ projectId, onChanged, onDeploy, deploying }: { pr
             <DomainsPanel projectId={projectId} projectName={snapshot.project.name} port={snapshot.project.port} environment={snapshot.project.environment || 'production'} role={role} onChanged={() => { setDecisions(current => ({ ...current, domain: 'configured' })); void load(); onChanged() }} />
             <label className="flex items-center gap-3 rounded-xl border border-border px-4 py-3 text-sm">
               <input type="checkbox" className="h-4 w-4 accent-white" checked={decisions.domain === 'later'} onChange={event => setDecisions({ ...decisions, domain: event.target.checked ? 'later' : 'configured' })} disabled={!canWrite || busy} />
-              <span><span className="font-medium">Set up a domain later</span><span className="block text-xs text-muted-foreground">The app is still reachable on the server at localhost:{snapshot.project.port}.</span></span>
+              <span><span className="font-medium">Set up access later</span><span className="block text-xs text-muted-foreground">The app is still reachable on the server at localhost:{snapshot.project.port}.</span></span>
             </label>
           </div>
         )}
