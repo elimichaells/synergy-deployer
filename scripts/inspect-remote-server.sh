@@ -5,13 +5,14 @@ __MANAGER_PATHS__
 emit() { printf '%s' "$1"; shift; for value in "$@"; do printf '\t%s' "$(printf '%s' "$value" | base64 | tr -d '\r\n')"; done; printf '\n'; }
 arch="$(uname -m)"; case "$arch" in x86_64) arch=x64;; aarch64) arch=arm64;; esac
 emit meta "$(uname -s)" "$arch" "$(id -u)"
+if [ -r /etc/os-release ]; then . /etc/os-release; emit distribution "${ID:-unknown}" "${VERSION_ID:-unknown}"; fi
 if command -v ss >/dev/null 2>&1; then
   if listeners="$(ss -H -ltn)"; then
     emit ports known
     while read -r port; do [ -z "$port" ] || emit port "$port"; done < <(printf '%s\n' "$listeners" | awk '{print $4}' | sed 's/.*://' | sort -un)
   else emit ports unknown; fi
 else emit ports unknown; fi
-for id in node git caddy pm2 psql pg_dump pg_restore mysql mariadb go php python composer sling ng; do
+for id in node git caddy pm2 psql pg_dump pg_restore mysql mariadb go php python composer sling ng mongod; do
   var="TOOL_$id"; custom="${!var:-}"
   candidates=(); [ -z "$custom" ] || candidates+=("$custom")
   cmd="$id"; [ "$id" != python ] || cmd=python3

@@ -7,7 +7,7 @@ export function toolPath(value: unknown, platform: string, id: string): string {
   const p = value.trim()
   if (platform === 'win32') {
     // Local Service cannot use an interactive user's mapped drives or network credentials.
-    if (!/^[a-z]:[\\/]/i.test(p) || /[;"<>|*?]/.test(p) || p.slice(2).includes(':') || (id !== 'pm2' && !(id === 'composer' ? /\.(?:exe|bat|cmd)$/i : /\.exe$/i).test(p))) throw new Error(`Use a local absolute ${id === 'pm2' ? 'PM2 bin/pm2 script' : '.exe'} path for ${id}`)
+    if (!/^[a-z]:[\\/]/i.test(p) || /[;"<>|*?]/.test(p) || p.slice(2).includes(':') || (id !== 'pm2' && !(['composer','ng'].includes(id) ? /\.(?:exe|bat|cmd)$/i : /\.exe$/i).test(p))) throw new Error(`Use a local absolute ${id === 'pm2' ? 'PM2 bin/pm2 script' : ['composer','ng'].includes(id) ? '.exe, .bat or .cmd' : '.exe'} path for ${id}`)
     return path.win32.normalize(p)
   }
   if (platform !== 'linux' || !p.startsWith('/') || /[:\r\n]/.test(p)) throw new Error(`Use an absolute Linux executable path for ${id}`)
@@ -20,6 +20,7 @@ export function toolCompatible(id: ServerToolId, version: string) {
   if (id === 'caddy') return /^v?2\./.test(version)
   if (id === 'git') return /^git version 2\./.test(version)
   if (id === 'pm2') return /^\d+\.\d+\.\d+/.test(version) && major >= 5
+  if (id === 'mongod') return /^db version v(?:7|8)\./i.test(version)
   const signatures: Record<string, RegExp> = { psql: /^psql .*PostgreSQL/i, pg_dump: /^pg_dump .*PostgreSQL/i, pg_restore: /^pg_restore .*PostgreSQL/i, mysql: /mysql.*(?:Ver|Distrib)/i, mariadb: /mariadb.*(?:Ver|Distrib)|mysql.*MariaDB/i, go: /^go version go\d/i, php: /^PHP \d/i, python: /^Python 3\./i, composer: /^Composer version /i, sling: /^(?:sling )?version:? v?1\./i, ng: /^Angular CLI\s*:\s*\d+\./i }
   return !!signatures[id]?.test(version)
 }

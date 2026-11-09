@@ -158,6 +158,7 @@ export function parseServerInventory(output: string, platform: string): ServerIn
     for (const line of output.split(/\r?\n/)) {
       const [kind, ...encoded] = line.split('\t'), values = encoded.map(value => Buffer.from(value, 'base64').toString('utf8'))
       if (kind === 'meta') Object.assign(raw, { platform: values[0] === 'Linux' ? 'linux' : '', arch: values[1], privileged: values[2] === '0' })
+      if (kind === 'distribution' && /^[a-z0-9_-]{1,40}$/.test(values[0]) && /^[a-zA-Z0-9._-]{1,40}$/.test(values[1])) raw.distribution={id:values[0],version:values[1]}
       if (kind === 'ports') raw.portsKnown = values[0] === 'known'
       if (kind === 'port') ports.push(Number(values[0]))
       if (kind === 'service') services.push({ name: values[0], status: values[1], executable: values[2], config: values[3] })
@@ -172,6 +173,7 @@ export function parseServerInventory(output: string, platform: string): ServerIn
     return { path: clean(item.path), version, compatible: !error && toolCompatible(tool.id, version), ...(error ? { error } : {}) }
   })])) as Record<ServerToolId, ToolCandidate[]>
   return { platform: platform as ServerInventory['platform'], arch: String(raw.arch), privileged: raw.privileged === true, portsKnown: raw.portsKnown === true,
+    ...(platform==='linux'&&raw.distribution?{distribution:raw.distribution as ServerInventory['distribution']}:{ }),
     ports: [...new Set((Array.isArray(raw.ports) ? raw.ports : []).filter((n): n is number => Number.isInteger(n) && n > 0 && n <= 65535))], tools,
     services: list(raw.services).slice(0,100).map(item => ({ name: clean(item.name,200), status: clean(item.status,50), executable: clean(item.executable), config: clean(item.config) })) }
 }

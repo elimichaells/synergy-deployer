@@ -24,6 +24,7 @@ cleanup(){
 trap cleanup EXIT
 tool="$service"; [ "$service" != postgresql ] || tool=psql
 [ "$service" != angular ] || tool=ng
+[ "$service" != mongodb ] || tool=mongod
 target="$files/$service"; config=''; data=''; username=''
 if [ "$mode" = install-version ]; then
   version="$("$node_exe" -p 'require(process.argv[1]).version' "$plan_file")"
@@ -49,7 +50,7 @@ else
   test ! -e "$target" || { echo 'Service destination already exists; it will not be overwritten'; exit 1; }
   if [ "$port" != 0 ] && ss -H -ltn | awk '{print $4}' | grep -Eq ":$port$"; then echo 'Port is already occupied'; exit 1; fi
   if [ "$service" = caddy ] && ss -H -ltn | awk '{print $4}' | grep -Eq ':(80|443|2019|2029)$'; then echo 'Existing web services occupy the proxy ports; reuse their configuration'; exit 1; fi
-  case "$service" in postgresql) pattern='postgres';;mysql|mariadb) pattern='mysql|maria';;caddy)pattern='caddy';;*)pattern='^$';;esac
+  case "$service" in postgresql) pattern='postgres';;mysql|mariadb) pattern='mysql|maria';;mongodb)pattern='mongo';;caddy)pattern='caddy';;*)pattern='^$';;esac
   if systemctl list-unit-files --type=service --no-legend --no-pager | grep -Ei "$pattern" >/dev/null; then echo 'An existing service was found. Choose Reuse.'; exit 1; fi
   if [ "$service" = postgresql ] || [ "$service" = mysql ] || [ "$service" = mariadb ]; then
     for existing in /var/lib/postgresql /var/lib/pgsql/data /var/lib/mysql /etc/postgresql; do
@@ -67,6 +68,31 @@ else
     else dnf install -y "$@"; fi
   }
   case "$service" in
+    mongodb)
+      for existing in /var/lib/mongodb /var/lib/mongo /data/db; do
+        if [ -d "$existing" ] && [ -n "$(find "$existing" -mindepth 1 -maxdepth 1 -print -quit)" ]; then echo 'Existing MongoDB files were found. Choose Reuse.';exit 1;fi
+      done
+      if id manager-mongodb >/dev/null 2>&1 || [ -e /etc/systemd/system/ManagerMongoDB.service ]; then echo 'A MongoDB account or service already exists. Inspect it before continuing.';exit 1;fi
+      test "$manager" = apt || { echo 'Reuse an existing MongoDB installation on this distribution.';exit 1; }
+      install_package libcurl4 libgssapi-krb5-2
+      "$node_exe" "$stage/install-remote-tool.cjs" "$plan_file" "$target"
+      selected="$(cat "$target/executable.txt")"; "$selected" --version
+      useradd --system --no-create-home --shell /usr/sbin/nologin manager-mongodb
+      data="$target/data";config="$target/mongod.json";install -d -m 700 -o manager-mongodb -g manager-mongodb "$data" "$target/logs"
+      "$node_exe" - "$config" "$data" "$target/logs/mongodb.log" "$port" <<'JS'
+const fs=require('fs');const [file,data,log,port]=process.argv.slice(2);fs.writeFileSync(file,JSON.stringify({storage:{dbPath:data},systemLog:{destination:'file',path:log,logAppend:true},net:{bindIp:'127.0.0.1',port:Number(port)},security:{authorization:'enabled'}}),{flag:'wx',mode:0o644});
+JS
+      # Quote systemd paths and escape its percent specifiers. No shell executes
+      # the database command or its path.
+      "$node_exe" - "$selected" "$config" <<'JS'
+const fs=require('fs');const q=s=>'"'+s.replaceAll('\\','\\\\').replaceAll('"','\\"').replaceAll('%','%%')+'"';fs.writeFileSync('/etc/systemd/system/ManagerMongoDB.service','[Unit]\nDescription=Manager MongoDB\nAfter=network.target\n[Service]\nUser=manager-mongodb\nGroup=manager-mongodb\nExecStart='+q(process.argv[2])+' --config '+q(process.argv[3])+'\nRestart=on-failure\nNoNewPrivileges=true\n[Install]\nWantedBy=multi-user.target\n',{flag:'wx',mode:0o644});
+JS
+      created_unit=ManagerMongoDB.service;systemctl daemon-reload;systemctl enable --now "$created_unit"
+      "$node_exe" "$stage/initialize-remote-database.cjs" "$plan_file" initialize
+      systemctl restart "$created_unit"
+      "$node_exe" "$stage/initialize-remote-database.cjs" "$plan_file" verify
+      username=manager_provisioner
+      ;;
     postgresql)
       if [ "$manager" = apt ]; then
         install_package postgresql postgresql-client

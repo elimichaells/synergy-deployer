@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $paths = '__MANAGER_PATHS__' | ConvertFrom-Json
-$ids = @('node','git','caddy','pm2','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer','sling','ng')
+$ids = @('node','git','caddy','pm2','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer','sling','ng','mongod')
 $tools = @{}
 $serviceRows = @()
 $processes = @(Get-Process node,caddy,php,python,python3 -ErrorAction SilentlyContinue | Where-Object { $_.Path } | Select-Object ProcessName,Path -Unique)
@@ -30,6 +30,7 @@ foreach ($id in $ids) {
     'caddy' { @('C:\Caddy\caddy.exe','C:\web\caddy.exe',"$env:ProgramData\chocolatey\bin\caddy.exe") }
     { $_ -in @('psql','pg_dump','pg_restore') } { @("$env:ProgramFiles\PostgreSQL\*\bin\$id.exe") }
     { $_ -in @('mysql','mariadb') } { @("$env:ProgramFiles\MySQL\*\bin\$id.exe", "$env:ProgramFiles\MariaDB*\bin\$id.exe", "C:\tools\mysql\current\bin\$id.exe") }
+    'mongod' { @("$env:ProgramFiles\MongoDB\Server\*\bin\mongod.exe") }
     'go' { @("$env:ProgramFiles\Go\bin\go.exe") }
     'php' { @('C:\tools\php*\php.exe','C:\php\php.exe') }
     'python' { @("$env:LOCALAPPDATA\Programs\Python\Python*\python.exe", "$env:ProgramFiles\Python*\python.exe") }
@@ -37,7 +38,7 @@ foreach ($id in $ids) {
   }
   foreach ($pattern in $patterns) { $candidates += @(Get-Item -Path $pattern -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer } | ForEach-Object { $_.FullName }) }
   foreach ($s in $serviceRows) {
-    if ($s.executable -and ($id -eq 'caddy' -or $id -in @('psql','pg_dump','pg_restore','mysql','mariadb'))) {
+    if ($s.executable -and ($id -eq 'caddy' -or $id -in @('psql','pg_dump','pg_restore','mysql','mariadb','mongod'))) {
       $candidate = Join-Path (Split-Path -Parent $s.executable) ($id + '.exe')
       if (Test-Path -LiteralPath $candidate -PathType Leaf) { $candidates += $candidate }
     }

@@ -72,12 +72,12 @@ export async function installRemoteService(id:string,body:Record<string,unknown>
       if((await client.query("select 1 from remote_storage_changes where server_id=$1 and status in ('running','needs_review')",[id])).rowCount)throw new ApiError('Verify the pending database change in Storage before installing services',409)
       if((await client.query("select 1 from remote_jobs where server_id=$1 and status in ('queued','running')",[id])).rowCount || (await client.query("select 1 from remote_agent_updates where server_id=$1 and status in ('queued','installing','recovery_required')",[id])).rowCount || (await client.query("select 1 from remote_service_operations where server_id=$1 and status in ('running','interrupted')",[id])).rowCount)throw new ApiError('Wait for the current server operation, or recover its interrupted installation',409)
       operationId=randomUUID();secret=selection.mode==='install'&&selection.port?randomBytes(36).toString('hex'):''
-      const credentials=secret?{provider:selection.service,host:'127.0.0.1',port:selection.port,username:row.platform==='win32'&&selection.service!=='postgresql'?'root':'manager_provisioner',password:secret}:null
+      const credentials=secret?{provider:selection.service,host:'127.0.0.1',port:selection.port,username:selection.service==='mongodb'?'manager_provisioner':row.platform==='win32'&&selection.service!=='postgresql'?'root':'manager_provisioner',password:secret}:null
       await client.query("insert into remote_service_operations(id,server_id,user_id,service_id,status,plan,credentials_ciphertext) values($1,$2,$3,$4,'running',$5,$6)",[operationId,id,userId,selection.service,JSON.stringify({selection,target,fingerprint:body.fingerprint}),credentials?encryptSecret(JSON.stringify(credentials)):null]);await client.query('commit')
     }catch(error){await client.query('rollback');throw error}finally{client.release()}
     await audit(userId,'remote.service.install.start',id,{operationId,service:selection.service,mode:selection.mode})
     add('[service] Resolving verified installation assets. Existing services are preserved.\n')
-    const downloads=selection.mode==='install-version'?{...(row.platform==='linux'?await serviceDownloads('node',row.platform,inventory.arch):{}),versionAsset:await remoteRuntimeAsset(selection.service,selection.version,row.platform,inventory.arch)}:selection.mode==='install'||row.platform==='linux'?await serviceDownloads(selection.service,row.platform,inventory.arch):{}
+    const downloads=selection.mode==='install-version'?{...(row.platform==='linux'?await serviceDownloads('node',row.platform,inventory.arch):{}),versionAsset:await remoteRuntimeAsset(selection.service,selection.version,row.platform,inventory.arch)}:selection.mode==='install'||row.platform==='linux'?await serviceDownloads(selection.mode==='reuse'?'node':selection.service,row.platform,inventory.arch,inventory.distribution):{}
     sftp=await sftpSession(connection)
     const home=row.platform==='win32'?await new Promise<string>((resolve,reject)=>sftp!.realpath('.',(e,p)=>e?reject(e):resolve(p))):'/tmp'
     stage=path.posix.join(home.replace(/\\/g,'/'),'manager-service-'+operationId)
@@ -86,8 +86,9 @@ export async function installRemoteService(id:string,body:Record<string,unknown>
     if(row.platform==='win32')await sshExec(connection,powershell(`$account=[Security.Principal.WindowsIdentity]::GetCurrent().Name; & icacls.exe ${ps(native)} /inheritance:r /grant:r ($account+':(OI)(CI)F') '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'; if($LASTEXITCODE -ne 0){exit 1}`))
     await query('update remote_service_operations set plan=plan||$2::jsonb where id=$1',[operationId,JSON.stringify({stage})])
     const script=row.platform==='win32'?'install-remote-service.ps1':'install-remote-service.sh'
-    for(const file of [script,'install-remote-tool.cjs',...(row.platform==='linux'?['bootstrap-remote-service.sh']:[])])await writeRemote(sftp,stage+'/'+file,(await readFile(path.join(process.cwd(),'scripts',file),'utf8')).replace(/\r\n/g,'\n'))
-    await writeRemote(sftp,stage+'/plan.json',JSON.stringify({...selection,serverId:id,operationId,downloads,databasePassword:secret}))
+    for(const file of [script,'install-remote-tool.cjs','initialize-remote-database.cjs','agent-runtime-loader.cjs',...(row.platform==='linux'?['bootstrap-remote-service.sh']:[])])await writeRemote(sftp,stage+'/'+file,(await readFile(path.join(process.cwd(),'scripts',file),'utf8')).replace(/\r\n/g,'\n'))
+    const driverArchive=selection.service==='mongodb'&&selection.mode==='install'?await (await import('../scripts/agent-postgres-runtime.cjs')).packagePostgresRuntime(process.cwd(),['mongodb']):undefined
+    await writeRemote(sftp,stage+'/plan.json',JSON.stringify({...selection,serverId:id,operationId,downloads,databasePassword:secret,driverArchive}))
     if(row.platform==='linux'){const asset=(downloads as {privilegedNode:{url:string;sha256:string}}).privilegedNode;await writeRemote(sftp,stage+'/privileged-node.env','NODE_URL='+sh(asset.url)+'\nNODE_SHA='+sh(asset.sha256)+'\n')}
     const command=row.platform==='win32'?powershell(`& ${ps(native+'\\'+script)} -PlanFile ${ps(native+'\\plan.json')}; exit $LASTEXITCODE`):`${inventory.privileged?'':sudo.prefix}/bin/bash ${sh(stage+'/bootstrap-remote-service.sh')} ${sh(stage)} ${sh(operationId)} ${sh(selection.service)}`
     try{await sshExec(connection,command,row.platform==='linux'&&!inventory.privileged?sudo.input:'',1200000,add)}catch(error){add('\n'+(error as Error).message)}
@@ -103,7 +104,7 @@ export async function installRemoteService(id:string,body:Record<string,unknown>
     if(operationId)await query('update remote_service_operations set status=$2,log=$3 where id=$1',[operationId,stage?'interrupted':'failed',log+'\n'+redact((error as Error).message,[...credentialSecrets(auth),secret])])
     throw new ApiError(redact((error as Error).message,[...credentialSecrets(auth),secret]),error instanceof ApiError?error.status:400)
   }finally{
-    if(sftp&&terminal){for(const name of ['plan.json','previous-paths.json','install-remote-service.ps1','install-remote-service.sh','install-remote-tool.cjs','chocolatey.ps1','bootstrap-remote-service.sh','privileged-node.env','result.json'])await new Promise<void>(resolve=>sftp!.unlink(stage+'/'+name,()=>resolve()));await new Promise<void>(resolve=>sftp!.rmdir(stage,()=>resolve()))}
+    if(sftp&&terminal){for(const name of ['plan.json','previous-paths.json','install-remote-service.ps1','install-remote-service.sh','install-remote-tool.cjs','initialize-remote-database.cjs','agent-runtime-loader.cjs','chocolatey.ps1','bootstrap-remote-service.sh','privileged-node.env','result.json'])await new Promise<void>(resolve=>sftp!.unlink(stage+'/'+name,()=>resolve()));await new Promise<void>(resolve=>sftp!.rmdir(stage,()=>resolve()))}
     sftp?.end();connection.end()
   }
 }
@@ -129,7 +130,7 @@ export async function recoverRemoteService(id:string,body:Record<string,unknown>
     if(!['success','failed'].includes(receipt.status))throw new ApiError('The installer needs inspection on the target. Its data has been preserved.',409)
     delete receipt.password
     await query('update remote_service_operations set status=$2,result=$3,finished_at=now() where id=$1',[operation.id,receipt.status,JSON.stringify(receipt)])
-    for(const name of ['plan.json','previous-paths.json','install-remote-service.ps1','install-remote-service.sh','install-remote-tool.cjs','chocolatey.ps1','bootstrap-remote-service.sh','privileged-node.env','result.json'])await new Promise<void>(resolve=>sftp!.unlink(operation.plan.stage+'/'+name,()=>resolve()))
+    for(const name of ['plan.json','previous-paths.json','install-remote-service.ps1','install-remote-service.sh','install-remote-tool.cjs','initialize-remote-database.cjs','agent-runtime-loader.cjs','chocolatey.ps1','bootstrap-remote-service.sh','privileged-node.env','result.json'])await new Promise<void>(resolve=>sftp!.unlink(operation.plan.stage+'/'+name,()=>resolve()))
     await audit(userId,'remote.service.recover',id,{operationId:operation.id,status:receipt.status});return receipt
   }catch(error){throw new ApiError(redact((error as Error).message,credentialSecrets(auth)),error instanceof ApiError?error.status:400)}finally{sftp?.end();connection.end()}
 }

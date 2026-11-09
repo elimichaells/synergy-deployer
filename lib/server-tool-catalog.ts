@@ -13,6 +13,7 @@ export const SERVER_TOOLS = [
   { id: 'python', name: 'Python', required: false },
   { id: 'composer', name: 'Composer', required: false },
   { id: 'ng', name: 'Angular CLI', required: false },
+  { id: 'mongod', name: 'MongoDB server', required: false },
   { id: 'sling', name: 'Sling migration engine', required: false },
 ] as const
 export type ServerToolId = typeof SERVER_TOOLS[number]['id']
@@ -21,6 +22,7 @@ export type ServerToolPlan = Record<ServerToolId, ToolSelection>
 export type ToolCandidate = { path: string; version: string; compatible: boolean; error?: string }
 export interface ServerInventory {
   platform: 'win32' | 'linux'; arch: string; privileged: boolean; portsKnown: boolean
+  distribution?: {id:string;version:string}
   ports: number[]; services: { name: string; status: string; executable: string; config: string }[]
   tools: Record<ServerToolId, ToolCandidate[]>
 }

@@ -57,7 +57,7 @@ try{
   Write-Json $receipt @{status='running';service=$plan.service;operationId=$plan.operationId;pid=$PID;processStartedAt=(Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')}
   $savedPaths=Get-Content -LiteralPath $pathsFile -Raw;$paths=@{};($savedPaths|ConvertFrom-Json).PSObject.Properties|ForEach-Object{$paths[$_.Name]=$_.Value}
   [IO.File]::WriteAllText((Join-Path $stage 'previous-paths.json'),$savedPaths,$utf8)
-  $tool=@{postgresql='psql';mysql='mysql';mariadb='mariadb';angular='ng'}[$plan.service];if(-not $tool){$tool=$plan.service}
+  $tool=@{postgresql='psql';mysql='mysql';mariadb='mariadb';angular='ng';mongodb='mongod'}[$plan.service];if(-not $tool){$tool=$plan.service}
   $result=@{status='success';operationId=$plan.operationId;service=$plan.service;mode=$plan.mode;port=$plan.port;host='127.0.0.1';managed=($plan.mode -eq 'install')}
   if($plan.mode -eq 'install-version'){
     if($plan.service -notin @('node','go','php') -or $plan.version -notmatch '^\d+\.\d+\.\d+$'){throw 'Invalid runtime version'}
@@ -92,7 +92,7 @@ try{
     if(-not(Test-Path -LiteralPath $plan.path -PathType Leaf)){throw 'Selected executable is missing'}
     $paths[$tool]=$plan.path
   }else{
-    $match=@{postgresql='postgres';mysql='mysql|maria';mariadb='mysql|maria';caddy='caddy'}[$plan.service]
+    $match=@{postgresql='postgres';mysql='mysql|maria';mariadb='mysql|maria';caddy='caddy';mongodb='mongo'}[$plan.service]
     if($match -and @(Get-CimInstance Win32_Service|Where-Object{($_.Name+' '+$_.PathName) -match $match}).Count){throw 'An existing service was found. Reuse it instead of installing another instance.'}
     if($plan.port -and (Get-NetTCPConnection -LocalPort $plan.port -State Listen -ErrorAction SilentlyContinue)){throw 'The selected port is already in use'}
     if($plan.service -eq 'caddy' -and (Get-NetTCPConnection -LocalPort 80,443,2019,2029 -State Listen -ErrorAction SilentlyContinue)){throw 'An existing web service occupies the proxy ports'}
@@ -100,7 +100,27 @@ try{
     if(Test-Path -LiteralPath $target){throw 'The service destination already exists. It will not be initialized or overwritten.'}
     Private-Folder $target
     Run 'icacls.exe' @($target,'/grant','*S-1-5-19:(OI)(CI)RX')
-    if($plan.downloads.archive){
+    if($plan.service -eq 'mongodb'){
+      foreach($existing in @('C:\data\db',(Join-Path $env:ProgramData 'MongoDB'))){if((Test-Path -LiteralPath $existing -PathType Container) -and @(Get-ChildItem -LiteralPath $existing -Force).Count){throw 'Existing MongoDB data was found. Reuse it instead of creating another installation.'}}
+      $vc=Join-Path $target 'vcredist.exe';Fetch-Verified $plan.downloads.vcredist $vc
+      $setup=Start-Process -FilePath $vc -ArgumentList @('/install','/quiet','/norestart') -Wait -PassThru -WindowStyle Hidden
+      if($setup.ExitCode -notin @(0,3010,1638)){throw 'Visual C++ prerequisite failed'}
+      $zip=Join-Path $target 'package.zip';Fetch-Verified $plan.downloads.mongodb $zip
+      $binaries=Join-Path $target 'binaries';Extract-Database $zip $binaries -All
+      $bins=@(Get-ChildItem -LiteralPath $binaries -Directory | ForEach-Object {Join-Path $_.FullName 'bin\mongod.exe'} | Where-Object {Test-Path -LiteralPath $_ -PathType Leaf})
+      if($bins.Count -ne 1){throw 'Unexpected MongoDB archive layout'};$paths.mongod=$bins[0]
+      Run $paths.mongod @('--version')
+      $data=Join-Path $target 'data';$logs=Join-Path $target 'logs';$config=Join-Path $target 'mongod.json'
+      foreach($directory in @($data,$logs)){New-Item -ItemType Directory -Path $directory|Out-Null;Run 'icacls.exe' @($directory,'/grant','*S-1-5-19:(OI)(CI)M')}
+      Write-Json $config @{storage=@{dbPath=$data};systemLog=@{destination='file';path=(Join-Path $logs 'mongodb.log');logAppend=$true};net=@{bindIp='127.0.0.1';port=$plan.port};security=@{authorization='enabled'}}
+      $createdService='ManagerMongoDB';Run $paths.mongod @('--config',$config,'--install','--serviceName',$createdService,'--serviceDisplayName','Manager MongoDB')
+      Run 'sc.exe' @('config',$createdService,'obj=','NT AUTHORITY\LocalService','start=','auto');Start-Service -Name $createdService
+      Run $paths.node @((Join-Path $stage 'initialize-remote-database.cjs'),$PlanFile,'initialize')
+      Restart-Service -Name $createdService
+      Run $paths.node @((Join-Path $stage 'initialize-remote-database.cjs'),$PlanFile,'verify')
+      $result.serviceName=$createdService;$result.dataPath=$data;$result.configPath=$config;$result.username='manager_provisioner';$result.password=$plan.databasePassword
+      Remove-Item -LiteralPath $zip,$vc -Force
+    }elseif($plan.downloads.archive){
       $zip=Join-Path $target 'package.zip';Fetch-Verified $plan.downloads.archive $zip
       $binaries=Join-Path $target 'binaries';Extract-Database $zip $binaries
       $bins=@(Get-ChildItem -LiteralPath $binaries -Directory | ForEach-Object {Join-Path $_.FullName 'bin'} | Where-Object {Test-Path -LiteralPath $_ -PathType Container})
@@ -170,7 +190,11 @@ try{
 }catch{
   if($savedPaths){Write-ToolPaths $savedPaths}
   # Never remove initialized data or an existing installation during recovery.
-  if($createdService){Stop-Service -Name $createdService -ErrorAction SilentlyContinue}
+  if($createdService -and $target){
+    $registered=Get-CimInstance Win32_Service -Filter ("Name='"+$createdService+"'") -ErrorAction SilentlyContinue
+    $ownedExecutable='';if($registered.PathName -match '^\s*"([^"]+)"'){$ownedExecutable=$Matches[1]}elseif($registered.PathName -match '^\s*(.+?\.exe)(?:\s|$)'){$ownedExecutable=$Matches[1]}
+    if($ownedExecutable -and [IO.Path]::GetFullPath($ownedExecutable).StartsWith([IO.Path]::GetFullPath($target).TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase)){Stop-Service -Name $createdService -ErrorAction SilentlyContinue}
+  }
   $message=$_.Exception.Message; if($plan.databasePassword){$message=$message.Replace([string]$plan.databasePassword,'[redacted]')}
   Write-Json $receipt @{status='failed';operationId=$plan.operationId;service=$plan.service;serviceName=$createdService;message=$message;preservedData=$true}
   Write-Error $message

@@ -4,6 +4,7 @@ const load=require('./server-module.cjs'),agent=require('../scripts/manager-agen
 test('Angular custom paths and existing CLIs use the shared runtime catalog',()=>{
   const tools=load('lib/server-tool-catalog.ts',{}),discovery=load('lib/server-discovery.ts',{'./server-tool-catalog':tools});
   assert.ok(tools.SERVER_TOOLS.some(t=>t.id==='ng'));assert.equal(discovery.toolCompatible('ng','Angular CLI: 21.2.29'),true);assert.equal(discovery.toolCompatible('ng','unrelated 21.2.29'),false);
+  assert.equal(discovery.discoveryPaths({ng:'D:\\Institution Tools\\ng.cmd'},'win32').ng,'D:\\Institution Tools\\ng.cmd');
   for(const platform of ['win32','linux']){const executable=platform==='win32'?'D:\\Institution Tools\\ng.cmd':'/srv/institution tools/ng',inventory={platform,portsKnown:true,ports:[],services:[],tools:{ng:[{path:executable,compatible:true}]}};policy.verifyServicePlan(policy.servicePlan({service:'angular',mode:'reuse',path:executable},platform),inventory);assert.throws(()=>policy.verifyServicePlan(policy.servicePlan({service:'angular',mode:'install'},platform),inventory),/existing installation/);}
 });
 test('isolated Angular installation runs through selected Node and refuses replacement',{skip:process.env.MANAGER_RUNTIME_INSTALL_LAB!=='1',timeout:240000},async t=>{
