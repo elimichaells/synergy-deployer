@@ -87,13 +87,14 @@ async function main() {
     listener = https.createServer({ key: fs.readFileSync(key), cert: caPem }, async (req, res) => {
       try {
         const chunks = []; let size = 0;
-        for await (const chunk of req) { size += chunk.length; if (size > 800000) throw new Error('Body too large'); chunks.push(chunk); }
+        for await (const chunk of req) { size += chunk.length; if (size > 1200000) throw new Error('Body too large'); chunks.push(chunk); }
         const action = req.url.match(/^\/api\/server-agent\/(enroll|heartbeat|claim|report|update-claim|update-report)$/)?.[1];
         if (!action || req.method !== 'POST') { res.writeHead(404); res.end(); return; }
         const request = new Request(`https://127.0.0.1${req.url}`, { method: 'POST', headers: req.headers, body: Buffer.concat(chunks) });
         const response = await agentRoute.POST(request, { params: Promise.resolve({ action }) });
-        res.writeHead(response.status, Object.fromEntries(response.headers)); res.end(await response.text());
-      } catch { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end('{"error":"Lab request failed"}'); }
+        const body=await response.text();if(!response.ok)console.error('[lab route]',action,response.status,redact(body,secrets));
+        res.writeHead(response.status, Object.fromEntries(response.headers)); res.end(body);
+      } catch(error) { console.error('[lab route]',redact(error.message,secrets));res.writeHead(500, { 'Content-Type': 'application/json' }); res.end('{"error":"Lab request failed"}'); }
     });
     await new Promise(resolve => listener.listen(0, '127.0.0.1', resolve));
     const manager = `https://127.0.0.1:${listener.address().port}`;
@@ -177,7 +178,7 @@ async function main() {
     const readAgentFile = name => process.platform === 'win32' ? fs.readFileSync(path.join(agentRoot,name),'utf8').trim() : run('sudo',['cat',path.join(agentRoot,name)]).trim();
     const pm2Pid = readAgentFile('pm2/pm2.pid');
     const supervisorPid = readAgentFile('.agent-updates/supervisor.lock');
-    const installedSource = fs.readFileSync(path.join(root,'scripts/manager-agent.cjs'),'utf8');
+    const installedSource = await require('../../scripts/agent-bundle.cjs').agentBundle(root);
     const installedVersion = require('../../scripts/manager-agent.cjs').AGENT_VERSION;
     const nextVersion = installedVersion.replace(/(\d+)$/,n=>String(Number(n)+1));
     const candidate = installedSource.replace(`const AGENT_VERSION = '${installedVersion}';`,`const AGENT_VERSION = '${nextVersion}';`);
@@ -219,6 +220,7 @@ async function main() {
     check('Successful setup recorded without credentials in the audit log');
     result.passed = true;
   } catch (error) {
+    if(process.platform==='linux')try{console.error(redact(run('sudo',['journalctl','-u','manager-agent','-n','30','--no-pager']),secrets))}catch{}
     result.error = redact(error.message, secrets);
     console.error(result.error);
     process.exitCode = 1;
