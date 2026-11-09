@@ -23,6 +23,8 @@ jobs:
             engine: mongodb
           - os: windows-latest
             engine: sqlserver
+          - os: ubuntu-22.04
+            engine: redis
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:

@@ -22,6 +22,7 @@ export function toolCompatible(id: ServerToolId, version: string) {
   if (id === 'pm2') return /^\d+\.\d+\.\d+/.test(version) && major >= 5
   if (id === 'mongod') return /^db version v(?:7|8)\./i.test(version)
   if (id === 'sqlcmd') return /^sqlcmd version \d+\./i.test(version)
+  if (id === 'redis') return /^(?:redis-cli|memurai-cli)\s+\d+\./i.test(version)
   const signatures: Record<string, RegExp> = { psql: /^psql .*PostgreSQL/i, pg_dump: /^pg_dump .*PostgreSQL/i, pg_restore: /^pg_restore .*PostgreSQL/i, mysql: /mysql.*(?:Ver|Distrib)/i, mariadb: /mariadb.*(?:Ver|Distrib)|mysql.*MariaDB/i, go: /^go version go\d/i, php: /^PHP \d/i, python: /^Python 3\./i, composer: /^Composer version /i, sling: /^(?:sling )?version:? v?1\./i, ng: /^Angular CLI\s*:\s*\d+\./i }
   return !!signatures[id]?.test(version)
 }

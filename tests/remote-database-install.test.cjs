@@ -12,7 +12,7 @@ test('MongoDB installation refuses existing services, occupied ports and unsuppo
 });
 const engine=process.env.MANAGER_SERVICE_INSTALL_ENGINE||'mongodb';
 test('disposable OS installs authenticated '+engine+', verifies restart persistence and preserves reuse',{skip:process.env.MANAGER_SERVICE_INSTALL_LAB!=='1',timeout:900000},async()=>{
-  assert.ok(['mongodb','sqlserver'].includes(engine));if(engine==='sqlserver')assert.equal(process.platform,'win32');assert.equal(process.env.GITHUB_ACTIONS,'true');assert.equal(process.env.RUNNER_ENVIRONMENT,'github-hosted');assert.ok(process.env.TEST_CADDY);assert.ok(process.env.TEST_PM2_PACKAGE_ROOT);
+  assert.ok(['mongodb','sqlserver','redis'].includes(engine));if(engine==='sqlserver')assert.equal(process.platform,'win32');assert.equal(process.env.GITHUB_ACTIONS,'true');assert.equal(process.env.RUNNER_ENVIRONMENT,'github-hosted');assert.ok(process.env.TEST_CADDY);assert.ok(process.env.TEST_PM2_PACKAGE_ROOT);
   const windows=process.platform==='win32',root=path.join(windows?process.env.ProgramData:'/opt','ManagerRuntimeLab-'+randomUUID()),toolsRoot=path.join(root,'tools'),agentRoot=path.join(root,'agent'),stage=path.join(root,'stage'),dataRoot=path.join(root,'services');await fs.mkdir(toolsRoot,{recursive:true});await fs.mkdir(agentRoot);await fs.mkdir(stage);
   const run=(file,args,options)=>agent.run(file,args,{timeout:180000,...options}),ps=script=>run('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{env:{...process.env,FIXTURE_ROOT:root,FIXTURE_AGENT_ROOT:agentRoot}});
   // GitHub's Windows image ships an unrelated MongoDB service. Only on this
@@ -27,9 +27,18 @@ test('disposable OS installs authenticated '+engine+', verifies restart persiste
   for(const name of ['install-remote-service.ps1','install-remote-service.sh','install-remote-tool.cjs','initialize-remote-database.cjs','agent-runtime-loader.cjs','install-remote-sqlserver.ps1','offline-service.ps1','installer-offline.ps1','database-service.ps1'])await fs.writeFile(path.join(stage,name),(await fs.readFile(path.join(process.cwd(),'scripts',name),'utf8')).replaceAll('\r\n','\n'));
   const listener=net.createServer();await new Promise(resolve=>listener.listen(0,'127.0.0.1',resolve));const port=listener.address().port;await new Promise(resolve=>listener.close(resolve));
   class ApiError extends Error{}const downloads=load('lib/remote-service-downloads.ts',{'./api':{ApiError},'./server-ssh':{installerDownloads:async()=>({node:{}})}});
-  const plan={service:engine,mode:'install',port,agentRoot,dataRoot,serverId:'11111111-1111-4111-8111-111111111111',operationId:randomUUID(),databasePassword:(engine==='sqlserver'?'Mg!A1':'')+randomBytes(36).toString('hex'),downloads:await downloads.serviceDownloads(engine,process.platform,process.arch,{id:'ubuntu',version:'22.04'}),driverArchive:await require('../scripts/agent-postgres-runtime.cjs').packagePostgresRuntime(process.cwd(),[engine==='sqlserver'?'mssql':'mongodb'])},file=path.join(stage,'plan.json');await agent.atomicJson(file,plan);
+  const plan={service:engine,mode:'install',port,agentRoot,dataRoot,serverId:'11111111-1111-4111-8111-111111111111',operationId:randomUUID(),databasePassword:(engine==='sqlserver'?'Mg!A1':'')+randomBytes(36).toString('hex'),downloads:await downloads.serviceDownloads(engine,process.platform,process.arch,{id:'ubuntu',version:'22.04'}),driverArchive:await require('../scripts/agent-postgres-runtime.cjs').packagePostgresRuntime(process.cwd(),[engine==='sqlserver'?'mssql':engine==='redis'?'redis':'mongodb'])},file=path.join(stage,'plan.json');await agent.atomicJson(file,plan);
   const install=()=>run(windows?'powershell.exe':'bash',windows?['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',path.join(stage,'install-remote-service.ps1'),'-PlanFile',file]:[path.join(stage,'install-remote-service.sh'),file,process.execPath],{timeout:720000});
-  await install();const receipt=await agent.readJson(path.join(stage,'result.json'));assert.equal(receipt.status,'success');assert.equal(receipt.username,engine==='sqlserver'?'sa':'manager_provisioner');assert.equal(receipt.port,port);
+  await install();const receipt=await agent.readJson(path.join(stage,'result.json'));assert.equal(receipt.status,'success');assert.equal(receipt.username,engine==='sqlserver'?'sa':engine==='redis'?'default':'manager_provisioner');assert.equal(receipt.port,port);
+  if(engine==='redis'){
+    const {createClient}=require('redis'),client=createClient({url:`redis://127.0.0.1:${port}`,username:'default',password:plan.databasePassword,socket:{connectTimeout:5000,reconnectStrategy:false}});client.on('error',()=>{});await client.connect();
+    try{
+      await client.set('fixture:preserved:site','Keep this data');const pid=async()=>(await client.info('server')).match(/process_id:(\d+)/)[1],original=await pid();
+      await assert.rejects(install());assert.equal(await pid(),original,'refused installation must not restart Redis');
+      await agent.atomicJson(file,{...plan,mode:'reuse',path:receipt.path,operationId:randomUUID()});await install();assert.equal(await pid(),original);assert.equal(await client.get('fixture:preserved:site'),'Keep this data');assert.equal((await agent.readJson(path.join(agentRoot,'tool-check.json'))).ok,true);
+      const anonymous=createClient({url:`redis://127.0.0.1:${port}`,socket:{connectTimeout:3000,reconnectStrategy:false}});anonymous.on('error',()=>{});try{await assert.rejects(async()=>{await anonymous.connect();await anonymous.ping();});}finally{if(anonymous.isOpen)anonymous.destroy();}
+    }finally{client.destroy();}return;
+  }
   if(engine==='sqlserver'){
     const sql=require('mssql'),pool=await new sql.ConnectionPool({server:'127.0.0.1',port,user:'sa',password:plan.databasePassword,database:'master',options:{encrypt:true,trustServerCertificate:true}}).connect();
     try{

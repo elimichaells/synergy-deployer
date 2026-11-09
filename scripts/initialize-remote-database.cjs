@@ -8,7 +8,15 @@ async function contained(root,...parts){
 }
 async function initialize(file,mode){
   const root=await fs.realpath(path.dirname(file)),p=JSON.parse(await fs.readFile(file,'utf8'));
-  if(!['mongodb','sqlserver'].includes(p.service)||p.mode!=='install'||!['initialize','verify'].includes(mode)||!/^[a-f0-9-]{36}$/i.test(p.operationId)||!(p.service==='sqlserver'?/^Mg!A1[a-f0-9]{72}$/:/^[a-f0-9]{72}$/).test(p.databasePassword)||!Number.isInteger(p.port)||p.port<1024||p.port>65535)throw Error('Invalid private database initialization plan');
+  if(!['mongodb','sqlserver','redis'].includes(p.service)||p.mode!=='install'||!['initialize','verify'].includes(mode)||!/^[a-f0-9-]{36}$/i.test(p.operationId)||!(p.service==='sqlserver'?/^Mg!A1[a-f0-9]{72}$/:/^[a-f0-9]{72}$/).test(p.databasePassword)||!Number.isInteger(p.port)||p.port<1024||p.port>65535)throw Error('Invalid private database initialization plan');
+  if(p.service==='redis'){
+    const {createClient}=await loadPostgresRuntime(root,p.driverArchive,{contained},'redis');let client,last;
+    for(let attempt=0;attempt<20;attempt++){client=createClient({url:`redis://127.0.0.1:${p.port}`,username:'default',password:p.databasePassword,socket:{connectTimeout:5000,reconnectStrategy:false}});client.on('error',()=>{});try{await client.connect();await client.ping();last=null;break;}catch(error){last=error;if(client.isOpen)client.destroy();await new Promise(resolve=>setTimeout(resolve,500));}}
+    if(last)throw Error('Redis did not become ready for authenticated verification');
+    try{if(mode==='initialize'){await client.set('manager:installation:receipt',p.operationId,{NX:true});await client.save();}if(await client.get('manager:installation:receipt')!==p.operationId)throw Error('Redis persistence receipt does not match this installation');}
+    finally{if(client.isOpen)client.destroy();}
+    return{authenticated:true,persistenceVerified:true};
+  }
   if(p.service==='sqlserver'){
     const sql=await loadPostgresRuntime(root,p.driverArchive,{contained},'mssql');let pool,last;
     for(let attempt=0;attempt<20;attempt++){

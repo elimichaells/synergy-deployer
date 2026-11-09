@@ -51,7 +51,7 @@ else
   test ! -e "$target" || { echo 'Service destination already exists; it will not be overwritten'; exit 1; }
   if [ "$port" != 0 ] && ss -H -ltn | awk '{print $4}' | grep -Eq ":$port$"; then echo 'Port is already occupied'; exit 1; fi
   if [ "$service" = caddy ] && ss -H -ltn | awk '{print $4}' | grep -Eq ':(80|443|2019|2029)$'; then echo 'Existing web services occupy the proxy ports; reuse their configuration'; exit 1; fi
-  case "$service" in postgresql) pattern='postgres';;mysql|mariadb) pattern='mysql|maria';;mongodb)pattern='mongo';;caddy)pattern='caddy';;*)pattern='^$';;esac
+  case "$service" in postgresql) pattern='postgres';;mysql|mariadb) pattern='mysql|maria';;mongodb)pattern='mongo';;redis)pattern='redis';;caddy)pattern='caddy';;*)pattern='^$';;esac
   if systemctl list-unit-files --type=service --no-legend --no-pager | grep -Ei "$pattern" >/dev/null; then echo 'An existing service was found. Choose Reuse.'; exit 1; fi
   if [ "$service" = postgresql ] || [ "$service" = mysql ] || [ "$service" = mariadb ]; then
     for existing in /var/lib/postgresql /var/lib/pgsql/data /var/lib/mysql /etc/postgresql; do
@@ -69,6 +69,29 @@ else
     else dnf install -y "$@"; fi
   }
   case "$service" in
+    redis)
+      for existing in /var/lib/redis /etc/redis; do
+        if [ -d "$existing" ] && [ -n "$(find "$existing" -mindepth 1 -maxdepth 1 -print -quit)" ]; then echo 'Existing Redis data or configuration was found. Choose Reuse.';exit 1;fi
+      done
+      if id manager-redis >/dev/null 2>&1 || [ -e /etc/systemd/system/ManagerRedis.service ]; then echo 'A Redis account or service already exists. Inspect it before continuing.';exit 1;fi
+      if [ "$manager" = apt ]; then install_package build-essential libssl-dev;else install_package gcc make openssl-devel;fi
+      "$node_exe" "$stage/install-remote-tool.cjs" "$plan_file" "$target"
+      selected="$(cat "$target/executable.txt")"; "$selected" --version
+      useradd --system --no-create-home --shell /usr/sbin/nologin manager-redis
+      data="$target/data";config="$target/redis.conf";install -d -m 700 -o manager-redis -g manager-redis "$data"
+      "$node_exe" - "$plan_file" "$config" "$data" "$target/src/redis-server" <<'JS'
+const fs=require('fs'),[file,config,data,exe]=process.argv.slice(2),p=JSON.parse(fs.readFileSync(file));if(!/^[a-f0-9]{72}$/.test(p.databasePassword))throw Error('Invalid Redis credential');
+const q=s=>'"'+s.replaceAll('\\','\\\\').replaceAll('"','\\"')+'"';
+fs.writeFileSync(config,'bind 127.0.0.1\nprotected-mode yes\nport '+p.port+'\nrequirepass '+p.databasePassword+'\nappendonly yes\nappendfsync everysec\ndir '+q(data)+'\ndaemonize no\n',{flag:'wx',mode:0o640});
+const unit=s=>q(s).replaceAll('%','%%');fs.writeFileSync('/etc/systemd/system/ManagerRedis.service','[Unit]\nDescription=Manager Redis\nAfter=network.target\n[Service]\nUser=manager-redis\nGroup=manager-redis\nExecStart='+unit(exe)+' '+unit(config)+'\nRestart=on-failure\nNoNewPrivileges=true\nTimeoutStopSec=90\n[Install]\nWantedBy=multi-user.target\n',{flag:'wx',mode:0o644});
+JS
+      chown root:manager-redis "$config"
+      created_unit=ManagerRedis.service;systemctl daemon-reload;systemctl enable --now "$created_unit"
+      "$node_exe" "$stage/initialize-remote-database.cjs" "$plan_file" initialize
+      systemctl restart "$created_unit"
+      "$node_exe" "$stage/initialize-remote-database.cjs" "$plan_file" verify
+      username=default
+      ;;
     mongodb)
       for existing in /var/lib/mongodb /var/lib/mongo /data/db; do
         if [ -d "$existing" ] && [ -n "$(find "$existing" -mindepth 1 -maxdepth 1 -print -quit)" ]; then echo 'Existing MongoDB files were found. Choose Reuse.';exit 1;fi

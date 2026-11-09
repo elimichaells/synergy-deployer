@@ -12,10 +12,10 @@ if command -v ss >/dev/null 2>&1; then
     while read -r port; do [ -z "$port" ] || emit port "$port"; done < <(printf '%s\n' "$listeners" | awk '{print $4}' | sed 's/.*://' | sort -un)
   else emit ports unknown; fi
 else emit ports unknown; fi
-for id in node git caddy pm2 psql pg_dump pg_restore mysql mariadb go php python composer sling ng mongod sqlcmd; do
+for id in node git caddy pm2 psql pg_dump pg_restore mysql mariadb go php python composer sling ng mongod sqlcmd redis; do
   var="TOOL_$id"; custom="${!var:-}"
   candidates=(); [ -z "$custom" ] || candidates+=("$custom")
-  cmd="$id"; [ "$id" != python ] || cmd=python3
+  cmd="$id"; [ "$id" != python ] || cmd=python3; [ "$id" != redis ] || cmd=redis-cli
   found="$(command -v "$cmd" || true)"; [ -z "$found" ] || candidates+=("$found")
   shopt -s nullglob
   case "$id" in

@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $paths = '__MANAGER_PATHS__' | ConvertFrom-Json
-$ids = @('node','git','caddy','pm2','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer','sling','ng','mongod','sqlcmd')
+$ids = @('node','git','caddy','pm2','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer','sling','ng','mongod','sqlcmd','redis')
 $tools = @{}
 $serviceRows = @()
 $processes = @(Get-Process node,caddy,php,python,python3 -ErrorAction SilentlyContinue | Where-Object { $_.Path } | Select-Object ProcessName,Path -Unique)
@@ -19,7 +19,7 @@ foreach ($s in $services) {
 foreach ($id in $ids) {
   $candidates = @()
   if ($paths.$id) { $candidates += [string]$paths.$id }
-  $command = Get-Command $(if($id -eq 'composer'){'composer.bat'}elseif($id -eq 'ng'){'ng.cmd'}else{$id + '.exe'}) -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  $command = Get-Command $(if($id -eq 'composer'){'composer.bat'}elseif($id -eq 'ng'){'ng.cmd'}elseif($id -eq 'redis'){'memurai-cli.exe'}else{$id + '.exe'}) -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
   if ($command) { $candidates += $command.Source }
   $processNames = if ($id -eq 'python') { @('python','python3') } else { @($id) }
   $candidates += @($processes | Where-Object { $_.ProcessName -in $processNames } | ForEach-Object { $_.Path })
@@ -31,6 +31,7 @@ foreach ($id in $ids) {
     { $_ -in @('psql','pg_dump','pg_restore') } { @("$env:ProgramFiles\PostgreSQL\*\bin\$id.exe") }
     { $_ -in @('mysql','mariadb') } { @("$env:ProgramFiles\MySQL\*\bin\$id.exe", "$env:ProgramFiles\MariaDB*\bin\$id.exe", "C:\tools\mysql\current\bin\$id.exe") }
     'mongod' { @("$env:ProgramFiles\MongoDB\Server\*\bin\mongod.exe") }
+    'redis' { @("$env:ProgramFiles\Memurai\memurai-cli.exe","$env:ProgramFiles\Redis\redis-cli.exe") }
     'sqlcmd' { @("$env:ProgramFiles\Microsoft SQL Server\Client SDK\ODBC\*\Tools\Binn\SQLCMD.EXE","$env:ProgramFiles\sqlcmd\sqlcmd.exe") }
     'go' { @("$env:ProgramFiles\Go\bin\go.exe") }
     'php' { @('C:\tools\php*\php.exe','C:\php\php.exe') }

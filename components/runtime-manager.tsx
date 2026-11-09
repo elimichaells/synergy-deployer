@@ -20,6 +20,8 @@ interface RuntimeStatus {
   canInstall: boolean
   canUpdate: boolean
   canConfigure: boolean
+  canReuse?: boolean
+  updateCheckSupported?: boolean
   offline?: boolean
   installSource?: string
   versioned: boolean
@@ -107,7 +109,8 @@ export function RuntimeManager({ isAdmin, runtimeIds, workspace = false, onChang
       if (!response.ok) throw new Error(body.error || 'Update check failed')
       setRuntimes(body.runtimes || [])
       const count = (body.runtimes || []).filter((runtime: RuntimeStatus) => runtime.updateAvailable).length
-      setMessage(count ? `${count} host dependenc${count === 1 ? 'y has' : 'ies have'} an update available.` : 'Host dependencies are current.')
+      const checked=(body.runtimes||[]).filter((runtime:RuntimeStatus)=>runtime.updateCheckSupported!==false&&runtime.updateCheckedAt).length
+      setMessage(count ? `${count} dependenc${count === 1 ? 'y has' : 'ies have'} an update available.` : checked?`No updates found among ${checked} checked dependencies.`:'No update results are available for these dependencies.')
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Update check failed') }
     finally { setChecking(false) }
   }
@@ -155,7 +158,7 @@ export function RuntimeManager({ isAdmin, runtimeIds, workspace = false, onChang
           actions={<>
             {runtime.activeJob && <Button variant="outline" size="sm" className="h-8" onClick={() => watchJob(runtime.activeJob!)}><Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />Progress</Button>}
             {!runtime.activeJob && runtime.versioned && <Button variant="ghost" size="sm" className="h-8" onClick={() => void openVersions(runtime)}><Layers3 className="mr-2 h-3.5 w-3.5" />Versions</Button>}
-            {!runtime.activeJob && runtime.installed && runtime.canConfigure && isAdmin && <Button variant="ghost" size="sm" className="h-8" title="Verify service startup, saved credentials and persisted data" onClick={() => void startJob(runtime, 'configure')} disabled={anyActive}><Wrench className="mr-2 h-3.5 w-3.5" />Verify setup</Button>}
+            {!runtime.activeJob && (runtime.installed||runtime.canReuse) && runtime.canConfigure && isAdmin && <Button variant="ghost" size="sm" className="h-8" title={runtime.canReuse?'Inspect an existing executable and preserve its service settings':'Verify service startup, saved credentials and persisted data'} onClick={() => void startJob(runtime, 'configure')} disabled={anyActive}><Wrench className="mr-2 h-3.5 w-3.5" />{runtime.canReuse?'Reuse installation':'Verify setup'}</Button>}
             {!runtime.activeJob && runtime.updateAvailable && runtime.canUpdate && isAdmin && <Button variant="outline" size="sm" className="h-8" onClick={() => { const compatibility = runtime.updateRisk === 'major' ? ' This is a major update and may require application compatibility changes.' : ''; if (onRequestOperation || window.confirm(`Update ${runtime.name} to ${runtime.latestVersion}? Stateful services may briefly restart.${compatibility}`)) void startJob(runtime, 'update') }} disabled={anyActive}><ArrowUp className="mr-2 h-3.5 w-3.5" />{runtime.updateMode==='project-version'?'Install version':'Update'}</Button>}
             {!runtime.activeJob && !runtime.installed && runtime.canInstall && isAdmin && <Button variant="outline" size="sm" className="h-8" onClick={() => void startJob(runtime, 'install')} disabled={anyActive}><Download className="mr-2 h-3.5 w-3.5" />Install</Button>}
             {!runtime.activeJob && runtime.latestJob && <Button variant="ghost" size="icon" className="h-8 w-8" title="Latest operation log" onClick={() => watchJob(runtime.latestJob!)}><Eye className="h-3.5 w-3.5" /></Button>}          </>} />)}

@@ -21,6 +21,11 @@ async function officialAsset(url:string){
 }
 export async function serviceDownloads(service:string,platform:string,arch:string,distribution?:{id:string;version:string}){
   if(!['win32','linux'].includes(platform)||!['x64','arm64'].includes(arch)||platform==='win32'&&arch!=='x64')throw new ApiError('Automatic service installation supports Windows x64 and Linux x64/ARM64',400)
+  if(service==='redis'){
+    if(platform!=='linux')throw new ApiError('Reuse a production-licensed Memurai installation or connect an existing Redis server in Storage. The Windows developer edition is not installed automatically.',400)
+    const core=await installerDownloads(platform,arch,['node'])
+    return{...core,privilegedNode:core.node,redis:{url:'https://download.redis.io/releases/redis-8.2.11.tar.gz',sha256:'fba14b77c4bdcb2d5418b6741fc0cdaac4b78bc73eab9b2e5f3c255d597f16fa'}}
+  }
   if(service==='sqlserver'){
     if(platform!=='win32')throw new ApiError('Reuse an existing SQL Server installation on Linux. Automatic SQL Server Express installation requires Windows x64.',400)
     const assets=Object.fromEntries(['sqlserver','sqlserver-update','vcredist'].map(id=>{const asset=offlineAssets.artifacts.find(a=>a.id===id);if(!asset)throw new ApiError('SQL Server package is missing from this Manager build',503);return[id,asset]}))
