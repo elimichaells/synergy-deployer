@@ -13,6 +13,21 @@ function powershell(script, env) {
   });
 }
 
+test('Caddy installation resolves the standalone binary and refuses ambiguous Chocolatey packages', { skip: process.platform !== 'win32' }, () => {
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'manager-caddy-shim-test-'));
+  try {
+    const shim=path.join(root,'bin/caddy.exe'),actual=path.join(root,'lib/caddy/tools/caddy.exe');
+    for(const file of [shim,actual]){fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'fixture');}
+    const helper=quote(path.resolve(__dirname,'../scripts/installer-preflight.ps1'));
+    const resolved=powershell(`. ${helper}; Resolve-PortableCaddyPath ${quote(shim)} ${quote(root)}`).trim();
+    assert.equal(fs.statSync(resolved).ino,fs.statSync(actual).ino);
+    assert.equal(fs.statSync(powershell(`. ${helper}; Resolve-PortableCaddyPath ${quote(actual)} ${quote(root)}`).trim()).ino,fs.statSync(actual).ino);
+    const duplicate=path.join(root,'lib/caddy/old/caddy.exe');fs.mkdirSync(path.dirname(duplicate));fs.writeFileSync(duplicate,'fixture');
+    const blocked=powershell(`. ${helper}; try { Resolve-PortableCaddyPath ${quote(shim)} ${quote(root)} } catch { $_.Exception.Message }`);
+    assert.match(blocked,/Cannot identify the standalone Caddy binary/);
+  } finally { fs.rmSync(root,{recursive:true,force:true}); }
+});
+
 test('fresh-server preflight rejects unsafe paths and conflicting listeners without modifying files', { skip: process.platform !== 'win32' }, () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'manager-preflight-test-'));
   const existing = path.join(root, 'existing');

@@ -17,9 +17,7 @@ const diagnostics=Object.fromEntries([{check:'configuration',issues:['DATABASE_U
 const sanitizeDiagnostics=value=>diagnostics[value?.issueCode];
 async function processMemory(h) {
   if (process.platform === 'win32') {
-    // Use the same OS commit counters as the host. The formatted performance
-    // provider can take tens of seconds to initialize on a fresh Windows VM.
-    const script = "$ErrorActionPreference='Stop';$m=Get-CimInstance Win32_OperatingSystem;$p=@(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name,PrivatePageCount,WorkingSetSize,CreationDate | Select-Object @{n='pid';e={[int]$_.ProcessId}},@{n='ppid';e={[int]$_.ParentProcessId}},@{n='name';e={$_.Name}},@{n='privateBytes';e={[double]$_.PrivatePageCount}},@{n='workingBytes';e={[double]$_.WorkingSetSize}},@{n='started';e={if($_.CreationDate){([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds()}else{0}}});$f=@(Get-CimInstance Win32_PageFileUsage);@{processes=$p;commitMb=([double]$m.TotalVirtualMemorySize-[double]$m.FreeVirtualMemory)/1024;commitLimitMb=[double]$m.TotalVirtualMemorySize/1024;pageFileMb=[double](($f|Measure-Object AllocatedBaseSize -Sum).Sum);pageFileUsedMb=[double](($f|Measure-Object CurrentUsage -Sum).Sum)}|ConvertTo-Json -Depth 5 -Compress";
+    const script = require('./manager-agent-windows-memory.cjs');
     return JSON.parse(await h.run('powershell.exe', ['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')], {timeout:45000,stdoutOnly:true}));
   }
   const processes=[];
@@ -248,7 +246,7 @@ async function inspectDatabase(root,d,h) {
     }
     if(process.platform==='win32') {
       const script=`$ErrorActionPreference='Stop';$ports=@(Get-NetTCPConnection -State Listen -LocalPort ${d.port} -ErrorAction Stop | Select-Object -ExpandProperty OwningProcess -Unique);$procs=@(Get-CimInstance Win32_Process);$owned=@($ports);for($i=0;$i -lt 12;$i++){foreach($p in $procs){if($owned -contains [int]$p.ProcessId -and $owned -notcontains [int]$p.ParentProcessId){$owned+= [int]$p.ParentProcessId}}};$svc=@(Get-CimInstance Win32_Service | Where-Object {$_.ProcessId -ne 0 -and $owned -contains [int]$_.ProcessId -and $_.PathName -match '(?i)(mysqld|mariadbd|pg_ctl|postgres)'});if($svc.Count -eq 1){$all=@([int]$svc[0].ProcessId);for($i=0;$i -lt 12;$i++){foreach($p in $procs){if($all -contains [int]$p.ParentProcessId -and $all -notcontains [int]$p.ProcessId){$all += [int]$p.ProcessId}}};@{service=$svc[0].Name;memoryMb=[math]::Round((($procs|Where-Object {$all -contains [int]$_.ProcessId}|Measure-Object PrivatePageCount -Sum).Sum)/1MB)}|ConvertTo-Json -Compress}`;
-      const output=await h.run('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{timeout:15000,stdoutOnly:true});if(output.trim())Object.assign(report,JSON.parse(output));
+      const output=await h.run('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{timeout:45000,stdoutOnly:true});if(output.trim())Object.assign(report,JSON.parse(output));
     }
     if(!report.service)report.notes.push('The service identity could not be verified. Memory tuning requires a verified Windows MySQL or MariaDB service.');
   }catch{report.error='Database inspection was incomplete. Verify the saved account and its monitoring permissions; existing data was not changed.';}

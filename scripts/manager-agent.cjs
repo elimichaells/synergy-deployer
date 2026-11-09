@@ -12,8 +12,11 @@ const { randomBytes, X509Certificate, createHash } = require('node:crypto');
 const { rootCertificates } = require('node:tls');
 const { createInterface } = require('node:readline/promises');
 const PROTOCOL_VERSION = 1;
-const AGENT_VERSION = '1.7.0';
+const AGENT_VERSION = '1.8.0';
+const LAN_CAPABILITY = 'lan-ip-v1';
 const resources = require('./manager-agent-resources.cjs');
+const { parseLanAddress, lanCaddyDirectives, lanProxyHeaders, assertLanInterface } = require('./lan-address.cjs');
+const { checkLanListeners } = require('./lan-listener.cjs');
 const INFRASTRUCTURE_CAPABILITY = 'remote-infrastructure-v1';
 const CONSOLE_CAPABILITY = 'remote-console-v1';
 const RUNTIME_CAPABILITY = 'runtime-versions-v1';
@@ -107,11 +110,13 @@ function validateApp(input) {
   const health_path = input.health_path || '/';
   if (typeof health_path !== 'string' || !/^\/(?!\/)[^\s\\#]*$/.test(health_path) || health_path.length > 500) throw new Error('Health path must start with /');
   if (!['lan','wan'].includes(input.access_mode)) throw new Error('Choose LAN or WAN access');
-  const hostname = requireText(input.hostname, 'hostname', 253).toLowerCase();
-  if (!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(hostname)) throw new Error('Use a complete hostname, such as library.campus.example.edu');
+  let hostname = requireText(input.hostname, 'hostname or private LAN address', 253).toLowerCase();
+  const lan = parseLanAddress(hostname);
+  if(lan){if(input.access_mode!=='lan')throw Error('Private IP addresses require LAN access');if(lan.port===appPort)throw Error('LAN HTTPS port must differ from the application port');hostname=lan.authority;}
+  else if (!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(hostname)) throw new Error('Use a complete hostname or private LAN IP with its HTTPS port');
   if (input.access_mode === 'wan' && /\.(local|localhost|internal|test|invalid|example|lan|home|arpa)$/.test(hostname)) throw new Error('WAN mode requires a public DNS domain');
   const ip_address = typeof input.ip_address === 'string' ? input.ip_address.trim() : '';
-  let ip_port = null;
+  let ip_port = lan ? lan.port : null;
   if (ip_address) {
     if (!net.isIP(ip_address) || ip_address.includes('%')) throw new Error('Invalid IP access address');
     ip_port = port(input.ip_port, 'IP HTTPS port');
@@ -142,6 +147,9 @@ function validateRuntimeSelection(value,metrics){
   if(Object.keys(selected).length&&!metrics?.capabilities?.includes(RUNTIME_CAPABILITY))throw new Error('Update this server agent to enable project runtime versions');
   for(const [id,version] of Object.entries(selected))if(!metrics.runtimeVersions?.[id]?.includes(version))throw new Error(`${id} ${version} is not reported as installed on this server`);
   return selected;
+}
+function validateLanSelection(hostname,metrics){
+  if(parseLanAddress(hostname)&&!metrics?.capabilities?.includes(LAN_CAPABILITY))throw Error('Update this server agent to enable private LAN IP deployments');
 }
 async function runtimeEnvironment(root,selection={}) {
   const chosen=validateRuntimeVersions(selection),registry=await readJson(path.join(root,'runtime-versions.json'),{}),dirs=[],env={};
@@ -180,38 +188,49 @@ function sanitizeMetrics(raw) {
     caddy:raw.caddy?{mode:raw.caddy.mode==='shared'?'shared':'pm2',status:['running','stopped','unknown'].includes(raw.caddy.status)?raw.caddy.status:'unknown',configPath:str(raw.caddy.configPath,1024),version:str(raw.caddy.version)}:null,
     proxyError: raw.proxyError ? str(raw.proxyError, 500) : null,
     resources:resources.sanitize(raw.resources),
-    capabilities: [SETUP_CAPABILITY,UPDATE_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY].filter(value => Array.isArray(raw.capabilities) && raw.capabilities.includes(value)) };
+    capabilities: [LAN_CAPABILITY,SETUP_CAPABILITY,UPDATE_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY].filter(value => Array.isArray(raw.capabilities) && raw.capabilities.includes(value)) };
   if (result.memoryFree > result.memoryTotal || (result.diskFree !== null && result.diskTotal !== null && result.diskFree > result.diskTotal)) throw new Error('Invalid capacity');
   return result;
 }
 
 function redact(value, secrets) {
-  let output = String(value);
-  for (const secret of [...new Set(secrets.filter(x => typeof x === 'string' && x))].sort((a,b) => b.length-a.length)) output = output.split(secret).join('[redacted]');
+  let output = '';
+  const redactor=streamRedactor(secrets,text=>output+=text);
+  redactor.write(String(value));redactor.end(false);
   return output;
 }
 function streamRedactor(secrets, write) {
-  const values = [...new Set(secrets.filter(Boolean))].sort((a,b) => b.length-a.length);
+  const values = [...new Set(secrets.filter(x => typeof x === 'string' && x))].sort((a,b) => b.length-a.length);
   let pending = '';
-  return { write(chunk) {
-    if (!values.length) { write(chunk); return; }
-    pending += chunk;
+  function flush(final=false) {
     let safe = '';
     while (pending) {
+      // Wait for a longer possible match before consuming its shorter prefix.
+      if (!final && values.some(value => value.length>pending.length && value.startsWith(pending))) break;
       const match = values.find(value => pending.startsWith(value));
       if (match) { safe += '[redacted]'; pending = pending.slice(match.length); }
-      else if (values.some(value => value.startsWith(pending))) break;
       else { safe += pending[0]; pending = pending.slice(1); }
     }
     if (safe) write(safe);
-  }, end() { if (pending) write('[redacted]'); pending = ''; } };
+  }
+  return { write(chunk) {
+    if (!values.length) { write(chunk); return; }
+    pending += chunk; flush();
+  }, end(redactPartial=true) {
+    if(redactPartial) { if(pending)write('[redacted]');pending=''; }
+    else flush(true);
+  } };
 }
 
 function caddyConfig(apps, storageRoot) {
   const quotePath = JSON.stringify(storageRoot.replace(/\\/g, '/'));
   const sites = apps.map(raw => {
     const app = validateApp(raw);
-    const block = (address, internal) => `${address} {\n${internal ? '\ttls internal\n' : ''}\treverse_proxy 127.0.0.1:${app.port}\n}\n`;
+    const block = (address, internal) => {
+      const lan=lanCaddyDirectives(address.replace(/^https:\/\//,''));
+      const headers=lanProxyHeaders(address.replace(/^https:\/\//,''));
+      return `${address} {\n${internal ? '\ttls internal\n' : ''}${lan}${lan?'\thandle {\n':''}\treverse_proxy 127.0.0.1:${app.port}${headers?' {\n'+headers+'\t}':''}\n${lan?'\t}\n':''}}\n`;
+    };
     const ip = net.isIP(app.ip_address) === 6 ? `[${app.ip_address}]` : app.ip_address;
     return block(`https://${app.hostname}`, app.access_mode === 'lan') + (ip ? block(`https://${ip}:${app.ip_port}`, true) : '');
   });
@@ -426,6 +445,7 @@ async function sharedProxyConfig(root,text,tools,settings) {
     const source=previous.source.replace(previous.importLine,'import '+JSON.stringify(candidate.replace(/\\/g,'/')));
     await fs.writeFile(settings.candidatePath,source);
     const next=JSON.parse(await run(tools.caddy,['adapt','--config',settings.candidatePath,'--adapter','caddyfile'],{cwd:path.dirname(settings.configPath),stdoutOnly:true}));
+    if(/^\s*tls\s+internal(?:\s|$)/m.test(sites)&&next.apps?.pki?.certificate_authorities?.local?.install_trust!==false)throw Error('Shared Caddy needs skip_install_trust in its existing global options before enabling local HTTPS. Its owner must prepare this setting; existing sites and trust stores were preserved.');
     await atomicJson(transaction,{previousHash:configDigest(previous.config),nextHash:configDigest(next),sites});
     const response=await fetch(settings.admin+'/config/',{method:'POST',headers:{'Content-Type':'application/json','If-Match':previous.etag,Origin:settings.admin},body:JSON.stringify(next),signal:AbortSignal.timeout(30000),redirect:'error'});
     if(!response.ok)throw new Error(response.status===412?'Caddy changed concurrently; no managed routes were applied':'Existing Caddy rejected the managed routes (HTTP '+response.status+')');
@@ -440,12 +460,14 @@ async function sharedProxyConfig(root,text,tools,settings) {
 async function managedCaddyConfig(root,apps,domains) {
   apps=await resources.proxyApps(root,apps,resourceHelpers());
   domains=domains||await readJson(path.join(root,'domains.json'),{});
-  const aliases=Object.values(domains).flatMap(domain=>{const app=apps.find(a=>a.id===domain.appId);return app&&app.hostname!==domain.hostname?[{...app,hostname:domain.hostname,access_mode:'wan',ip_address:'',ip_port:null}]:[]});
+  const aliases=Object.values(domains).flatMap(domain=>{const app=apps.find(a=>a.id===domain.appId);return app&&app.hostname!==domain.hostname?[{...app,hostname:domain.hostname,access_mode:parseLanAddress(domain.hostname)?'lan':'wan',ip_address:'',ip_port:null}]:[]});
+  for(const app of [...apps,...aliases])assertLanInterface(app.hostname,os.networkInterfaces());
   return caddyConfig([...apps,...aliases],path.join(root,'caddy-storage'));
 }
 
 async function proxyConfig(root, text, tools) {
   if (!tools.tools.caddy) throw new Error('Install Caddy and put it on the agent account PATH');
+    await checkLanListeners(text,await fs.readFile(path.join(root,'Caddyfile'),'utf8').catch(error=>{if(error.code==='ENOENT')return '';throw error}));
   const shared=await sharedProxySettings(root);
   if(shared)return sharedProxyConfig(root,text,tools,shared);
   const filename = path.join(root,'Caddyfile');
@@ -455,7 +477,7 @@ async function proxyConfig(root, text, tools) {
   const previous = await fs.readFile(filename,'utf8').catch(error => { if (error.code !== 'ENOENT') throw error; return null; });
   let active = null;
   try {
-    const response = await fetch('http://127.0.0.1:2029/config/',{signal:AbortSignal.timeout(3000)});
+    const response = await fetch('http://127.0.0.1:2029/config/',{headers:{Origin:'http://127.0.0.1:2029'},signal:AbortSignal.timeout(3000)});
     if (!response.ok) throw new Error('Caddy admin interface refused access');
     active = await response.json();
   } catch (error) { if (error.cause?.code !== 'ECONNREFUSED') throw error; }
@@ -472,7 +494,7 @@ async function proxyConfig(root, text, tools) {
       let ready = false;
       for (let i=0;i<20;i++) {
         await wait(500);
-        const response = await fetch('http://127.0.0.1:2029/config/',{signal:AbortSignal.timeout(1000)}).catch(()=>null);
+        const response = await fetch('http://127.0.0.1:2029/config/',{headers:{Origin:'http://127.0.0.1:2029'},signal:AbortSignal.timeout(1000)}).catch(()=>null);
         if (response?.ok) { const config=await response.json(); if(path.resolve(config.storage?.root || '')===path.join(root,'caddy-storage')){ready=true;break;} }
       }
       if (!ready) { await tools.pm(['delete','manager-remote-caddy']).catch(()=>{}); throw new Error('Caddy could not start. Check ports 80, 443 and 2029 and the service account permissions.'); }
@@ -636,7 +658,7 @@ async function infrastructureJob(root,job,tools,log) {
   const saved=await readJson(path.join(root,'apps.json'),{});
   if(action==='domain'){
     const domain=job.payload.domain;
-    if(!ID.test(id)||!saved[id]||!ID.test(domain?.id)||typeof domain.hostname!=='string'||!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain.hostname))throw Error('Invalid managed domain');
+    if(!ID.test(id)||!saved[id]||!ID.test(domain?.id)||typeof domain.hostname!=='string'||(!parseLanAddress(domain.hostname)&&!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain.hostname)))throw Error('Invalid managed domain');
     const file=path.join(root,'domains.json'),previous=await readJson(file,{}),next={...previous};
     if(previous[domain.id]&&(previous[domain.id].appId!==id||previous[domain.id].hostname!==domain.hostname))throw Error('Domain ownership changed');
     if(domain.remove){
@@ -679,6 +701,16 @@ async function infrastructureJob(root,job,tools,log) {
   else {await tools.pm([action,'manager-remote-caddy']);await tools.pm(['save','--force']);}
   log('[success] Caddy operation completed\n');return{ok:true};
 }
+async function publicCertificate(root, tools) {
+  // A LAN alias may be attached to a public application's shared proxy.
+  // Always use the active shared CA; never fall back to a different private CA.
+  if(tools.sharedProxy) {
+    const response=await fetch(tools.sharedProxy.admin+'/pki/ca/local',{headers:{Origin:tools.sharedProxy.admin},signal:AbortSignal.timeout(3000),redirect:'error'}).catch(()=>null);
+    return response?.ok?(await response.json()).root_certificate||null:null;
+  }
+  try{return await fs.readFile(path.join(root,'caddy-storage','pki','authorities','local','root.crt'),'utf8');}
+  catch(error){if(error.code==='ENOENT')return null;throw error;}
+}
 async function sample(root, tools, prior) {
   const cpu=cpuSnapshot(), delta=cpu.total-prior.total;
   const disk=await fs.statfs(root).catch(()=>null);
@@ -688,12 +720,7 @@ async function sample(root, tools, prior) {
   if(tools.sharedProxy) {
     try {await sharedProxyRead(tools.sharedProxy);}catch(error){proxyError=error.message;}
   } else if(Object.keys(saved).length&&!list.some(p=>p.name==='manager-remote-caddy'&&p.pm2_env?.status==='online'))proxyError='Caddy is not running';
-  let caPem=null;
-  try{caPem=await fs.readFile(path.join(root,'caddy-storage','pki','authorities','local','root.crt'),'utf8');}catch(error){if(error.code!=='ENOENT')throw error;}
-  if(tools.sharedProxy&&Object.values(saved).some(item=>item.app.access_mode==='lan'||item.app.ip_address)) {
-    const response=await fetch(tools.sharedProxy.admin+'/pki/ca/local',{headers:{Origin:tools.sharedProxy.admin},signal:AbortSignal.timeout(3000),redirect:'error'}).catch(()=>null);
-    if(response?.ok)caPem=(await response.json()).root_certificate||null;
-  }
+  const caPem=await publicCertificate(root,tools);
   const metrics=sanitizeMetrics({hostname:os.hostname(),platform:process.platform,arch:process.arch,version:AGENT_VERSION,runtimeVersions:await installedRuntimeVersions(root),
     cpuPercent:delta?Math.max(0,Math.min(100,100*(1-(cpu.idle-prior.idle)/delta))):0,
     memoryTotal:os.totalmem(),memoryFree:os.freemem(),diskTotal:disk?disk.blocks*disk.bsize:null,diskFree:disk?disk.bavail*disk.bsize:null,uptime:os.uptime(),
@@ -832,7 +859,7 @@ async function runAgent(root) {
   let heartbeatBusy=false;
   const pulse=async()=>{
     if(heartbeatBusy)return;heartbeatBusy=true;
-    try{const data=await sample(root,tools,prior);prior=data.cpu;data.metrics.capabilities=[SETUP_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY,...(supervised?[UPDATE_CAPABILITY]:[])];await request(config,'heartbeat',{protocol:PROTOCOL_VERSION,metrics:data.metrics,caPem:data.caPem});send({type:'heartbeat',version:AGENT_VERSION,metrics:data.metrics});}
+    try{const data=await sample(root,tools,prior);prior=data.cpu;data.metrics.capabilities=[LAN_CAPABILITY,SETUP_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY,...(supervised?[UPDATE_CAPABILITY]:[])];await request(config,'heartbeat',{protocol:PROTOCOL_VERSION,metrics:data.metrics,caPem:data.caPem});send({type:'heartbeat',version:AGENT_VERSION,metrics:data.metrics});}
     finally{heartbeatBusy=false;}
   };
   const describe=error=>console.error(`[agent] ${redact(error.message,[config.agentToken])}`);
@@ -1098,5 +1125,5 @@ async function main(){
 
 function resourceHelpers(){return {run,readJson,atomicJson,contained,processList,healthy,baseEnv,proxyConfig,managedCaddyConfig,redact};}
 
-module.exports={managedCaddyConfig,sampleApplications,infrastructureJob,INFRASTRUCTURE_CAPABILITY,toolVersion,validateRuntimeSelection,RUNTIME_CAPABILITY,validateRuntimeVersions,runtimeEnvironment,installedRuntimeVersions,CONSOLE_CAPABILITY,consoleJob,PROTOCOL_VERSION,AGENT_VERSION,SETUP_CAPABILITY,UPDATE_CAPABILITY,validateApp,sanitizeMetrics,redact,streamRedactor,caddyConfig,managerAddress,contained,run,request,deploy,restoreActivation,healthy,atomicJson,readJson,enrollCli,detectFramework,inspectRepository,validateDatabase,databaseEnvironment,setupDatabase,validateSetup,jobSecrets,findStaticRoot,serveStatic,loadToolPaths,checkConfiguredTools,privatePm2Environment,findTools,proxyConfig,sharedProxySettings,sharedProxyState,configDigest};
+module.exports={publicCertificate,LAN_CAPABILITY,validateLanSelection,managedCaddyConfig,sampleApplications,infrastructureJob,INFRASTRUCTURE_CAPABILITY,toolVersion,validateRuntimeSelection,RUNTIME_CAPABILITY,validateRuntimeVersions,runtimeEnvironment,installedRuntimeVersions,CONSOLE_CAPABILITY,consoleJob,PROTOCOL_VERSION,AGENT_VERSION,SETUP_CAPABILITY,UPDATE_CAPABILITY,validateApp,sanitizeMetrics,redact,streamRedactor,caddyConfig,managerAddress,contained,run,request,deploy,restoreActivation,healthy,atomicJson,readJson,enrollCli,detectFramework,inspectRepository,validateDatabase,databaseEnvironment,setupDatabase,validateSetup,jobSecrets,findStaticRoot,serveStatic,loadToolPaths,checkConfiguredTools,privatePm2Environment,findTools,proxyConfig,sharedProxySettings,sharedProxyState,configDigest};
 if(require.main===module)main().catch(error=>{console.error(error.message);process.exitCode=1;});

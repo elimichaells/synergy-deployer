@@ -115,6 +115,8 @@ jobs:
         if: matrix.node == 22
         shell: pwsh
         run: |
+          dotnet run --project tests/installer-process -- (Get-Command node).Source
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop installer process completion verification failed' }
           $version = (Get-Content ./package.json -Raw | ConvertFrom-Json).version
           node scripts/check-release.cjs "$env:RELEASE_TAG"
           ./scripts/package-manager-exe.ps1 -OutputDirectory ./release -Version $version

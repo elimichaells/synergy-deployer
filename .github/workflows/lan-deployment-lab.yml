@@ -1,0 +1,42 @@
+name: Isolated LAN deployment lab
+on:
+  push:
+    branches: [codex/isolated-install-validation]
+    paths: ['.github/workflows/lan-deployment-lab.yml', 'tests/lan-lab/**', 'scripts/lan-address.cjs', 'scripts/manager-agent.cjs', 'scripts/verify-manager-installation.cjs', 'lib/caddy.ts']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  lan:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    env:
+      MANAGER_LAN_LAB: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Download checksum-pinned Caddy into the disposable lab
+        shell: pwsh
+        run: |
+          if($env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Disposable VM required'}
+          $labRoot='C:\ManagerLanLab'
+          if(Test-Path -LiteralPath $labRoot){throw 'Lab already exists'}
+          New-Item -ItemType Directory -Path $labRoot | Out-Null
+          $artifact=(Get-Content installer/offline/dependencies.lock.json -Raw|ConvertFrom-Json).artifacts|Where-Object id -eq 'caddy'
+          Invoke-WebRequest $artifact.url -OutFile "$labRoot\caddy.zip"
+          if((Get-FileHash -LiteralPath "$labRoot\caddy.zip" -Algorithm SHA256).Hash -ne $artifact.sha256){throw 'Caddy checksum mismatch'}
+          Expand-Archive -LiteralPath "$labRoot\caddy.zip" -DestinationPath "$labRoot\bin"
+      - name: Verify real private-IP TLS, peer routes and rejected reload recovery
+        run: node tests/lan-lab/verify.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lan-deployment-results
+          path: C:/ManagerLanLab/results/*
+          if-no-files-found: error
+          retention-days: 7

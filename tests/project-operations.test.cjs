@@ -45,7 +45,7 @@ test('manual domain registration never accesses Cloudflare and keeps the applica
     '@/lib/db': { query: async (sql, values) => { queries.push([sql, values]); return { rows: sql.startsWith('select name,port') ? [{ name: 'Fixture', port: 3117 }] : sql.includes('returning id') ? [{ id: 'domain' }] : [] }; } },
   });
   await api.createProjectDomain('fixture', { mode: 'manual', hostname: 'app.example.com', recordType: 'A', recordContent: '203.0.113.10', isPrimary: true });
-  assert.equal(port, 3117); assert.ok(queries.some(([sql]) => sql.includes("'manual','pending'")));
+  assert.equal(port, 3117); assert.ok(queries.some(([sql, values]) => sql.includes('insert into project_domains') && values[6] === 'manual' && values[7] === 'pending'));
   assert.ok(!queries.some(([sql]) => sql.trimStart().startsWith('select') && sql.includes('token_ciphertext')));
 });
 

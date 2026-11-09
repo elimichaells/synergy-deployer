@@ -6,9 +6,11 @@ const { createRequire } = require('node:module');
 function callExisting(config, action, id, requirePackage) {
   if (!['inventory', 'restart'].includes(action) || action === 'restart' && (!Number.isInteger(id) || id < 0)) throw Error('Invalid recovery action');
   const localRequire = requirePackage || createRequire(path.join(config.pm2PackageRoot, 'package.json'));
+  // PM2 7 vendors its RPC modules; PM2 6 installs them as dependencies.
+  const rpcModule=name=>{try{return localRequire(name)}catch(error){if(error.code!=='MODULE_NOT_FOUND')throw error;return localRequire('./modules/'+name)}};
   return new Promise((resolve, reject) => {
-    const socket = localRequire('pm2-axon').socket('req');
-    const client = new (localRequire('pm2-axon-rpc').Client)(socket);
+    const socket = rpcModule('pm2-axon').socket('req');
+    const client = new (rpcModule('pm2-axon-rpc').Client)(socket);
     let done = false;
     const finish = (error, rows) => {
       if (done) return;
@@ -19,7 +21,7 @@ function callExisting(config, action, id, requirePackage) {
       resolve(rows.map(p => ({ id: p.pm_id, name: p.name, pid: p.pid, status: p.pm2_env?.status,
         restarts: p.pm2_env?.restart_time, cwd: p.pm2_env?.pm_cwd, port: Number(p.pm2_env?.PORT) })));
     };
-    const timer = setTimeout(() => finish(Error('RPC timeout')), action === 'restart' ? 25000 : 4000);
+    const timer = setTimeout(() => finish(Error('RPC timeout')), action === 'restart' ? 25000 : process.platform==='win32'?30000:4000);
     socket.on('error', finish);
     socket.once('connect', () => client.call(action === 'restart' ? 'restartProcessId' : 'getMonitorData',
       action === 'restart' ? { id, env: {} } : {}, finish));

@@ -76,7 +76,7 @@ function Invoke-CaddyRepairSwitch($Context) {
     # Manager may have reloaded the old service through its admin API. Preserve
     # both its on-disk config and the actual running config for rollback, even
     # when a previous repair has already transferred ownership to Manager.
-    $active = Invoke-WebRequest -Uri 'http://127.0.0.1:2019/config/' -UseBasicParsing -TimeoutSec 5
+    $active = Invoke-WebRequest -Uri 'http://127.0.0.1:2019/config/' -Headers @{Origin='http://127.0.0.1:2019'} -UseBasicParsing -TimeoutSec 5
     [IO.File]::WriteAllText((Join-Path $backup 'Active.json'),$active.Content,[Text.UTF8Encoding]::new($false))
     $candidate = Join-Path $backup 'Candidate.Caddyfile'
     [IO.File]::WriteAllText($candidate,$candidateText,[Text.UTF8Encoding]::new($false))

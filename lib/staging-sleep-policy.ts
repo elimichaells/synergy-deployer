@@ -1,4 +1,5 @@
 /** Rules for letting idle staging apps sleep. Pure and testable. */
+import { parseLanAddress } from '../scripts/lan-address.cjs'
 
 export const SLEEP_CHOICES = [30, 60, 120, 240, 480] as const
 
@@ -37,9 +38,11 @@ export function appsToSleep(apps: SleepCandidate[], now: number) {
   })
 }
 
-/** Host names this page may wake: plain host names only, never a path or port trick. */
+/** Only validated application addresses may select a staging app to wake. */
 export function normalizeWakeHost(value: unknown) {
   if (typeof value !== 'string') return null
+  const lan = parseLanAddress(value.trim().toLowerCase())
+  if (lan) return lan.authority
   const host = value.trim().toLowerCase().replace(/:\d+$/, '')
   return /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(host) ? host : null
 }

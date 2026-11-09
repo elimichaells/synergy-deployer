@@ -54,9 +54,10 @@ function Find-MySqlServerExecutable {
 function Get-DatabaseDefaultsFile([string]$Executable, [string]$CommandLine, [string]$ExplicitPath) {
     if ($ExplicitPath) { $configPath = $ExplicitPath }
     else {
-        $match = [regex]::Match($CommandLine, '(?i)--defaults-file(?:=|\s+)(?:"([^"]+)"|([^\s]+))')
+        # MariaDB can quote the entire argument, while MySQL quotes only its value.
+        $match = [regex]::Match($CommandLine, '(?i)(?:"--defaults-file=([^"]+)"|--defaults-file(?:=|\s+)(?:"([^"]+)"|([^\s"]+)))')
         if ($match.Success) {
-            $configPath = if ($match.Groups[1].Success) { $match.Groups[1].Value } else { $match.Groups[2].Value }
+            $configPath = if ($match.Groups[1].Success) { $match.Groups[1].Value } elseif ($match.Groups[2].Success) { $match.Groups[2].Value } else { $match.Groups[3].Value }
         } else {
             $baseDirectory = Split-Path (Split-Path $Executable -Parent) -Parent
             $candidates = @((Join-Path $baseDirectory 'my.ini'), (Join-Path $baseDirectory 'my.cnf'), (Join-Path $baseDirectory 'data\my.ini'))

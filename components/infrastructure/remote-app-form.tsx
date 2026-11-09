@@ -1,4 +1,5 @@
 'use client'
+import { RemoteAddressFields } from './remote-address-fields'
 
 import { RemoteRuntimeSelection } from './remote-runtime-selection'
 import { useEffect, useRef, useState } from 'react'
@@ -82,16 +83,7 @@ export function RemoteAppForm({ serverId, platform, app, onSaved, onDirtyChange,
       <label className="text-sm">Health check path<input required className={inputClass} value={form.health_path} onChange={e => field('health_path', e.target.value)} /><span className="mt-1 block text-xs text-muted-foreground">Must return HTTP 2xx without login or redirects.</span></label>
     </div>
     </>}
-    {section === 'domains' && <fieldset className="space-y-4 rounded-lg border border-border p-4"><legend className="px-2 text-sm font-medium">Caddy and access</legend>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <label className="text-sm">Certificate mode<select className={inputClass} value={form.access_mode} onChange={e => field('access_mode', e.target.value)}><option value="lan">LAN — institution network / local CA</option><option value="wan">WAN — public domain / public CA</option></select></label>
-        <label className="text-sm">Readable hostname<input required placeholder="library.campus.example.edu" className={inputClass} value={form.hostname} onChange={e => field('hostname', e.target.value)} /></label>
-        <label className="text-sm">Optional IP access address<input placeholder="192.168.10.20" className={inputClass} value={form.ip_address} onChange={e => field('ip_address', e.target.value)} /></label>
-        {form.ip_address && <label className="text-sm">IP access HTTPS port<input required type="number" min={1024} max={65535} className={inputClass} value={form.ip_port} onChange={e => field('ip_port', e.target.value)} /></label>}
-      </div>
-      <p className="text-xs leading-5 text-muted-foreground">{form.access_mode === 'lan' ? 'Create an internal DNS record pointing this name to the server’s LAN address. Install the server’s public root CA on client devices. Internal HTTPS does not need public DNS or internet access.' : 'Point public DNS to the server or its gateway. Forward TCP 80 and 443 to Caddy and allow outbound certificate issuance. For internal access to the same name, use split DNS or supported hairpin NAT.'}</p>
-      <p className="text-xs leading-5 text-muted-foreground">Certificate mode does not restrict who can connect. Scope firewall rules to institution networks for LAN-only apps. Caddy uses ports 80/443, plus the optional IP HTTPS port. Keep backend app ports and admin port 2029 private. IP access always uses the local CA.</p>
-    </fieldset>}
+    {section === 'domains' && <RemoteAddressFields value={form} serverId={serverId} onChange={value=>setForm(current=>({...current,...value}))}/>}
     {section === 'environment' && (canWrite ? <EnvEditor className="h-[340px]" value={environment} disabled={!envLoaded || busy} onChange={setEnvironment} /> : <p className="text-sm text-muted-foreground">{app?.env_names.length || 0} variables configured. An administrator can edit their values.</p>)}
 
     </fieldset>

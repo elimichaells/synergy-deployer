@@ -15,9 +15,13 @@ setup, or use manual enrollment. SSH setup installs Node.js, Git, PM2 and Caddy 
 configures startup; it checks the host fingerprint and does not save the password.
 Each server supports multiple apps with independent Git deployments,
 environment variables, ports and logs. Agents report resource and process status over
-outbound HTTPS. Caddy routes readable hostnames using a local CA for LAN installations
-or public certificates for WAN domains, with optional dedicated HTTPS ports for IP
-access. Internal DNS and client certificate trust must be configured by the institution.
+outbound HTTPS. Applications can use a private LAN IP and dedicated HTTPS port,
+with no Cloudflare account or domain purchase. Internal hostnames and public domains
+are also supported. Institutions distribute the server's public root certificate
+for trusted LAN HTTPS; internal DNS is needed only when using hostnames.
+
+See [deploying on an institution LAN](docs/lan-deployments.md) for the shared host
+and remote-server workflow, address examples and network requirements.
 
 See [remote server setup and operations](docs/remote-servers.md) for prerequisites,
 startup at boot, multi-app examples, network requirements and recovery behavior.

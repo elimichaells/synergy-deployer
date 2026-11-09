@@ -6,7 +6,7 @@ import { encryptSecret, decryptSecret } from '@/lib/secret-crypto'
 import { getGitConnection, getGitHubConnectionToken } from '@/lib/github-connections'
 import { repositoryPath } from '@/lib/git-provider-policy'
 import { ensureManagedServers, uuid } from '@/lib/managed-servers'
-import { validateApp, validateDatabase, validateRuntimeSelection, RUNTIME_CAPABILITY } from '@/scripts/manager-agent.cjs'
+import { validateApp, validateDatabase, validateLanSelection, validateRuntimeSelection, RUNTIME_CAPABILITY } from '@/scripts/manager-agent.cjs'
 import { remoteEnvironmentPlan, remoteSetupChecks, REMOTE_SETUP_CAPABILITY, REMOTE_FRAMEWORKS } from '@/lib/remote-setup-policy'
 import { SETUP_STEPS } from '@/lib/project-setup-policy'
 import type { PoolClient } from 'pg'
@@ -108,6 +108,7 @@ export async function changeRemoteSetup(serverId: string, appId: string, body: R
       const config=validateApp({...app,...update,environment})
       const metrics=(await client.query('select metrics from managed_servers where id=$1',[serverId])).rows[0]?.metrics
       validateRuntimeSelection(config.runtime_versions,metrics)
+      validateLanSelection(config.hostname,metrics)
       const projectType=body.project_type ?? app.project_type
       if(projectType!==null && !REMOTE_FRAMEWORKS.includes(projectType))throw new ApiError('Unsupported framework',400)
       if(projectType==='angular' && app.database_config)throw new ApiError('Detach the database before choosing Angular; browser apps must use a backend API',400)

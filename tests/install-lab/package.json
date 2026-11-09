@@ -1,0 +1,6 @@
+{
+  "name": "manager-isolated-install-lab",
+  "private": true,
+  "type": "module",
+  "dependencies": { "@actions/artifact": "6.3.1" }
+}

@@ -9,7 +9,7 @@ export const SETUP_LABELS: Record<SetupStep, { title: string; hint: string }> = 
   runtime: { title: 'Build', hint: 'Framework and commands' },
   database: { title: 'Database', hint: 'Storage for your data' },
   environment: { title: 'Environment', hint: 'Secrets and settings' },
-  domain: { title: 'Domain', hint: 'Public address' },
+  domain: { title: 'Address', hint: 'LAN IP or domain' },
   review: { title: 'Deploy', hint: 'Check and go live' },
 }
 

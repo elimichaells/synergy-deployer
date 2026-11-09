@@ -15,7 +15,7 @@ import { probeHttp } from '../scripts/http-health.cjs'
 
 interface ProcessIdentity { id: number; name: string; pid: number; status: string; restarts: number; cwd: string; port: number }
 async function processes(): Promise<ProcessIdentity[]> {
-  const result = await runCommand({ file: process.execPath, args: [managerScript('operations-pm2.cjs'), 'inventory'] }, undefined, 10000)
+  const result = await runCommand({ file: process.execPath, args: [managerScript('operations-pm2.cjs'), 'inventory'] }, undefined, 35000)
   if (result.code !== 0) throw new ApiError('PM2 is unavailable. No recovery action was run.', 409)
   try {
     const rows = JSON.parse(result.output)

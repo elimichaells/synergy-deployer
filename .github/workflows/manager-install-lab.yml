@@ -1,0 +1,114 @@
+name: Isolated Manager installation and recovery
+on:
+  push:
+    branches: [codex/isolated-install-validation]
+    paths: ['.github/workflows/manager-install-lab.yml', '.github/actions/manager-lab-reboot/**', 'tests/install-lab/**', 'tests/installer-process/**', 'installer/ManagerSetup/**', 'scripts/install-manager.ps1', 'scripts/installer-preflight.ps1', 'scripts/verify-manager-installation.cjs', 'scripts/pm2-resurrect.ps1']
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Published installer version to test
+        required: true
+        default: '2.30.4'
+      platform:
+        type: choice
+        options: [windows-2025, windows-2022]
+        default: windows-2025
+      reboot:
+        description: Reboot the disposable hosted VM and require a post-boot receipt
+        type: boolean
+        default: false
+      address:
+        description: Local HTTPS address used by the fresh installation
+        type: choice
+        options: [private-ip, localhost]
+        default: private-ip
+      candidateInstaller:
+        description: Test installer engine fixes from this checkout against the published payload
+        type: boolean
+        default: false
+      candidatePackage:
+        description: Build and install the complete ZIP and EXE from this checkout before publishing
+        type: boolean
+        default: false
+permissions:
+  contents: read
+  actions: read
+jobs:
+  install:
+    runs-on: ${{ inputs.platform || 'windows-2025' }}
+    timeout-minutes: 50
+    # Reboot ends the runner process. The independent receipt job is authoritative;
+    # it fails if installation, real reboot or post-boot verification is missing.
+    continue-on-error: ${{ inputs.reboot == true }}
+    env:
+      MANAGER_INSTALL_LAB: '1'
+      LAB_RELEASE: ${{ inputs.release || '2.30.4' }}
+      LAB_ADDRESS_MODE: ${{ inputs.address || 'private-ip' }}
+      MANAGER_LAB_REBOOT: ${{ inputs.reboot == true && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --prefix tests/install-lab --ignore-scripts --no-audit --no-fund
+      - uses: actions/setup-dotnet@v4
+        if: github.event_name == 'push' || inputs.candidatePackage
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build complete candidate installer
+        if: github.event_name == 'push' || inputs.candidatePackage
+        shell: pwsh
+        run: |
+          dotnet run --project tests/installer-process -- (Get-Command node).Source
+          if($LASTEXITCODE){throw 'Desktop installer process completion verification failed'}
+          $version=(Get-Content package.json -Raw | ConvertFrom-Json).version
+          $packageDirectory=Join-Path $env:RUNNER_TEMP 'manager-candidate-package'
+          ./scripts/package-manager-exe.ps1 -Version $version -OutputDirectory $packageDirectory
+          if($LASTEXITCODE){throw 'Candidate packaging failed'}
+          "LAB_RELEASE=$version" >> $env:GITHUB_ENV
+          "LAB_PACKAGE_DIRECTORY=$packageDirectory" >> $env:GITHUB_ENV
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push' || inputs.candidatePackage
+        with:
+          name: manager-tested-installer
+          path: ${{ runner.temp }}/manager-candidate-package/*
+          retention-days: 7
+      - name: Install published package on a disposable Windows machine
+        shell: pwsh
+        run: ./tests/install-lab/install.ps1 -Release $env:LAB_RELEASE -PackageDirectory $env:LAB_PACKAGE_DIRECTORY -CandidateInstaller:([bool]::Parse('${{ inputs.candidateInstaller == true }}'))
+      - name: Save sanitized pre-boot results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: manager-install-before-reboot
+          path: C:/ManagerAcceptanceLab/results/*
+          if-no-files-found: error
+          retention-days: 7
+      - name: Verify SYSTEM recovery and optionally reboot disposable VM
+        uses: ./.github/actions/manager-lab-reboot
+  receipt:
+    if: inputs.reboot
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Wait for independently uploaded post-boot receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tests/install-lab/wait-for-reboot.cjs
+      - uses: actions/download-artifact@v4
+        with:
+          name: manager-install-after-reboot
+          path: receipt
+      - name: Require real boot transition and successful application checks
+        env:
+          LAB_RELEASE: ${{ inputs.release || '2.30.4' }}
+          LAB_SOURCE_PACKAGE: ${{ github.event_name == 'push' || inputs.candidatePackage }}
+        run: node tests/install-lab/check-receipt.cjs receipt/reboot-result.json

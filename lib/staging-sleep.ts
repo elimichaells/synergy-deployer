@@ -92,7 +92,7 @@ export async function wakeByHost(value: unknown): Promise<'starting' | 'unknown'
     const { rows } = await query<{ id: string }>(`
       select p.id from projects p
       where p.environment = 'staging' and p.sleep_after_minutes is not null
-        and (lower(regexp_replace(coalesce(p.url, ''), '^https?://([^/:]+).*$', '\\1')) = $1
+        and (lower(regexp_replace(coalesce(p.url, ''), '^https?://([^/]+).*$', '\\1')) = $1
              or exists (select 1 from project_domains d where d.project_id = p.id and lower(d.hostname) = $1))
       limit 1`, [host]).catch(() => ({ rows: [] as { id: string }[] }))
     cached = { projectId: rows[0]?.id ?? null, at: Date.now() }
@@ -105,7 +105,7 @@ export async function wakeByHost(value: unknown): Promise<'starting' | 'unknown'
 /** The host names Caddy serves for an app. */
 async function appHosts(projectId: string) {
   const { rows } = await query<{ host: string }>(`
-    select lower(regexp_replace(url, '^https?://([^/:]+).*$', '\\1')) as host from projects where id = $1 and url ~* '^https?://'
+    select lower(regexp_replace(url, '^https?://([^/]+).*$', '\\1')) as host from projects where id = $1 and url ~* '^https?://'
     union select lower(hostname) from project_domains where project_id = $1`, [projectId])
   return [...new Set(rows.map(row => row.host).filter(Boolean))]
 }

@@ -4,6 +4,8 @@ import { query } from '@/lib/db'
 import { decryptSecret, encryptSecret } from '@/lib/secret-crypto'
 import { removeFromCaddyStrict, updateCaddyStrict } from '@/lib/caddy'
 import { isIP } from 'node:net'
+import { lanAddress, assertLanInterface } from '../scripts/lan-address.cjs'
+import { networkInterfaces } from 'node:os'
 
 const API_BASE = 'https://api.cloudflare.com/client/v4'
 
@@ -88,6 +90,10 @@ export function ensureCloudflareSchema() {
         ssl_mode text,dns_status text not null default 'pending',ssl_status text not null default 'pending',last_error text,
         job_id uuid references remote_jobs(id),deleting boolean not null default false,created_at timestamptz not null default now()
       );
+      create unique index if not exists remote_domains_server_hostname_idx on remote_domains(server_id,hostname);
+      create unique index if not exists remote_domains_public_hostname_idx on remote_domains(hostname)
+        where hostname !~ '^([0-9.]+(:[0-9]+)?|\\[[0-9a-f:]+\\](:[0-9]+)?)$';
+      alter table remote_domains drop constraint if exists remote_domains_hostname_key;
       create table if not exists remote_domain_operations (server_id uuid primary key references managed_servers(id),owner uuid not null,expires_at timestamptz not null)
     `)).then(() => undefined).catch((error) => { schemaPromise = null; throw error })
   }
@@ -215,17 +221,22 @@ export async function listProjectDomains(projectId?: string) {
 
 export async function createProjectDomain(projectId: string, input: Record<string, unknown>, createdBy?: string | null) {
   await ensureCloudflareSchema()
-  const name = hostname(input.hostname)
-  const manual = input.mode === 'manual'
+  let lan = null
+  try { lan = input.mode === 'lan' ? lanAddress(input.lanIp, input.lanPort ?? 8443) : null }
+  catch (error) { throw new ApiError((error as Error).message, 400) }
+  if(lan)try{assertLanInterface(lan.authority,networkInterfaces())}catch(error){throw new ApiError((error as Error).message,400)}
+  const name = lan ? lan.authority : hostname(input.hostname)
+  const manual = input.mode === 'manual' || !!lan
   const { rows } = await query<{ name: string; port: number | null }>('select name,port from projects where id=$1', [projectId])
   const project = rows[0]
   if (!project) throw new ApiError('Project not found', 404)
   if (!project.port) throw new ApiError('Assign an application port before configuring a domain', 400)
+  if (lan && (lan.port === project.port || lan.port === Number(process.env.MANAGER_PORT || 4000))) throw new ApiError('Choose a LAN HTTPS port different from application and Manager ports', 400)
   const conflict = await query(`select id from project_domains where hostname=$1 union all select id from projects where id<>$2 and lower(regexp_replace(regexp_replace(url, '^https?://', ''), '/.*$', ''))=$1`, [name, projectId])
   if (conflict.rows.length) throw new ApiError('This hostname is already assigned. Manage the existing domain instead.', 409)
-  const type = String(input.recordType || 'A').toUpperCase()
+  const type = lan ? lan.family === 6 ? 'AAAA' : 'A' : String(input.recordType || 'A').toUpperCase()
   if (!['A', 'AAAA', 'CNAME'].includes(type)) throw new ApiError('Unsupported DNS record type', 400)
-  const content = typeof input.recordContent === 'string' ? input.recordContent.trim() : ''
+  const content = lan ? lan.ip : typeof input.recordContent === 'string' ? input.recordContent.trim() : ''
   if (!content) throw new ApiError('DNS record target is required', 400)
   if ((type === 'A' && isIP(content) !== 4) || (type === 'AAAA' && isIP(content) !== 6)) throw new ApiError(`A valid ${type === 'A' ? 'IPv4' : 'IPv6'} address is required`, 400)
   if (type === 'CNAME') hostname(content)
@@ -237,7 +248,7 @@ export async function createProjectDomain(projectId: string, input: Record<strin
     if (isPrimary) await query('update project_domains set is_primary=false,updated_at=now() where project_id=$1', [projectId])
     const { rows: inserted } = await query<{ id: string }>(`insert into project_domains
       (project_id,hostname,record_type,record_content,proxied,is_primary,dns_status,ssl_status,created_by)
-      values($1,$2,$3,$4,false,$5,'manual','pending',$6) returning id`, [projectId, name, type, content, isPrimary, createdBy || null])
+      values($1,$2,$3,$4,false,$5,$7,$8,$6) returning id`, [projectId, name, type, content, isPrimary, createdBy || null, lan ? 'lan' : 'manual', lan ? 'Local CA' : 'pending'])
     if (isPrimary) await query('update projects set url=$2,updated_at=now() where id=$1', [projectId, `https://${name}`])
     return (await listProjectDomains(projectId)).find(item => item.id === inserted[0].id)
   }

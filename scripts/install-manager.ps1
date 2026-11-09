@@ -458,8 +458,9 @@ if ([IO.Path]::GetFullPath($packageRoot).TrimEnd('\') -ne [IO.Path]::GetFullPath
     & robocopy.exe $packageRoot $managerRoot /E /XD .git node_modules .next packages offline /XF .env.local *.log /NFL /NDL /NJH /NJS
     if ($LASTEXITCODE -ge 8) { throw ('Application copy failed: ' + $LASTEXITCODE) }
 }
-$installedCaddy = (Get-Command caddy.exe).Source
+$installedCaddy = Resolve-PortableCaddyPath (Get-Command caddy.exe).Source
 if ([IO.Path]::GetFullPath($installedCaddy) -ne [IO.Path]::GetFullPath($caddyExe)) { Copy-Item $installedCaddy $caddyExe -Force }
+Invoke-Native $caddyExe @('version') 'Verify standalone Caddy executable'
 
 Write-Step 'Creating the Manager control database'
 $psql = Find-PostgresTool 'psql'
@@ -600,7 +601,11 @@ $managerRoutes
     }
 }
 "@
-if (-not (Test-Path $caddyfile)) { Set-Content $caddyfile $managerBlock -Encoding UTF8 }
+if (-not (Test-Path $caddyfile)) {
+    # Trust distribution belongs to the institution. An unattended proxy must
+    # never wait for a Windows certificate-store confirmation dialog.
+    Set-Content $caddyfile ("{`n    skip_install_trust`n}`n`n" + $managerBlock) -Encoding UTF8
+}
 elseif ((Get-Content $caddyfile -Raw) -notmatch [regex]::Escape($network.SiteAddress + ' {')) { Add-Content $caddyfile ([Environment]::NewLine + $managerBlock) }
 Invoke-Native $caddyExe @('validate','--config',$caddyfile,'--adapter','caddyfile') 'Validate Caddy configuration'
 
@@ -664,7 +669,9 @@ $status = Wait-Http ('http://127.0.0.1:' + $managerPort + '/login')
 Add-Result 'Manager health' 'pass' ('Local login returned HTTP ' + $status)
 try {
     $env:ADMIN_EMAIL=$adminEmail; $env:ADMIN_PASSWORD=$adminPassword
-    Invoke-Native 'node.exe' @((Join-Path $managerRoot 'scripts\verify-manager-installation.cjs'),$managerRoot,[string]$managerPort) 'Verify release readiness, administrator sign-in and server management'
+    $verifyArguments=@((Join-Path $managerRoot 'scripts\verify-manager-installation.cjs'),$managerRoot,[string]$managerPort)
+    if($network.TlsMode -eq 'internal'){$verifyArguments+=@($managerUrl,$localCaCertificate)}
+    Invoke-Native 'node.exe' $verifyArguments 'Verify release readiness, administrator sign-in, HTTPS and server management'
 } finally { Remove-Item Env:ADMIN_PASSWORD -ErrorAction SilentlyContinue }
 Add-Result 'Administrator and server management' 'pass' 'Expected release, database readiness, administrator session and server schema verified'
 $publicManagerListener = @(Get-NetTCPConnection -State Listen -LocalPort $managerPort -ErrorAction Stop | Where-Object { $_.LocalAddress -notin @('127.0.0.1','::1') })

@@ -4,10 +4,20 @@ import path from 'path'
 import { runCommand } from './exec'
 import { caddyLogDir, webRoot } from './paths'
 import { isManagerAddress, managerSiteAddress, managerUsesLocalTls, normalizeManagerAddress } from './manager-address'
+import { parseLanAddress, lanCaddyDirectives, lanProxyHeaders } from '../scripts/lan-address.cjs'
+import { checkLanListeners } from '../scripts/lan-listener.cjs'
+
+const siteAddress = (address: string) => parseLanAddress(address)?.authority || managerSiteAddress(address)
 
 const CADDY_ROOT = process.env.CADDY_PATH || webRoot()
 const CADDYFILE_PATH = process.env.CADDYFILE_PATH || path.join(CADDY_ROOT, 'Caddyfile')
 const CADDY_EXE = process.env.CADDY_EXE || path.join(CADDY_ROOT, 'caddy.exe')
+let pendingCaddyUpdate: Promise<unknown> = Promise.resolve()
+function exclusiveCaddyUpdate<T>(operation: () => Promise<T>) {
+    const result = pendingCaddyUpdate.then(operation, operation)
+    pendingCaddyUpdate = result.catch(() => undefined)
+    return result
+}
 
 interface CaddyProxyRoute {
     matcher: string
@@ -50,6 +60,8 @@ function appProxyRoutes(domain: string): CaddyProxyRoute[] {
 
 function sanitizeDomain(domain: string) {
     const value = domain.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0].replace(/\.$/, '')
+    const lan = parseLanAddress(value)
+    if (lan) return lan.authority
     if (isManagerAddress(value)) return normalizeManagerAddress(value)
     if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(value)) {
         throw new Error('Invalid public domain name')
@@ -57,15 +69,15 @@ function sanitizeDomain(domain: string) {
     return value
 }
 
-function renderReverseProxy(port: number, indent = '\t') {
+function renderReverseProxy(port: number, indent = '\t', applicationAddress = '') {
     return `${indent}reverse_proxy 127.0.0.1:${port} {
-${indent}\theader_up Host {host}
+${indent}\theader_up Host {http.request.hostport}
 ${indent}\theader_up X-Real-IP {remote}
 ${indent}\theader_up X-Forwarded-Proto {scheme}
-${indent}}`
+${lanProxyHeaders(applicationAddress, indent + '\t')}${indent}}`
 }
 
-function renderProxyRoute(route: CaddyProxyRoute) {
+function renderProxyRoute(route: CaddyProxyRoute, applicationAddress = '') {
     const lines = [
         `\t@${route.matcher} path ${route.paths.join(' ')}`,
         '',
@@ -83,7 +95,7 @@ function renderProxyRoute(route: CaddyProxyRoute) {
     if (route.stripPrefix) {
         lines.push(`\t\turi strip_prefix ${route.stripPrefix}`, '')
     }
-    lines.push(renderReverseProxy(route.port, '\t\t'), '\t}')
+    lines.push(renderReverseProxy(route.port, '\t\t', applicationAddress), '\t}')
     return lines.join('\n')
 }
 
@@ -109,13 +121,13 @@ async function stackDomainRoutes(domain: string): Promise<StackDomainRoute[]> {
  * For a staging app that sleeps: when Caddy cannot reach it (502), the manager's wake page
  * answers instead, starts the app, and reloads itself until the app is back.
  */
-function renderWakeHandler() {
+function renderWakeHandler(domain: string) {
     const managerPort = Number(process.env.MANAGER_PORT || 4000)
     return `
 \thandle_errors {
 \t\t@asleep expression {err.status_code} == 502
 \t\thandle @asleep {
-\t\t\trewrite * /api/wake?host={host}
+\t\t\trewrite * /api/wake?host=${encodeURIComponent(domain)}
 \t\t\treverse_proxy 127.0.0.1:${managerPort}
 \t\t}
 \t}
@@ -124,8 +136,8 @@ function renderWakeHandler() {
 
 export function renderCaddyBlock(domain: string, port: number, stackRoutes: StackDomainRoute[] = [], wake = false) {
     const logFile = path.join(caddyLogDir(), `${domain.replace(/[^a-z0-9-]/gi, '-')}-error.log`)
-    const siteAddress = managerSiteAddress(domain)
-    const tls = isManagerAddress(domain) && managerUsesLocalTls(domain) ? '\ttls internal\n' : ''
+    const address = siteAddress(domain)
+    const tls = parseLanAddress(domain) || isManagerAddress(domain) && managerUsesLocalTls(domain) ? '\ttls internal\n' : ''
     const stack = [...stackRoutes]
         .sort((a, b) => b.path_prefix.length - a.path_prefix.length || a.path_prefix.localeCompare(b.path_prefix))
         .map((route, index): CaddyProxyRoute => ({
@@ -135,18 +147,19 @@ export function renderCaddyBlock(domain: string, port: number, stackRoutes: Stac
             stripPrefix: route.strip_prefix ? route.path_prefix : undefined,
         }))
     const routes = [...appProxyRoutes(domain), ...stack]
+    const applicationAddress = isManagerAddress(domain) ? '' : domain
     const proxyBlock = routes.length
-        ? `${routes.map(renderProxyRoute).join('\n\n')}
+        ? `${routes.map(route => renderProxyRoute(route, applicationAddress)).join('\n\n')}
 
 \thandle {
-${renderReverseProxy(port, '\t\t')}
+${renderReverseProxy(port, '\t\t', applicationAddress)}
 \t}`
-        : renderReverseProxy(port)
+        : renderReverseProxy(port, '\t', applicationAddress)
 
     return `# ${domain}
-${siteAddress} {
-${tls}${proxyBlock}
-${wake ? renderWakeHandler() : ''}
+${address} {
+${tls}${lanCaddyDirectives(domain)}${parseLanAddress(domain) ? '\thandle {\n' + proxyBlock + '\n\t}' : proxyBlock}
+${wake ? renderWakeHandler(domain) : ''}
 \tlog {
 \t\toutput file ${/\s/.test(logFile) ? `"${logFile}"` : logFile} {
 \t\t\troll_size 10MB
@@ -159,7 +172,7 @@ ${wake ? renderWakeHandler() : ''}
 }
 
 function replaceCaddyBlock(content: string, domain: string, newBlock: string) {
-    const startMarker = `${managerSiteAddress(domain)} {`
+    const startMarker = `${siteAddress(domain)} {`
     if (!content.includes(startMarker)) {
         return [content.trimEnd(), newBlock.trim()].filter(Boolean).join('\n\n') + '\n'
     }
@@ -211,20 +224,39 @@ async function validateCaddyContent(content: string) {
     }
 }
 
+export function nonInteractiveLocalTls(content: string) {
+    if (!/^\s*tls\s+internal(?:\s|$)/m.test(content) || /^\s*skip_install_trust(?:[ \t]*(?:#.*)?$)/m.test(content)) return content
+    const global = /^(\uFEFF?(?:\s|#[^\r\n]*(?:\r?\n|$))*)\{/.exec(content)
+    if (global) return content.slice(0, global[0].length) + '\n\tskip_install_trust' + content.slice(global[0].length)
+    return '{\n\tskip_install_trust\n}\n\n' + content.replace(/^\uFEFF/, '')
+}
+
+async function commitCaddyContent(content: string, original: string) {
+    content = nonInteractiveLocalTls(content)
+    await checkLanListeners(content, original)
+    await validateCaddyContent(content)
+    if (await readFile(CADDYFILE_PATH, 'utf8') !== original) throw new Error('Caddy configuration changed during review; retry without overwriting it')
+    await writeFile(CADDYFILE_PATH, content, 'utf8')
+    try {
+        const reload = await runCommand(`"${CADDY_EXE}" reload --config "${CADDYFILE_PATH}" --adapter caddyfile`, process.cwd())
+        if (reload.code !== 0) throw new Error(reload.output)
+        return { validation: 'Caddy configuration validated', reload: reload.output }
+    } catch (error) {
+        // A valid configuration can still fail to bind a new address or port.
+        // Caddy keeps its previous active configuration; restore that on disk too.
+        if (await readFile(CADDYFILE_PATH, 'utf8') === content) await writeFile(CADDYFILE_PATH, original, 'utf8')
+        throw error
+    }
+}
+
 async function applyCaddyUpdate(domain: string, port: number) {
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid application port')
     let content = await readFile(CADDYFILE_PATH, 'utf8')
+    const original = content
     const sanitizedDomain = sanitizeDomain(domain)
     content = replaceCaddyBlock(content, sanitizedDomain, renderCaddyBlock(sanitizedDomain, port, await stackDomainRoutes(sanitizedDomain), await wakeEnabledFor(sanitizedDomain)))
 
-    await validateCaddyContent(content)
-    await writeFile(CADDYFILE_PATH, content, 'utf8')
-
-    const validation = await runCommand(`"${CADDY_EXE}" validate --config "${CADDYFILE_PATH}" --adapter caddyfile`, process.cwd())
-    if (validation.code !== 0) throw new Error(validation.output)
-    const reload = await runCommand(`"${CADDY_EXE}" reload --config "${CADDYFILE_PATH}" --adapter caddyfile`, process.cwd())
-    if (reload.code !== 0) throw new Error(reload.output)
-    return { domain: sanitizedDomain, validation: validation.output, reload: reload.output }
+    return { domain: sanitizedDomain, ...await commitCaddyContent(content, original) }
 }
 
 /** Whether the staging app behind this host sleeps, so its site needs the wake handler. */
@@ -234,7 +266,7 @@ async function wakeEnabledFor(domain: string) {
         const { rows } = await query<{ id: string }>(`
             select p.id from projects p
             where p.environment = 'staging' and p.sleep_after_minutes is not null
-              and (lower(regexp_replace(coalesce(p.url, ''), '^https?://([^/:]+).*$', '\\1')) = lower($1)
+              and (lower(regexp_replace(coalesce(p.url, ''), '^https?://([^/]+).*$', '\\1')) = lower($1)
                    or exists (select 1 from project_domains d where d.project_id = p.id and lower(d.hostname) = lower($1)))
             limit 1`, [domain])
         return rows.length > 0
@@ -246,35 +278,35 @@ async function wakeEnabledFor(domain: string) {
 
 /** Re-renders the sites for these hosts that Caddy already serves; hosts it does not serve are left alone. */
 export async function refreshCaddyHosts(hosts: string[], port: number) {
+  return exclusiveCaddyUpdate(async () => {
     const content = await readFile(CADDYFILE_PATH, 'utf8')
     for (const host of hosts) {
         const domain = sanitizeDomain(host)
-        if (content.includes(`${managerSiteAddress(domain)} {`)) await applyCaddyUpdate(domain, port)
+        if (content.includes(`${siteAddress(domain)} {`)) await applyCaddyUpdate(domain, port)
     }
+  })
 }
 
 export async function updateCaddyStrict(domain: string, port: number) {
-    return applyCaddyUpdate(domain, port)
+    return exclusiveCaddyUpdate(() => applyCaddyUpdate(domain, port))
 }
 
-export async function updateCaddyDomainsStrict(domains: string[], port: number) {
+async function applyCaddyDomains(domains: string[], port: number) {
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid application port')
     const sanitized = [...new Set(domains.map(sanitizeDomain))]
     if (!sanitized.length) return { domains: [], validation: '', reload: '' }
     let content = await readFile(CADDYFILE_PATH, 'utf8')
+    const original = content
     for (const domain of sanitized) content = replaceCaddyBlock(content, domain, renderCaddyBlock(domain, port, await stackDomainRoutes(domain)))
-    await validateCaddyContent(content)
-    await writeFile(CADDYFILE_PATH, content, 'utf8')
-    const validation = await runCommand(`"${CADDY_EXE}" validate --config "${CADDYFILE_PATH}" --adapter caddyfile`, process.cwd())
-    if (validation.code !== 0) throw new Error(validation.output)
-    const reload = await runCommand(`"${CADDY_EXE}" reload --config "${CADDYFILE_PATH}" --adapter caddyfile`, process.cwd())
-    if (reload.code !== 0) throw new Error(reload.output)
-    return { domains: sanitized, validation: validation.output, reload: reload.output }
+    return { domains: sanitized, ...await commitCaddyContent(content, original) }
+}
+export function updateCaddyDomainsStrict(domains: string[], port: number) {
+    return exclusiveCaddyUpdate(() => applyCaddyDomains(domains, port))
 }
 
 export async function updateCaddy(domain: string, port: number) {
     try {
-        return await applyCaddyUpdate(domain, port)
+        return await updateCaddyStrict(domain, port)
     } catch (error) {
         console.error('Failed to update Caddy:', error)
     }
@@ -282,8 +314,9 @@ export async function updateCaddy(domain: string, port: number) {
 
 async function applyCaddyRemove(domain: string) {
     let content = await readFile(CADDYFILE_PATH, 'utf8')
+    const original = content
     const sanitizedDomain = sanitizeDomain(domain)
-    const startMarker = `${managerSiteAddress(sanitizedDomain)} {`
+    const startMarker = `${siteAddress(sanitizedDomain)} {`
     if (!content.includes(startMarker)) return { domain: sanitizedDomain, removed: false }
 
     const startIndex = content.indexOf(startMarker)
@@ -306,22 +339,16 @@ async function applyCaddyRemove(domain: string) {
     }
     content = (content.substring(0, removeStart) + content.substring(endIndex + 1)).replace(/\n{3,}/g, '\n\n')
 
-    await validateCaddyContent(content)
-    await writeFile(CADDYFILE_PATH, content, 'utf8')
-    const validation = await runCommand(`"${CADDY_EXE}" validate --config "${CADDYFILE_PATH}" --adapter caddyfile`, process.cwd())
-    if (validation.code !== 0) throw new Error(validation.output)
-    const reload = await runCommand(`"${CADDY_EXE}" reload --config "${CADDYFILE_PATH}" --adapter caddyfile`, process.cwd())
-    if (reload.code !== 0) throw new Error(reload.output)
-    return { domain: sanitizedDomain, removed: true, validation: validation.output }
+    return { domain: sanitizedDomain, removed: true, ...await commitCaddyContent(content, original) }
 }
 
 export async function removeFromCaddyStrict(domain: string) {
-    return applyCaddyRemove(domain)
+    return exclusiveCaddyUpdate(() => applyCaddyRemove(domain))
 }
 
 export async function removeFromCaddy(domain: string) {
     try {
-        return await applyCaddyRemove(domain)
+        return await removeFromCaddyStrict(domain)
     } catch (error) {
         console.error('Failed to remove from Caddy:', error)
     }

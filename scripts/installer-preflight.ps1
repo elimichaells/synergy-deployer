@@ -58,3 +58,17 @@ function Assert-ManagerInstallPorts([int]$ManagerPort, [int]$DbPort, [bool]$Inst
         }
     }
 }
+function Resolve-PortableCaddyPath([string]$InstalledPath, [string]$ChocolateyRoot = $env:ChocolateyInstall) {
+    $resolved = (Get-Item -LiteralPath $InstalledPath).FullName
+    if (-not $ChocolateyRoot) { $ChocolateyRoot = Join-Path $env:ProgramData 'chocolatey' }
+    $shim = Join-Path $ChocolateyRoot 'bin\caddy.exe'
+    if ($resolved -eq [IO.Path]::GetFullPath($shim)) {
+        $package = Join-Path $ChocolateyRoot 'lib\caddy'
+        $actual = @(Get-ChildItem -LiteralPath $package -Recurse -File -Filter 'caddy.exe' | Where-Object { $_.DirectoryName -notmatch '[\\/]bin$' })
+        if ($actual.Count -ne 1) { throw 'Cannot identify the standalone Caddy binary in the Chocolatey package. Its launcher cannot be moved.' }
+        return $actual[0].FullName
+    }
+    if ((Get-Item -LiteralPath $resolved).VersionInfo.FileDescription -match 'ShimGen|shim') { throw 'Select the standalone Caddy executable instead of a package-manager launcher.' }
+    return $resolved
+}
+

@@ -121,6 +121,7 @@ test('Manager links and regenerated proxy routes retain address and certificate 
       assert.equal(block.includes('tls internal'), tls === 'internal');
       assert.match(block, /forward_auth 127\.0\.0\.1:4000/);
       assert.match(block, /reverse_proxy 127\.0\.0\.1:4000/);
+      assert.doesNotMatch(block, /manager_session/, 'Manager and its authenticated database routes must retain the session cookie');
       assert.equal(caddy.renderCaddyBlock('unrelated.example.com', 4100).includes('tls internal'), false);
     }
   } finally {

@@ -1,0 +1,5 @@
+name: Verify disposable Manager recovery
+description: Tests the installed SYSTEM startup task, with an optional real OS reboot and independent receipt.
+runs:
+  using: node24
+  main: ../../../tests/install-lab/reboot-action.mjs

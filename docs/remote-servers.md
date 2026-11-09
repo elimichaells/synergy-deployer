@@ -217,7 +217,12 @@ only on 2029, and it refuses to reload a different installation on that port.
 
 ## Multiple applications and Caddy
 
-Create each application on its server with a different backend port and hostname.
+Choose **Institution LAN / private IP** to deploy without a hostname, public DNS
+or Cloudflare. Enter the server's fixed private IP and an unused HTTPS port, such
+as `https://192.168.10.20:8443`. This is available during application setup and in
+the shared **Domains & DNS** workspace. See [LAN deployments](lan-deployments.md).
+
+When using hostnames, create each application with a different backend port and hostname.
 For example, the same machine can serve:
 
 | App | Backend | Readable address | Optional IP address |

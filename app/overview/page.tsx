@@ -86,7 +86,7 @@ export default function Dashboard() {
         deployments={deployments} now={now} loading={loading} healthHint={healthError || !health || health.stale ? 'Health unknown' : `${projects.filter(p => applicationState(health, p.pm2_name) === 'ready').length} readiness checks passed`}
         projectsHref="/projects" deploymentsHref="/deployments" shortcuts={[
           { href: '/sites/new', icon: Plus, title: 'Import a repository', hint: 'Build, verify and serve a new app' },
-          { href: '/domains', icon: Globe2, title: 'Connect a domain', hint: 'Cloudflare DNS and automatic TLS' },
+          { href: '/domains', icon: Globe2, title: 'Add an application address', hint: 'Private LAN IP or public domain with HTTPS' },
           { href: '/automation', icon: Workflow, title: 'Schedule a job', hint: 'Cron jobs and background workers' },
         ]} />
     </AppShell>

@@ -14,13 +14,15 @@ function readPm2(config) {
   // Connect directly to the existing RPC socket. PM2's normal connect/CLI can spawn a daemon.
   return new Promise((resolve, reject) => {
     const localRequire = createRequire(path.join(config.pm2PackageRoot, 'package.json'));
-    const axon = localRequire('pm2-axon');
-    const rpc = localRequire('pm2-axon-rpc');
+  // PM2 7 vendors its RPC modules; PM2 6 installs them as dependencies.
+  const rpcModule=name=>{try{return localRequire(name)}catch(error){if(error.code!=='MODULE_NOT_FOUND')throw error;return localRequire('./modules/'+name)}};
+    const axon = rpcModule('pm2-axon');
+    const rpc = rpcModule('pm2-axon-rpc');
     const socket = axon.socket('req');
     const client = new rpc.Client(socket);
     let done = false;
     const finish = (err, rows) => { if (done) return; done = true; clearTimeout(timer); socket.close(); err ? reject(err) : resolve(rows); };
-    const timer = setTimeout(() => finish(new Error('PM2 read timeout')), 4000);
+    const timer = setTimeout(() => finish(new Error('PM2 read timeout')), process.platform==='win32'?30000:4000);
     socket.on('error', err => finish(err));
     socket.once('connect', () => client.call('getMonitorData', {}, (err, rows) => finish(err, rows)));
     socket.connect(config.pm2Socket || '\\\\.\\pipe\\rpc.sock');
@@ -30,7 +32,10 @@ function readPm2(config) {
 async function checkHttp(name, url, profile = {}) {
   const started = Date.now();
   try {
-    const response = await probeHttp(url, { statuses: profile.statuses, diagnostics: true, signal: AbortSignal.timeout(4000) });
+    const endpoint = new URL(url);
+    const request = name === 'Caddy' && ['127.0.0.1','localhost','[::1]'].includes(endpoint.hostname)
+      ? (target, options) => fetch(target, { ...options, headers: { Origin: endpoint.origin } }) : undefined;
+    const response = await probeHttp(url, { statuses: profile.statuses, diagnostics: true, signal: AbortSignal.timeout(4000) }, request);
     return { name, ...response, endpoint: new URL(url).pathname, expected: profile.statuses?.length ? profile.statuses.join(', ') : '200–299', ms: Date.now() - started };
   } catch (error) { return { name, ok: false, status: null, endpoint: new URL(url).pathname, expected: profile.statuses?.length ? profile.statuses.join(', ') : '200–299', reason: error?.name === 'TimeoutError' || error?.name === 'AbortError' ? 'Request exceeded the 4-second check timeout' : 'Connection could not be established', ms: Date.now() - started }; }
 }
