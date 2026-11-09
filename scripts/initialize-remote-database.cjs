@@ -13,7 +13,7 @@ async function initialize(file,mode){
     const {createClient}=await loadPostgresRuntime(root,p.driverArchive,{contained},'redis');let client,last;
     for(let attempt=0;attempt<20;attempt++){client=createClient({url:`redis://127.0.0.1:${p.port}`,username:'default',password:p.databasePassword,socket:{connectTimeout:5000,reconnectStrategy:false}});client.on('error',()=>{});try{await client.connect();await client.ping();last=null;break;}catch(error){last=error;if(client.isOpen)client.destroy();await new Promise(resolve=>setTimeout(resolve,500));}}
     if(last)throw Error('Redis did not become ready for authenticated verification');
-    try{if(mode==='initialize'){await client.set('manager:installation:receipt',p.operationId,{NX:true});await client.save();}if(await client.get('manager:installation:receipt')!==p.operationId)throw Error('Redis persistence receipt does not match this installation');}
+    try{if(mode==='initialize'){await client.set('manager:installation:receipt',p.operationId,{NX:true});await client.sendCommand(['SAVE']);}if(await client.get('manager:installation:receipt')!==p.operationId)throw Error('Redis persistence receipt does not match this installation');}
     finally{if(client.isOpen)client.destroy();}
     return{authenticated:true,persistenceVerified:true};
   }
