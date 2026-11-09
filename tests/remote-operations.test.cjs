@@ -117,8 +117,8 @@ test('real PostgreSQL serializes console and service work and preserves cancella
   await assert.rejects(mod.queueRemoteConsole(server.id,null,{action:'inspect'},user),/Update the agent/);
   await query('update managed_servers set metrics=$2 where id=$1',[server.id,JSON.stringify({capabilities:[agent.CONSOLE_CAPABILITY,agent.CONSOLE_DETAILS_CAPABILITY]})]);
   await mod.queueRemoteConsole(server.id,null,{action:'inspect'},user);const inspection=(await managed.claimJob(server.id)).job;assert.equal(inspection.payload.inspect,true);assert.equal(inspection.payload.command,'');
-  await assert.rejects(managed.reportJob(server.id,{id:inspection.id,claimToken:inspection.claimToken,status:'success',sequence:1,result:{ok:true,cwd:'/fixture',console:{entries:['unsafe\nname'],scripts:{}}}}),/console information/);
-  await managed.reportJob(server.id,{id:inspection.id,claimToken:inspection.claimToken,status:'success',sequence:1,result:{ok:true,cwd:'/fixture',console:{entries:['src/'],scripts:{build:'npm run build'}}}});
+  await assert.rejects(managed.reportJob(server.id,{id:inspection.id,claimToken:inspection.claimToken,status:'success',sequence:1,log:'',result:{ok:true,cwd:'/fixture',console:{entries:['unsafe\nname'],scripts:{}}}}),/console information/);
+  await managed.reportJob(server.id,{id:inspection.id,claimToken:inspection.claimToken,status:'success',sequence:1,log:'',result:{ok:true,cwd:'/fixture',console:{entries:['src/'],scripts:{build:'npm run build'}}}});
   assert.equal((await mod.remoteConsoleHistory(server.id,null)).jobs[0].result.inspection,true);
 
   await query('update managed_servers set metrics=$2 where id=$1',[server.id,JSON.stringify({capabilities:[agent.CONSOLE_CAPABILITY,agent.RUNTIME_CAPABILITY,agent.APPLICATION_CONTROL_CAPABILITY],runtimeVersions:{node:['22.23.4']}})]);

@@ -8,7 +8,8 @@ test('real remote deployment, workers, rollback, TLS routing, Git promotion and 
   const app={id:appId,name:'Live fixture',repo_url:h.repo,branch:'main',port:await h.freePort(),health_path:'/',health_profile:{path:'/',timeoutMs:5000},access_mode:'lan',hostname:'live.example.test',project_type:'node',start_cmd:'node app.cjs',install_cmd:'',build_cmd:'',environment:{DATABASE_URL:'postgres://fixture:initial@127.0.0.1/fixture'},git:h.gitCredential};
   const peer={...app,id:peerId,name:'Preserved peer',hostname:'peer.example.test',port:await h.freePort()};
   h.ports.set(app.hostname,await h.freePort());h.ports.set(peer.hostname,await h.freePort());
-  const deploy=async patch=>{const job={id:randomUUID(),payload:{...app,...patch}},journal={appId:job.payload.id,log:'',securityStatus:null};const persist=()=>agent.atomicJson(path.join(h.root,'active-test-job.json'),journal);await agent.deploy(h.root,job,journal,h.tools,persist,text=>journal.log+=text,{proxyConfig:h.proxyConfig});return{job,journal};};
+  const releaseRecords=[];
+  const deploy=async patch=>{const job={id:randomUUID(),payload:{...app,...patch}},journal={appId:job.payload.id,log:'',securityStatus:null};const persist=()=>agent.atomicJson(path.join(h.root,'active-test-job.json'),journal);try{await agent.deploy(h.root,job,journal,h.tools,persist,text=>journal.log+=text,{proxyConfig:h.proxyConfig});releaseRecords.push({id:job.id,app_id:job.payload.id,status:'success',finished_at:new Date(Date.now()-10*86400000).toISOString()});return{job,journal};}catch(error){releaseRecords.push({id:job.id,app_id:job.payload.id,status:'failed',finished_at:new Date(Date.now()-10*86400000).toISOString()});throw error}};
   const list=async()=>{const text=await h.pm(['jlist']);return JSON.parse(text.slice(text.indexOf('[')));};
   const pid=async id=>(await list()).find(p=>p.name==='manager-remote-'+id)?.pid;
   const resource=input=>agent.infrastructureJob(h.root,{payload:{action:'resource',resource:input,expiresAt:Date.now()+60000}},h.tools,()=>{});
@@ -52,9 +53,15 @@ test('real remote deployment, workers, rollback, TLS routing, Git promotion and 
   if(process.env.MANAGER_REMOTE_TEST_DATABASE_URL)await require('./fixtures/live-database-switch.cjs')(t,h,appId,workerId,stoppedId);
   if(process.env.MANAGER_REMOTE_TEST_DATABASE_URL&&process.env.MANAGER_REMOTE_TEST_PG_BIN)await require('./fixtures/live-database-move.cjs')(t,h,appId,workerId,stoppedId);
   await resource({action:'worker-delete',id:workerId});await resource({action:'worker-delete',id:stoppedId});
+  // Age only the disposable history records to exercise expiry without waiting a week.
+  const cleanupInput={action:'disk',apps:[{id:appId,name:app.name},{id:peerId,name:peer.name}],releases:releaseRecords};
+  const scan=await resource({...cleanupInput,mode:'scan'});assert.ok(scan.report.projects.flatMap(p=>p.entries).some(entry=>entry.eligible));
+  const cleaned=await resource({...cleanupInput,mode:'clean',reviewToken:scan.reviewToken});assert.ok(cleaned.report.removed.length>0);const peerRelease=path.dirname((await state(peerId)).ecosystem);assert.ok(cleaned.report.removed.every(item=>item.path!==current.cwd&&item.path!==peerRelease));
+  assert.equal(await pid(peerId),peerPid);assert.equal((await h.secure(h.ports.get(app.hostname))).body.version,'two');assert.equal(await fs.readFile(path.join(current.cwd,'uploads','saved.txt'),'utf8'),'persistent application data');
   const detach=process.env.MANAGER_REMOTE_TEST_DATABASE_URL?await require('./fixtures/manager-removal-lab.cjs')(t,[await state(appId),await state(peerId)]):null;
   const detachedPid=await pid(appId),receipt=detach?await detach(appId,job=>agent.infrastructureJob(h.root,job,h.tools,()=>{})):await action(appId,'detach');assert.equal(receipt.preservedResources,true);assert.equal(receipt.detachedAppId,appId);assert.equal(await pid(appId),detachedPid);assert.equal(await state(appId),undefined);
   assert.equal((await action(appId,'detach')).preservedResources,true,'detach replay is idempotent');
+  const detachedScan=await resource({...cleanupInput,mode:'scan'});assert.ok(detachedScan.report.warnings.some(w=>w.includes('all files are preserved')));assert.ok(!detachedScan.report.projects.some(p=>p.projectId===appId));
   const saved=await agent.readJson(path.join(h.root,'apps.json'));await h.proxyConfig(h.root,await agent.managedCaddyConfig(h.root,Object.values(saved).map(x=>x.app)),h.tools);
   assert.equal((await h.secure(h.ports.get(app.hostname))).body.version,'two');assert.equal((await h.secure(h.ports.get(peer.hostname))).body.version,'one');assert.equal(await fs.readFile(path.join(current.cwd,'uploads','saved.txt'),'utf8'),'persistent application data');
   await assert.rejects(deploy({id:randomUUID()}),/site preserved after removal/);await assert.rejects(action(appId,'stop'),/removed from Manager/);
