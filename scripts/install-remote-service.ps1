@@ -200,7 +200,7 @@ try{
     $ownedExecutable='';if($registered.PathName -match '^\s*"([^"]+)"'){$ownedExecutable=$Matches[1]}elseif($registered.PathName -match '^\s*(.+?\.exe)(?:\s|$)'){$ownedExecutable=$Matches[1]}
     if($ownedExecutable -and [IO.Path]::GetFullPath($ownedExecutable).StartsWith([IO.Path]::GetFullPath($target).TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase)){Stop-Service -Name $createdService -ErrorAction SilentlyContinue}
   }
-  $message=$_.Exception.Message; if($plan.databasePassword){$message=$message.Replace([string]$plan.databasePassword,'[redacted]')}
+  $message=$_.Exception.Message+"`n"+$_.ScriptStackTrace; if($plan.databasePassword){$message=$message.Replace([string]$plan.databasePassword,'[redacted]')}
   Write-Json $receipt @{status='failed';operationId=$plan.operationId;service=$plan.service;serviceName=$createdService;message=$message;preservedData=$true}
   Write-Error $message
   exit 1
