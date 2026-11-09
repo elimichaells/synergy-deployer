@@ -7,10 +7,17 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
 const freePort=()=>new Promise(resolve=>{const s=net.createServer();s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>resolve(p))})});
 async function lab(t){
   const temp=await fs.realpath(os.tmpdir()),root=await fs.mkdtemp(path.join(temp,'manager-live-agent-')),cleanup=[];
-  const pm2=path.resolve(process.env.TEST_PM2_PACKAGE_ROOT,'bin/pm2'),caddy=path.resolve(process.env.TEST_CADDY),env=await agent.privatePm2Environment(root,pm2);
-  const pm=async args=>{try{return await agent.run(process.execPath,[pm2,...args],{env,timeout:30000});}catch(error){throw new Error('Private PM2 '+args[0]+' failed: '+error.message,{cause:error});}};
+  const pm2=require('node:fs').realpathSync.native(path.resolve(process.env.TEST_PM2_PACKAGE_ROOT,'bin/pm2')),caddy=path.resolve(process.env.TEST_CADDY),env=await agent.privatePm2Environment(root,pm2);
+  const pm=async args=>{try{
+    const output=await agent.run(process.execPath,[pm2,...args],{env,timeout:30000});
+    return output;
+  }catch(error){throw new Error('Private PM2 '+args[0]+' failed: '+error.message,{cause:error});}};
   t.after(async()=>{for(const fn of cleanup.reverse())await fn();assert.equal(path.dirname(root),temp);assert.equal(await fs.realpath(root),root);await fs.rm(root,{recursive:true,force:true});});
-  cleanup.push(async()=>{if(await fs.stat(path.join(root,'pm2/pm2.pid')).catch(()=>null))await pm(['kill']);});
+  cleanup.push(async()=>{t.diagnostic((await fs.readFile(path.join(root,'pm2/pm2.log'),'utf8').catch(()=>'')).slice(-4000));if(await fs.stat(path.join(root,'pm2/pm2.pid')).catch(()=>null))await pm(['kill']);});
+  await pm(['jlist']);
+  const marker=process.platform==='win32'?await agent.readJson(path.join(root,'pm2-private-pipes.json')):null;
+  assert.deepEqual(await require('../../scripts/manager-update-worker.cjs').processes({pm2PackageRoot:path.dirname(path.dirname(pm2)),pm2Home:path.join(root,'pm2'),pm2Socket:marker?marker.prefix+'-rpc.sock':path.join(root,'pm2/rpc.sock')}),[],'Verify the private daemon before any fixture mutation');
+  assert.ok(Number(await fs.readFile(path.join(root,'pm2/pm2.pid'),'utf8'))>0);
   const git=cp.execFileSync(process.platform==='win32'?'where.exe':'which',['git'],{windowsHide:true,encoding:'utf8'}).trim().split(/\r?\n/)[0];
   const run=(args,cwd)=>agent.run(git,args,{cwd,timeout:30000});
   const seed=path.join(root,'seed'),repos=path.join(root,'repositories'),bare=path.join(repos,'team','application.git');await fs.mkdir(seed);await fs.mkdir(path.dirname(bare),{recursive:true});

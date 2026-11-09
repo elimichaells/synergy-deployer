@@ -72,7 +72,7 @@ async function checkConfiguredTools(root) {
     }
     const pm2 = configuredTools.pm2 || path.join(root,'tools','node_modules','pm2','bin','pm2');
     await fs.access(pm2);
-    const real = await fs.realpath(pm2);
+    const real = await nativePath(pm2);
     const pkg = await readJson(path.join(path.dirname(path.dirname(real)),'package.json'));
     if(pkg?.name!=='pm2'||!/^\d+\.\d+\.\d+/.test(pkg.version || '')||Number(pkg.version.split('.')[0])<5)throw new Error('PM2 5 or later is required');
     const pmEnv=await privatePm2Environment(root,pm2);
@@ -324,18 +324,37 @@ async function request(config, action, body) {
   return result;
 }
 
+const nativePath=file=>new Promise((resolve,reject)=>require('node:fs').realpath.native(file,(error,value)=>error?reject(error):resolve(value)));
 async function privatePm2Environment(root,pm2,platform=process.platform) {
   const env={...baseEnv(),PM2_HOME:path.join(root,'pm2')};
   if(platform!=='win32')return env;
   const marker=path.join(root,'pm2-private-pipes.json');
-  if(!await readJson(marker)&&await fs.stat(path.join(root,'pm2','pm2.pid')).catch(()=>null))throw new Error('Existing Windows agent PM2 needs an explicit private-pipe migration before continuing');
-  const packageRoot=path.dirname(path.dirname(await fs.realpath(pm2)));
+  const saved=await readJson(marker);
+  if(!saved&&await fs.stat(path.join(root,'pm2','pm2.pid')).catch(()=>null))throw new Error('Existing Windows agent PM2 needs an explicit private-pipe migration before continuing');
+  if(saved&&!(typeof saved.prefix==='string'&&saved.prefix.startsWith('\\\\.\\pipe\\manager-agent-')&&/^[a-f0-9]{24}$/.test(saved.prefix.slice('\\\\.\\pipe\\manager-agent-'.length))))throw Error('Invalid private PM2 pipe registration');
+  const packageRoot=path.dirname(path.dirname(await nativePath(pm2)));
   const pathsFile=path.join(packageRoot,'paths.js');await fs.access(pathsFile);
-  const prefix='\\\\.\\pipe\\manager-agent-'+createHash('sha256').update(path.resolve(root).toLowerCase()).digest('hex').slice(0,24);
+  const prefix=saved?.prefix||'\\\\.\\pipe\\manager-agent-'+createHash('sha256').update((await nativePath(root)).toLowerCase()).digest('hex').slice(0,24);
   const hook=path.join(root,'pm2-private-pipes.cjs');
-  // PM2 5/6 overwrite pipe environment overrides on Windows. Patch only this
-  // process's module cache; the shared PM2 installation is never modified.
-  const source=`'use strict';\nconst file=${JSON.stringify(pathsFile)};const original=require(file);require.cache[require.resolve(file)].exports=function(home){const p=original(home);p.DAEMON_RPC_PORT=${JSON.stringify(prefix+'-rpc.sock')};p.DAEMON_PUB_PORT=${JSON.stringify(prefix+'-pub.sock')};p.INTERACTOR_RPC_PORT=${JSON.stringify(prefix+'-interactor.sock')};return p;};\n`;
+  // Windows short-name aliases can give the same paths.js two module-cache
+  // identities. Intercept its actual load by filesystem identity, including in
+  // the forked daemon. Never edit the shared installation or its default pipes.
+  const source=`'use strict';
+const fs=require('node:fs'),Module=require('node:module'),net=require('node:net');
+const target=fs.realpathSync.native(${JSON.stringify(pathsFile)}).toLowerCase(),load=Module._load,wrapped=new WeakMap();
+Module._load=function(request,parent,main){
+  const result=load.apply(this,arguments);
+  if(typeof result!=='function'||typeof request!=='string'||!/(^|[\\\\/])paths(?:\\.js)?$/.test(request))return result;
+  let resolved;try{resolved=fs.realpathSync.native(Module._resolveFilename(request,parent,main)).toLowerCase();}catch{return result;}
+  if(resolved!==target)return result;
+  if(!wrapped.has(result))wrapped.set(result,function(home){const p=result(home);p.DAEMON_RPC_PORT=${JSON.stringify(prefix+'-rpc.sock')};p.DAEMON_PUB_PORT=${JSON.stringify(prefix+'-pub.sock')};p.INTERACTOR_RPC_PORT=${JSON.stringify(prefix+'-interactor.sock')};return p;});
+  return wrapped.get(result);
+};
+// Fail closed if a future PM2 version bypasses paths.js. This also protects
+// the forked daemon, before any connection to a shared Windows PM2 pipe.
+const connect=net.Socket.prototype.connect,forbidden=${JSON.stringify(['\\\\.\\pipe\\rpc.sock','\\\\.\\pipe\\pub.sock','\\\\.\\pipe\\interactor.sock'])};
+net.Socket.prototype.connect=function(...args){const first=Array.isArray(args[0])?args[0][0]:args[0],pipe=typeof first==='string'?first:first?.path;if(typeof pipe==='string'&&forbidden.includes(pipe.toLowerCase()))throw Error('Refusing a shared PM2 pipe from the isolated agent');return connect.apply(this,args);};
+`;
   await fs.writeFile(hook,source,{mode:0o600});
   await atomicJson(marker,{prefix});
   env.NODE_OPTIONS='--require='+JSON.stringify(hook);
@@ -349,7 +368,7 @@ async function findTools(root) {
     const npmRoot = process.platform === 'win32' ? await run(process.env.ComSpec || 'cmd.exe', ['/d','/s','/c','npm root -g']) : await run('npm',['root','-g']);
     pm2 = path.join(npmRoot.trim(),'pm2','bin','pm2');
   }
-  await fs.access(pm2);
+  pm2=await nativePath(pm2);
   const pmEnv = await privatePm2Environment(root,pm2);
   const pm = (args, options = {}) => run(process.execPath, [pm2, ...args], { ...options, env: pmEnv });
   const tools = { node: await run(executable('node'),['--version']).catch(()=>process.version), git: null, pm2: null, caddy: null };
