@@ -10,7 +10,7 @@ const exec=promisify(execFile),bin=process.argv[2];
     const passfile=path.join(root,'password');await fs.writeFile(passfile,password,{mode:0o600});
     await run('initdb',['-D',data,'-U','fixture_admin','-A','scram-sha-256','--encoding=UTF8','--pwfile='+passfile]);await fs.unlink(passfile);
     const port=await new Promise(resolve=>{const s=net.createServer();s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>resolve(p))})});
-    await fs.appendFile(path.join(data,'postgresql.conf'),`\nlisten_addresses='127.0.0.1'\nport=${port}\n`);
+    await fs.appendFile(path.join(data,'postgresql.conf'),`\nlisten_addresses='127.0.0.1'\nport=${port}\nunix_socket_directories=''\n`);
     await run('pg_ctl',['-D',data,'-l',path.join(root,'postgres.log'),'-w','start']);started=true;
     const {Client}=require('pg'),client=new Client({host:'127.0.0.1',port,user:'fixture_admin',password,database:'postgres'});
     await client.connect();try{await client.query('create database manager_remote_test_parity')}finally{await client.end()}
