@@ -16,12 +16,13 @@ async function run(){
   const env={...process.env,XDG_DATA_HOME:root+'/data',XDG_CONFIG_HOME:root+'/config'},storage=root+'/storage';
   process.env.CADDY_EXE=binary;process.env.CADDYFILE_PATH=root+'/Caddyfile';process.env.CADDY_PATH=root;
   const peer=`http://127.0.0.1:${peerPort} {\n respond "existing site preserved"\n}\n`;
-  const initial=`{\n admin 127.0.0.1:${admin}\n auto_https disable_redirects\n skip_install_trust\n http_port ${httpPort}\n storage file_system {\n root ${storage}\n }\n}\n`+peer;
+  const initial=`{\n admin 127.0.0.1:${admin}\n auto_https disable_redirects\n http_port ${httpPort}\n storage file_system {\n root ${storage}\n }\n}\n`+peer;
   await fs.writeFile(root+'/Caddyfile',initial);await start(root+'/Caddyfile',env);
   await until(async()=>assert.equal((await request(`http://127.0.0.1:${peerPort}`)).body,'existing site preserved'));
   const caddy=load('lib/caddy.ts',{'./exec':{runCommand:async(command)=>{try{const r=await exec(command,{env,windowsHide:true,timeout:30000});return{code:0,output:r.stdout+r.stderr}}catch(e){return{code:e.code||1,output:e.stderr||e.message}}}},'./paths':{webRoot:()=>root,caddyLogDir:()=>root+'/logs'},'./manager-address':require('../../lib/manager-address.ts'),'./db':{query:async()=>({rows:[]})}});
   const address=lan.lanAddress(ip,tlsPort).authority;
   await caddy.updateCaddyStrict(address,backend);
+  assert.match(await fs.readFile(root+'/Caddyfile','utf8'),/skip_install_trust/,'The first LAN route suppresses interactive trust-store installation');
   const ca=await fs.readFile(storage+'/pki/authorities/local/root.crt');
   process.env.CADDY_ADMIN=`127.0.0.1:${admin}`;
   const caInfo=await fetch(`http://${process.env.CADDY_ADMIN}/pki/ca/local`,{headers:{Origin:`http://${process.env.CADDY_ADMIN}`}});assert.equal(caInfo.status,200,await caInfo.clone().text());

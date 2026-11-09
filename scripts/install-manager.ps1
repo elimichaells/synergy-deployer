@@ -601,7 +601,11 @@ $managerRoutes
     }
 }
 "@
-if (-not (Test-Path $caddyfile)) { Set-Content $caddyfile $managerBlock -Encoding UTF8 }
+if (-not (Test-Path $caddyfile)) {
+    # Trust distribution belongs to the institution. An unattended proxy must
+    # never wait for a Windows certificate-store confirmation dialog.
+    Set-Content $caddyfile ("{`n    skip_install_trust`n}`n`n" + $managerBlock) -Encoding UTF8
+}
 elseif ((Get-Content $caddyfile -Raw) -notmatch [regex]::Escape($network.SiteAddress + ' {')) { Add-Content $caddyfile ([Environment]::NewLine + $managerBlock) }
 Invoke-Native $caddyExe @('validate','--config',$caddyfile,'--adapter','caddyfile') 'Validate Caddy configuration'
 

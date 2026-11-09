@@ -39,6 +39,17 @@ test('rejected Caddy reload restores exact file bytes and leaves other sites pre
   const caddy=load('lib/caddy.ts',{'../scripts/lan-listener.cjs':{checkLanListeners:async()=>{}},'./exec':{runCommand:async(command)=>command.includes(' reload ')?(reloads++,{code:1,output:'address already in use'}):{code:0,output:'valid'}},'./paths':{webRoot:()=>'/fixture',caddyLogDir:()=>'/fixture/logs'},'./manager-address':require('../lib/manager-address.ts'),'./db':{query:async()=>({rows:[]})},'fs/promises':{mkdtemp:async()=>'/candidate',rm:async()=>{},readFile:async()=>file,writeFile:async(name,content)=>{if(!name.includes('candidate'))file=content}}});
   await assert.rejects(caddy.updateCaddyStrict(app.hostname,3000),/address already in use/);assert.equal(file,before);assert.equal(reloads,1);
 });
+test('unattended local HTTPS preserves existing global options and sites without interactive CA installation',()=>{
+  const {nonInteractiveLocalTls}=load('lib/caddy.ts',{'./exec':{},'./paths':{webRoot:()=>'/fixture',caddyLogDir:()=>'/fixture/logs'},'./manager-address':require('../lib/manager-address.ts')});
+  const site='192.168.1.2:8443 {\n tls internal\n reverse_proxy 127.0.0.1:3000\n}\n';
+  for(const prefix of ['', '# existing sites\n', '\uFEFF# preserved\r\n{\r\n admin 127.0.0.1:2019\r\n}\r\n']){
+    const result=nonInteractiveLocalTls(prefix+site);
+    assert.match(result,/skip_install_trust/);assert.ok(result.endsWith(site));
+    assert.equal(nonInteractiveLocalTls(result),result);
+    if(prefix.includes('admin'))assert.match(result,/admin 127\.0\.0\.1:2019/);
+  }
+  const publicSite='example.com {\n reverse_proxy 127.0.0.1:3000\n}\n';assert.equal(nonInteractiveLocalTls(publicSite),publicSite);
+});
 test('standalone downloaded agent embeds private address rules without repository dependencies',async()=>{
   const source=await require('../scripts/agent-bundle.cjs').agentBundle();
   assert.ok(!source.includes("require('./lan-address.cjs')"));assert.match(source,/lan-ip-v1/);new(require('node:vm').Script)(source);

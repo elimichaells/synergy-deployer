@@ -223,7 +223,15 @@ async function validateCaddyContent(content: string) {
     }
 }
 
+export function nonInteractiveLocalTls(content: string) {
+    if (!/^\s*tls\s+internal(?:\s|$)/m.test(content) || /^\s*skip_install_trust(?:[ \t]*(?:#.*)?$)/m.test(content)) return content
+    const global = /^(\uFEFF?(?:\s|#[^\r\n]*(?:\r?\n|$))*)\{/.exec(content)
+    if (global) return content.slice(0, global[0].length) + '\n\tskip_install_trust' + content.slice(global[0].length)
+    return '{\n\tskip_install_trust\n}\n\n' + content.replace(/^\uFEFF/, '')
+}
+
 async function commitCaddyContent(content: string, original: string) {
+    content = nonInteractiveLocalTls(content)
     await checkLanListeners(content, original)
     await validateCaddyContent(content)
     if (await readFile(CADDYFILE_PATH, 'utf8') !== original) throw new Error('Caddy configuration changed during review; retry without overwriting it')

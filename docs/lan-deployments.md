@@ -40,6 +40,12 @@ changes the application's displayed URL without deleting its other routes. An
 agent update to 1.8.0 or later is required for IP-only deployment; older agents
 cannot claim these operations.
 
+When reusing a separately owned Caddy installation, its administrator must include
+`skip_install_trust` in the existing global options. The agent checks this before
+adding local HTTPS; it cannot rewrite that owner's global configuration. This
+prevents certificate-store prompts from blocking an unattended proxy. New Manager
+and dedicated agent proxies configure it automatically.
+
 The Manager must be able to reach the server for SSH onboarding. For another LAN
 behind NAT, establish routed/VPN access or use manual agent enrollment from that
 LAN. The enrolled agent needs outbound HTTPS to Manager. Local HTTPS issuance
