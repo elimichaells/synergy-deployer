@@ -22,11 +22,12 @@ async function run(){
   const peerBefore=await identity(peer),peerConfig=await hash(peer.config);
   const h={readJson:agent.readJson,atomicJson:agent.atomicJson,contained:agent.contained,run:agent.run,redact:agent.redact,baseEnv:()=>({...process.env})};
   const agentRoot=root+'/private/agent';await fs.mkdir(agentRoot);
+  const resource=input=>resources.execute(agentRoot,{payload:{resource:input}},null,h);
   await agent.atomicJson(path.join(agentRoot,'tool-paths.json'),{mysql:target.client,mariadb:maria.client});
   const script=await fs.readFile(path.join(repository,'scripts/tune-database-memory.ps1'),'utf8'),serviceScript=await fs.readFile(path.join(repository,'scripts/database-service.ps1'),'utf8');
   for(const instance of [target,maria]){
     const connection={id:crypto.randomUUID(),provider:instance.provider,name:instance.name,host:'127.0.0.1',port:instance.port,username:'root',password:instance.password,database:'mysql',apps:['Preservation probe']};
-    const before=(await resources.execute(agentRoot,{action:'database-inspect',connections:[connection]},null,h)).servers[0];
+    const before=(await resource({action:'database-inspect',connections:[connection]})).servers[0];
     assert.equal(before.error,null,instance.name+' real inspection');assert.equal(before.service,instance.name);assert.ok(before.memoryMb>0);assert.ok(before.connections.total>=1);
     const recommendations=policy.mysqlRecommendations(before.facts);assert.ok(recommendations.some(r=>r.key==='performance_schema'));assert.ok(recommendations.some(r=>r.key==='innodb_log_buffer_size'));
     if(instance===target){
@@ -34,7 +35,7 @@ async function run(){
       const out=await native('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',path.join(repository,'scripts/tune-database-memory.ps1'),'-Engine',instance.provider,'-ServiceName',instance.name,'-Settings',policy.tuningSettings(recommendations,['performance_schema','innodb_log_buffer_size'])]);assert.match(out.stdout,/RESULT /);
     }else{
       // Exercise the remote agent's real inspection, freshness check and tuning path.
-      const result=await resources.execute(agentRoot,{action:'database-tune',connection,service:instance.name,port:instance.port,facts:before.facts,settings:policy.tuningSettings(recommendations,['performance_schema','innodb_log_buffer_size']),script,serviceScript},null,h);assert.equal(result.result.ok,true);
+      const result=await resource({action:'database-tune',connection,service:instance.name,port:instance.port,facts:before.facts,settings:policy.tuningSettings(recommendations,['performance_schema','innodb_log_buffer_size']),script,serviceScript});assert.equal(result.result.ok,true);
     }
     const variables=Object.fromEntries((await sql(instance,"SHOW GLOBAL VARIABLES WHERE Variable_name IN ('performance_schema','innodb_log_buffer_size')")).map(v=>[v.Variable_name,String(v.Value)]));assert.equal(variables.performance_schema,'OFF');assert.equal(variables.innodb_log_buffer_size,String(16*1024*1024));
     assert.equal((await sql(instance,'SELECT value FROM preservation_probe.values_to_keep WHERE id=1'))[0].value,'original fixture must survive');
@@ -43,7 +44,7 @@ async function run(){
     const oldPid=(await identity(instance)).pid,stableConfig=await hash(instance.config);
     await assert.rejects(native('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',path.join(repository,'scripts/tune-database-memory.ps1'),'-Engine',instance.provider,'-ServiceName',instance.name,'-Settings','port=3306']),/not one this script changes/);
     assert.equal((await identity(instance)).pid,oldPid);assert.equal(await hash(instance.config),stableConfig);
-    await assert.rejects(resources.execute(agentRoot,{action:'database-tune',connection,service:instance.name,facts:before.facts,settings:'performance_schema=OFF',script,serviceScript},null,h),/settings changed/);
+    await assert.rejects(resource({action:'database-tune',connection,service:instance.name,facts:before.facts,settings:'performance_schema=OFF',script,serviceScript}),/settings changed/);
     report.checks.push({engine:instance.provider,localOrRemote:instance===target?'local Manager tuning script':'remote agent tuning',customPaths:true,realSqlSettingsVerified:true,dataPreserved:true,peerUnchanged:true,invalidAndStaleRequestsRejected:true});
   }
   const listeners=JSON.parse(await ps("@(Get-NetTCPConnection -State Listen | Where-Object {$_.LocalPort -in @(33161,33162,33163)} | Select-Object LocalAddress,LocalPort)|ConvertTo-Json -Compress"));assert.ok(listeners.length>=3);assert.ok(listeners.every(l=>['127.0.0.1','::1'].includes(l.LocalAddress)));

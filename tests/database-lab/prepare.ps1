@@ -19,10 +19,10 @@ foreach($engine in @('mysql','mariadb')){
 }
 $instances=@()
 foreach($item in @(@{engine='mysql';name='ManagerLabMySQLTarget';port=33161},@{engine='mysql';name='ManagerLabMySQLPeer';port=33162},@{engine='mariadb';name='ManagerLabMariaDBTarget';port=33163})){
-  $home=Join-Path $root ($item.name+' custom path')
-  New-Item -ItemType Directory -Path $home | Out-Null
-  $data=Join-Path $home 'existing data'
-  $config=Join-Path $home 'custom database.ini'
+  $instanceRoot=Join-Path $root ($item.name+' custom path')
+  New-Item -ItemType Directory -Path $instanceRoot | Out-Null
+  $data=Join-Path $instanceRoot 'existing data'
+  $config=Join-Path $instanceRoot 'custom database.ini'
   $bin=Join-Path $binaries[$item.engine] 'bin'
   $exe=Join-Path $bin $(if($item.engine -eq 'mysql'){'mysqld.exe'}else{'mariadbd.exe'})
   if($item.engine -eq 'mariadb'){
