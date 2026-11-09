@@ -4,19 +4,25 @@ async function verify(mode){
   const config=read(root+'/private/install.json'),identity=read(root+'/private/identity.json');
   assert.equal(process.env.COMPUTERNAME,identity.computer);assert.equal(identity.root,root.replaceAll('/','\\'));assert.ok(['before','after'].includes(mode));
   const installed=read('C:/ProgramData/Manager/install-report.json'),version=read(config.ManagerRoot+'/package.json').version;
-  const ps=code=>cp.execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(code,'utf16le').toString('base64')],{windowsHide:true,encoding:'utf8',timeout:30000});
+  const ps=code=>cp.execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from("$ProgressPreference='SilentlyContinue';"+code,'utf16le').toString('base64')],{windowsHide:true,encoding:'utf8',timeout:30000});
   const boot=ps("(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')").trim();
   if(mode==='after'){const first=read(root+'/results/install-result.json');assert.equal(first.status,'passed');assert.notEqual(new Date(boot).getTime(),new Date(first.bootBefore).getTime());assert.ok(new Date(boot)>new Date(first.bootBefore));}
   // Observe automatic startup only. This verifier never starts or restarts any service.
   const {verifyInstallation}=require(path.join(config.ManagerRoot,'scripts/verify-manager-installation.cjs'));
+  console.log('Checking fresh Manager readiness and administrator login');
   const ready=await verifyInstallation({baseUrl:'http://127.0.0.1:4000',version,email:config.AdminEmail,password:config.AdminPassword,timeoutMs:240000});
   const ca=fs.readFileSync(installed.localCaCertificate),caHash=crypto.createHash('sha256').update(ca).digest('hex');
   function request(route,method='GET',body,cookie){return new Promise((resolve,reject)=>{
     const data=body?JSON.stringify(body):null,req=https.request({hostname:'localhost',port:443,path:route,method,ca,rejectUnauthorized:true,headers:{Origin:'https://localhost',...(data?{'Content-Type':'application/json','Content-Length':Buffer.byteLength(data)}:{}),...(cookie?{Cookie:cookie}:{})}},res=>{const chunks=[];res.on('data',c=>chunks.push(c));res.on('end',()=>resolve({status:res.statusCode,headers:res.headers,text:Buffer.concat(chunks).toString()}))});req.setTimeout(15000,()=>req.destroy(Error('HTTPS timeout')));req.on('error',reject);req.end(data);
   });}
-  const login=await request('/api/auth/login','POST',{email:config.AdminEmail,password:config.AdminPassword});assert.equal(login.status,200,'verified HTTPS login');
+  console.log('Checking Caddy HTTPS with the installed CA');
+  let login,lastError;const httpsDeadline=Date.now()+60000;
+  while(Date.now()<httpsDeadline){try{login=await request('/api/auth/login','POST',{email:config.AdminEmail,password:config.AdminPassword});break}catch(error){lastError=error;await new Promise(r=>setTimeout(r,1000));}}
+  if(!login)throw Error('HTTPS did not become ready: '+(lastError?.errors?.map(e=>e.code+' '+e.address+':'+e.port).join(', ')||lastError?.message||lastError?.code));
+  assert.equal(login.status,200,'verified HTTPS login');
   const cookie=login.headers['set-cookie']?.find(c=>c.startsWith('manager_session='));assert.match(cookie,/;\s*Secure/i);
   const me=await request('/api/auth/me','GET',null,cookie.split(';')[0]);assert.equal(JSON.parse(me.text).user.role,'admin');
+  console.log('Checking isolated databases, private listeners and boot registration');
   const {Client}=require(path.join(config.ManagerRoot,'node_modules/pg'));
   const db=new Client({host:'127.0.0.1',port:5432,database:config.DbName,user:config.DbAppUser,password:config.DbAppPassword});await db.connect();
   let snapshot;try{

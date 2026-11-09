@@ -94,6 +94,18 @@ try {
 } catch { $record.error=$_.Exception.Message; throw }
 finally {
   Save-Json $record (Join-Path $results 'install-result.json')
+  if($record.status -ne 'passed'){
+    $diagnostics=@()
+    $diagnostics+=@(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object {$_.LocalPort -in @(80,443,4000,5432,5433)} | Select-Object LocalAddress,LocalPort,OwningProcess | ConvertTo-Json)
+    foreach($file in @(Get-ChildItem -LiteralPath 'C:\ProgramData\Manager\pm2\logs' -Filter '*caddy*' -File -ErrorAction SilentlyContinue)){
+      $diagnostics+=$file.Name
+      $diagnostics+=(Get-Content -LiteralPath $file.FullName -Tail 50 -ErrorAction SilentlyContinue) -join "`n"
+    }
+    $text=$diagnostics -join "`n"
+    foreach($secret in $secrets){$text=$text.Replace($secret,'[redacted]')}
+    [IO.File]::WriteAllText((Join-Path $results 'service-diagnostics.txt'),$text,[Text.UTF8Encoding]::new($false))
+    Write-Host $text
+  }
   if(Test-Path -LiteralPath (Join-Path $private 'installer.log')){
     # PM2 can retain inherited handles after the installer exits. Read with shared
     # access so diagnostics never mask the original installation failure.
