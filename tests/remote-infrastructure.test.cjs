@@ -119,7 +119,7 @@ test('real PostgreSQL infrastructure admission, claims, reports, health retentio
   await query('update managed_servers set last_seen_at=now() where id=$1',[server.id]);
   const cf=load('lib/cloudflare.ts',{'@/lib/managed-servers':managed,'@/lib/api':{ApiError},'@/lib/db':{query},'@/lib/secret-crypto':secret,'@/lib/caddy':{updateCaddyStrict:()=>{throw Error('Host Caddy must never be called')}}});
   const domains=load('lib/remote-domains.ts',{'./api':{ApiError},'./db':{db:pool,query},'./managed-servers':managed,'./secret-crypto':secret,'./cloudflare':cf,'./remote-infrastructure':infra});
-  let running=false;const errors=[];const timer=setInterval(async()=>{if(running)return;running=true;try{const {job}=await managed.claimJob(server.id);if(job){assert.equal(job.payload.action,'domain');await managed.reportJob(server.id,{id:job.id,claimToken:job.claimToken,status:'success',sequence:1,log:'fixture route ack',result:{ok:true}})}}catch(error){errors.push(error)}finally{running=false}},20);
+  const domainServers=[server.id];let running=false;const errors=[];const timer=setInterval(async()=>{if(running)return;running=true;try{for(const id of domainServers){const {job}=await managed.claimJob(id);if(job){assert.equal(job.payload.action,'domain');if(require('../scripts/lan-address.cjs').parseLanAddress(job.payload.domain.hostname))assert.equal(job.payload.requiredCapability,agent.LAN_CAPABILITY);await managed.reportJob(id,{id:job.id,claimToken:job.claimToken,status:'success',sequence:1,log:'fixture route ack',result:{ok:true}})}}}catch(error){errors.push(error)}finally{running=false}},20);
   try{
     const name=randomUUID()+'.example.com';
     await domains.createRemoteDomain(server.id,{projectId:app.id,hostname:name,mode:'manual',recordType:'A',recordContent:'192.0.2.10',isPrimary:true},user);
@@ -127,6 +127,21 @@ test('real PostgreSQL infrastructure admission, claims, reports, health retentio
     assert.equal((await managed.serverDetail(server.id)).apps[0].hostname,name);
     await assert.rejects(domains.deleteRemoteDomain(randomUUID(),domain.id,user),e=>e.status===404);
     await domains.deleteRemoteDomain(server.id,domain.id,user);assert.ok(!(await domains.listRemoteDomains(server.id)).some(d=>d.id===domain.id));
+    const campus=await managed.addServer({name:'Separate campus',platform:'linux'},user);
+    await managed.enroll({protocol:1,platform:'linux',serverId:campus.id,enrollmentToken:campus.enrollmentToken,agentToken:require('crypto').randomBytes(32).toString('base64url')});
+    const lanMetrics={...metrics,capabilities:[...metrics.capabilities,agent.LAN_CAPABILITY]};
+    await query('update managed_servers set metrics=$2,last_seen_at=now() where id=any($1::uuid[])',[[server.id,campus.id],JSON.stringify(lanMetrics)]);
+    const campusApp=await managed.saveRemoteApp(campus.id,null,{name:'Campus app',repo_url:'https://github.com/example/fixture',branch:'main',port:33001,start_cmd:'node app.cjs',access_mode:'lan',hostname:randomUUID()+'.example.test'},user);
+    await query('update remote_apps set live_commit=$2 where id=$1',[campusApp.id,'b'.repeat(40)]);domainServers.push(campus.id);
+    for(const [serverId,projectId] of [[server.id,app.id],[campus.id,campusApp.id]]){
+      await domains.createRemoteDomain(serverId,{projectId,mode:'lan',lanIp:'10.24.1.20',lanPort:18443,isPrimary:true},user);
+      const entry=(await domains.listRemoteDomains(serverId)).find(d=>d.hostname==='10.24.1.20:18443');
+      assert.equal(entry.dns_status,'lan');assert.equal(entry.ssl_status,'Local CA');assert.equal(entry.server_id,serverId);
+      assert.equal((await managed.serverDetail(serverId)).apps[0].access_mode,'lan');
+      await assert.rejects(domains.createRemoteDomain(serverId,{projectId,mode:'lan',lanIp:'10.24.1.20',lanPort:18443},user),e=>e.status===409);
+      await assert.rejects(domains.createRemoteDomain(serverId,{projectId,mode:'lan',lanIp:'8.8.8.8',lanPort:18443},user),e=>e.status===400);
+    }
+    assert.equal((await query('select count(*)::int n from remote_domains where hostname=$1',['10.24.1.20:18443'])).rows[0].n,2,'Independent campuses may reuse private addresses');
     assert.equal(errors.length,0);
   }finally{clearInterval(timer);while(running)await new Promise(resolve=>setTimeout(resolve,10))}
 });
