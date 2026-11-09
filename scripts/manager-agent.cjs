@@ -621,7 +621,8 @@ async function deploy(root, job, journal, tools, persist, log, dependencies = {}
   if (git?.caPem) {
     caFile = await contained(root,`git-ca-${job.id}.pem`);
     await fs.writeFile(caFile,[...rootCertificates,git.caPem].join('\n'),{mode:0o600});
-    gitConfig.push(['http.sslCAInfo',caFile],['http.sslBackend','openssl']);
+    gitConfig.push(['http.sslCAInfo',caFile]);
+    if(process.platform==='win32')gitConfig.push(['http.sslBackend','openssl']);
   }
   const gitEnv = { ...baseEnv(), GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'never',GIT_CONFIG_NOSYSTEM:'1',
     GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null',GIT_CONFIG_COUNT:String(gitConfig.length) };
@@ -1126,7 +1127,7 @@ async function cloneForSetup(root, job, log, command = run) {
   const git = job.payload.git;
   if (git?.token) config.push([`http.${app.repo_url}.extraHeader`,`Authorization: Basic ${Buffer.from(`${git.username}:${git.token}`).toString('base64')}`]);
   const ca = git?.caPem ? await contained(root,`setup-ca-${job.id}.pem`) : null;
-  if (ca) { await fs.writeFile(ca,[...rootCertificates,git.caPem].join('\n'),{mode:0o600}); config.push(['http.sslCAInfo',ca],['http.sslBackend','openssl']); }
+  if (ca) { await fs.writeFile(ca,[...rootCertificates,git.caPem].join('\n'),{mode:0o600}); config.push(['http.sslCAInfo',ca]);if(process.platform==='win32')config.push(['http.sslBackend','openssl']); }
   const env = {...baseEnv(),GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'never',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null',GIT_CONFIG_COUNT:String(config.length)};
   config.forEach(([key,value],i)=>{env[`GIT_CONFIG_KEY_${i}`]=key;env[`GIT_CONFIG_VALUE_${i}`]=value;});
   log('[source] Cloning the selected branch on this server. No repository scripts are executed.\n');

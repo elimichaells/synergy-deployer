@@ -8,7 +8,7 @@ const freePort=()=>new Promise(resolve=>{const s=net.createServer();s.listen(0,'
 async function lab(t){
   const temp=await fs.realpath(os.tmpdir()),root=await fs.mkdtemp(path.join(temp,'manager-live-agent-')),cleanup=[];
   const pm2=path.resolve(process.env.TEST_PM2_PACKAGE_ROOT,'bin/pm2'),caddy=path.resolve(process.env.TEST_CADDY),env=await agent.privatePm2Environment(root,pm2);
-  const pm=args=>agent.run(process.execPath,[pm2,...args],{env,timeout:30000});
+  const pm=async args=>{try{return await agent.run(process.execPath,[pm2,...args],{env,timeout:30000});}catch(error){throw new Error('Private PM2 '+args[0]+' failed: '+error.message,{cause:error});}};
   t.after(async()=>{for(const fn of cleanup.reverse())await fn();assert.equal(path.dirname(root),temp);assert.equal(await fs.realpath(root),root);await fs.rm(root,{recursive:true,force:true});});
   cleanup.push(async()=>{if(await fs.stat(path.join(root,'pm2/pm2.pid')).catch(()=>null))await pm(['kill']);});
   const git=cp.execFileSync(process.platform==='win32'?'where.exe':'which',['git'],{windowsHide:true,encoding:'utf8'}).trim().split(/\r?\n/)[0];

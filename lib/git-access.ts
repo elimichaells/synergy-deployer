@@ -59,7 +59,7 @@ export async function prepareGitAccess(project: { repo_url?: string | null; gith
         await rename(temporary, filename).catch(error => { if (!existsSync(filename)) throw error })
       } finally { await unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error }) }
     }
-    for (const url of [repo, repo + '.git']) config.push([`http.${url}.sslCAInfo`, filename.replace(/\\/g, '/')], [`http.${url}.sslBackend`, 'openssl'])
+    for (const url of [repo, repo + '.git']) {config.push([`http.${url}.sslCAInfo`, filename.replace(/\\/g, '/')]);if(process.platform==='win32')config.push([`http.${url}.sslBackend`, 'openssl'])}
   }
   return { config, secrets, authenticated: !!token, provider: host.provider }
 }
