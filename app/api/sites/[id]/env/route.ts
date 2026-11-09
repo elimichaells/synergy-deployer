@@ -6,7 +6,8 @@ import { ApiError,jsonError } from '@/lib/api'
 import { requireSameOrigin,readBody } from '@/lib/request-body'
 import { acquireProjectOperation } from '@/lib/project-operation'
 import { updateProtected } from '@/lib/update-maintenance'
-import { readFile,writeFile,lstat } from 'fs/promises'
+import { readFile,lstat } from 'fs/promises'
+import { saveEnvironmentFile } from '@/lib/environment-file'
 import { existsSync } from 'fs'
 import path from 'path'
 type Context={params:Promise<{id:string}>}
@@ -37,7 +38,7 @@ export async function POST(request:Request,context:Context){try{
         const {ensureProjectSetupSchema}=await import('@/lib/project-setup');await ensureProjectSetupSchema()
         if((await query('select project_id from project_setup where project_id=$1 and completed_at is null',[id])).rowCount)throw new ApiError('Prepare the repository in Setup before saving environment files',409)
       }
-      await writeFile(filename,body.content as string,{encoding:'utf8',mode:0o600})
+      await saveEnvironmentFile(filename,body.content as string,body.previousContent)
       return NextResponse.json({ok:true})
     }finally{await release()}
   })

@@ -8,7 +8,7 @@ import { lanAddress } from '../../scripts/lan-address.cjs'
 
 // Synthetic preview API. Never copied into the production application.
 const initialProject = { id: 'fixture-app', name: 'Payments API', slug: 'payments-api', repo_url: 'https://github.com/example/payments-api', default_branch: 'staging', project_type: 'go', root_path: 'C:\\web\\production\\payments-api', pm2_name: 'payments-api', port: 3117, url: null, auto_deploy: false, runtime_versions: {}, install_cmd: null, build_cmd: null, start_cmd: null, deploy_script: null, environment: 'production', production_id: null, component_role: 'backend', is_active: true, github_connection_id: 'github-one', github_connection_name: 'Engineering', github_account_login: 'example', setup_required: true, step: 'repository', decisions: {}, completed_at: null }
-const state = (globalThis as unknown as { __workspaceFixture?: { project: Record<string, any>; checkout: boolean; env: string; domains: any[]; services: any[]; failure: string; role: string; grouped: boolean } }).__workspaceFixture ??= { project: { ...initialProject }, checkout: false, env: '', domains: [], services: [], failure: '', role: 'admin', grouped: true }
+const state = (globalThis as unknown as { __workspaceFixture?: { project: Record<string, any>; checkout: boolean; env: string; envLocal?: string; domains: any[]; services: any[]; failure: string; role: string; grouped: boolean } }).__workspaceFixture ??= { project: { ...initialProject }, checkout: false, env: '', domains: [], services: [], failure: '', role: 'admin', grouped: true }
 export const dynamic = 'force-dynamic'
 const result = (data: unknown, status = 200) => NextResponse.json(data, { status })
 const settingsDefaults = { PRODUCTION_PATH: 'C:\\web\\production', STAGING_PATH: 'C:\\web\\staging', LOGS_PATH: 'C:\\web\\logs', CADDY_PATH: 'C:\\web', NOTIFY_WEBHOOK_URL: 'https://example.test/notifications', BACKUP_DIR: 'C:\\web\\backups\\postgres', BACKUP_ENABLED: 'false', BACKUP_RETENTION_DAYS: '14', PG_BIN_PATH: 'C:\\Program Files\\PostgreSQL\\18\\bin' }
@@ -46,7 +46,7 @@ export async function GET(request: Request) {
   if (pathname === '/api/sites/fixture-stage') return result({ ...state.project, id: 'fixture-stage', name: 'Payments API (Staging)', environment: 'staging', port: 4117 })
   if (/\/sites\/[^/]+$/.test(pathname)) return result(state.project)
   if (pathname.endsWith('/setup')) return result({ project: state.project, checkout: state.checkout, detectedType: state.checkout ? 'go' : undefined, envExists: !!state.env })
-  if (pathname.endsWith('/env')) return result({ file: '.env', content: state.env })
+  if (pathname.endsWith('/env')) { const file=new URL(request.url).searchParams.get('file')||'.env'; return result({file,content:file==='.env.local'?state.envLocal||'':state.env}) }
   if (pathname.endsWith('/database')) return result({ database: null })
   if (pathname.endsWith('/data-services')) return result({ services: dataState.enabled ? listedServices() : state.services })
   if (pathname === '/api/data/connections') return result({ connections: [{ id: 'db-one', name: 'Shared PostgreSQL host', provider: 'postgresql', host: '127.0.0.1', port: 5432, last_status: 'healthy', is_default: true, provisioning_enabled: true }] })
@@ -106,7 +106,7 @@ export async function POST(request: Request) {
     if (ready) { state.project.completed_at = new Date().toISOString(); state.project.setup_required = false }
     return result({ checks, ready })
   }
-  if (pathname.endsWith('/env')) { state.env = body.content; return result({ ok: true }) }
+  if (pathname.endsWith('/env')) { if(body.file==='.env.local')state.envLocal=body.content;else state.env=body.content;return result({ ok: true }) }
   if (pathname.endsWith('/console')) return new Response('[fixture] Command preview\n[exit] Command finished with code 0\n')
   if (pathname.endsWith('/data-services')) { state.services.push({ id: 'service-one', name: body.name, provider: 'postgresql', connection_name: 'Shared PostgreSQL host', database_name: 'payments_db', username: 'payments_user', env_prefix: 'PRIMARY', application_primary: body.applicationPrimary, options: { ownership: 'manager' } }); return result({ service: state.services[0] }, 201) }
   if (pathname === '/api/domains') {
