@@ -22,7 +22,7 @@ function readPm2(config) {
     const client = new rpc.Client(socket);
     let done = false;
     const finish = (err, rows) => { if (done) return; done = true; clearTimeout(timer); socket.close(); err ? reject(err) : resolve(rows); };
-    const timer = setTimeout(() => finish(new Error('PM2 read timeout')), 4000);
+    const timer = setTimeout(() => finish(new Error('PM2 read timeout')), process.platform==='win32'?30000:4000);
     socket.on('error', err => finish(err));
     socket.once('connect', () => client.call('getMonitorData', {}, (err, rows) => finish(err, rows)));
     socket.connect(config.pm2Socket || '\\\\.\\pipe\\rpc.sock');

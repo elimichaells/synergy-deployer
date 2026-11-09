@@ -475,7 +475,7 @@ async function proxyConfig(root, text, tools) {
   const previous = await fs.readFile(filename,'utf8').catch(error => { if (error.code !== 'ENOENT') throw error; return null; });
   let active = null;
   try {
-    const response = await fetch('http://127.0.0.1:2029/config/',{signal:AbortSignal.timeout(3000)});
+    const response = await fetch('http://127.0.0.1:2029/config/',{headers:{Origin:'http://127.0.0.1:2029'},signal:AbortSignal.timeout(3000)});
     if (!response.ok) throw new Error('Caddy admin interface refused access');
     active = await response.json();
   } catch (error) { if (error.cause?.code !== 'ECONNREFUSED') throw error; }
@@ -492,7 +492,7 @@ async function proxyConfig(root, text, tools) {
       let ready = false;
       for (let i=0;i<20;i++) {
         await wait(500);
-        const response = await fetch('http://127.0.0.1:2029/config/',{signal:AbortSignal.timeout(1000)}).catch(()=>null);
+        const response = await fetch('http://127.0.0.1:2029/config/',{headers:{Origin:'http://127.0.0.1:2029'},signal:AbortSignal.timeout(1000)}).catch(()=>null);
         if (response?.ok) { const config=await response.json(); if(path.resolve(config.storage?.root || '')===path.join(root,'caddy-storage')){ready=true;break;} }
       }
       if (!ready) { await tools.pm(['delete','manager-remote-caddy']).catch(()=>{}); throw new Error('Caddy could not start. Check ports 80, 443 and 2029 and the service account permissions.'); }

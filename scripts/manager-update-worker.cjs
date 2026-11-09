@@ -39,7 +39,7 @@ async function processes(c) {
     const socket=rpcModule('pm2-axon').socket('req'),client=new (rpcModule('pm2-axon-rpc').Client)(socket);
     let done=false;
     const finish=(e,v)=>{if(done)return;done=true;clearTimeout(timer);socket.close();e?reject(e):resolve(v)};
-    const timer=setTimeout(()=>finish(new Error('The registered PM2 daemon is unavailable')),5000);
+    const timer=setTimeout(()=>finish(new Error('The registered PM2 daemon is unavailable')),process.platform==='win32'?30000:5000);
     socket.on('error',e=>finish(e));
     socket.once('connect',()=>client.call('getMonitorData',{},finish));
     socket.connect(c.pm2Socket || (process.platform==='win32'?'\\\\.\\pipe\\rpc.sock':path.join(c.pm2Home,'rpc.sock')));

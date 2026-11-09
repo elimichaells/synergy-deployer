@@ -1,6 +1,6 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os');
 const agent=require('../scripts/manager-agent.cjs'),worker=require('../scripts/manager-update-worker.cjs'),monitor=require('../scripts/server-monitor.cjs'),operations=require('../scripts/operations-pm2.cjs');
-test('updater, health monitor and recovery read the selected real PM2 daemon',{skip:!process.env.TEST_PM2_PACKAGE_ROOT,timeout:90000},async t=>{
+test('updater, health monitor and recovery read the selected real PM2 daemon',{skip:!process.env.TEST_PM2_PACKAGE_ROOT,timeout:180000},async t=>{
   const pm2PackageRoot=path.resolve(process.env.TEST_PM2_PACKAGE_ROOT),cli=path.join(pm2PackageRoot,'bin/pm2');
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'manager-pm2-compat-')),env=await agent.privatePm2Environment(root,cli);
   const pm=async args=>{const output=await agent.run(process.execPath,[cli,...args],{env,timeout:25000});t.diagnostic(args[0]+': '+output.slice(-3500));return output;};

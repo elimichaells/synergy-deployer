@@ -37,15 +37,18 @@ async function run(){
   await assert.rejects(caddy.updateCaddyStrict(lan.lanAddress(ip,occupied).authority,backend));
   assert.equal(await fs.readFile(root+'/Caddyfile','utf8'),before);assert.equal((await request('https://'+address,ca)).body,'institution app');assert.equal((await request(`http://127.0.0.1:${peerPort}`)).body,'existing site preserved');
   report.checks.push({path:'Manager host',privateIp:ip,httpsVerifiedWithRootCA:true,publicCertificateDownloadVerified:true,existingSitePreserved:true,occupiedPortRejectedAndSitesPreserved:true});
-  const remotePort=await freePort(),remoteAdmin=await freePort(),remoteStorage=root+'/remote-storage';
+  const remotePort=await freePort(),remoteAdmin=2029,remoteRoot=path.join(root,'remote-agent'),remoteStorage=path.join(remoteRoot,'caddy-storage');
+  await fs.mkdir(remoteRoot,{recursive:true});
   const remoteAddress=lan.lanAddress(ip,remotePort).authority;
   let config=agent.caddyConfig([{name:'Institution app',repo_url:'https://example.com/institution/app',branch:'main',start_cmd:'node app.cjs',port:backend,access_mode:'lan',hostname:remoteAddress}],remoteStorage);
   config=config.replace('admin 127.0.0.1:2029',`admin 127.0.0.1:${remoteAdmin}\n auto_https disable_redirects`);
-  await fs.writeFile(root+'/remote-Caddyfile',config);await start(root+'/remote-Caddyfile',env);
+  await fs.writeFile(path.join(remoteRoot,'Caddyfile'),config);await start(path.join(remoteRoot,'Caddyfile'),env);
   const remoteCa=await until(()=>fs.readFile(remoteStorage+'/pki/authorities/local/root.crt'));
   await until(async()=>assert.deepEqual(await request('https://'+remoteAddress,remoteCa),{status:200,body:'institution app'}));
   assert.equal((await request('https://'+address,ca)).body,'institution app');assert.equal((await request(`http://127.0.0.1:${peerPort}`)).body,'existing site preserved');
-  report.checks.push({path:'remote agent',httpsVerifiedWithSeparateRootCA:true,ipOnlyNoDns:true,existingSitesPreserved:true});
+  await agent.proxyConfig(remoteRoot,config,{caddy:binary,tools:{caddy:true},pm:async()=> '[]'});
+  assert.equal((await request('https://'+remoteAddress,remoteCa)).body,'institution app');
+  report.checks.push({path:'remote agent',dedicatedProxyReloadVerified:true,httpsVerifiedWithSeparateRootCA:true,ipOnlyNoDns:true,existingSitesPreserved:true});
   await caddy.removeFromCaddyStrict(address);assert.ok((await fs.readFile(root+'/Caddyfile','utf8')).includes(peer.trim()));assert.ok(!(await fs.readFile(root+'/Caddyfile','utf8')).includes(address));assert.equal((await request(`http://127.0.0.1:${peerPort}`)).body,'existing site preserved');
   report.status='passed';
 }

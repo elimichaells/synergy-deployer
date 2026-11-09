@@ -21,7 +21,7 @@ function callExisting(config, action, id, requirePackage) {
       resolve(rows.map(p => ({ id: p.pm_id, name: p.name, pid: p.pid, status: p.pm2_env?.status,
         restarts: p.pm2_env?.restart_time, cwd: p.pm2_env?.pm_cwd, port: Number(p.pm2_env?.PORT) })));
     };
-    const timer = setTimeout(() => finish(Error('RPC timeout')), action === 'restart' ? 25000 : 4000);
+    const timer = setTimeout(() => finish(Error('RPC timeout')), action === 'restart' ? 25000 : process.platform==='win32'?30000:4000);
     socket.on('error', finish);
     socket.once('connect', () => client.call(action === 'restart' ? 'restartProcessId' : 'getMonitorData',
       action === 'restart' ? { id, env: {} } : {}, finish));
