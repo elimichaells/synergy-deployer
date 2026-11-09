@@ -57,8 +57,14 @@ try {
     foreach($file in @('install-manager.ps1','installer-preflight.ps1','manager-update-worker.cjs','server-monitor.cjs','operations-pm2.cjs')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot ('..\..\scripts\'+$file)) -Destination (Join-Path $source ('scripts\'+$file)) -Force}
     $record.candidateInstaller=$env:GITHUB_SHA
   }
+  $managerAddress='localhost'
+  if($env:LAB_ADDRESS_MODE -eq 'private-ip'){
+    $managerAddress=@(Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.IPAddress -match '^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)'} | Select-Object -ExpandProperty IPAddress)[0]
+    if(!$managerAddress){throw 'Disposable VM has no private IPv4 interface'}
+  }
+  $record.addressMode=$env:LAB_ADDRESS_MODE
   $config=[ordered]@{
-    ManagerDomain='localhost';ManagerAccessMode='local';ManagerAllowedNetworks=@('127.0.0.1');ManagerPort=4000
+    ManagerDomain=$managerAddress;ManagerAccessMode='local';ManagerAllowedNetworks=@('127.0.0.1',$(if($managerAddress -eq 'localhost'){'::1'}else{$managerAddress}));ManagerPort=4000
     ManagerRoot='C:\ManagerAcceptanceLab\web\manager';WebRoot='C:\ManagerAcceptanceLab\web'
     AdminName='Isolated lab administrator';AdminEmail='admin@manager-lab.test';AdminPassword=(New-LabSecret)
     DbHost='127.0.0.1';DbPort=5432;DbName='manager_lab_control';DbAdminUser='manager_lab_admin';DbAdminPassword=(New-LabSecret)

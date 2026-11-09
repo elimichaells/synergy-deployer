@@ -12,8 +12,9 @@ async function verify(mode){
   console.log('Checking fresh Manager readiness and administrator login');
   const ready=await verifyInstallation({baseUrl:'http://127.0.0.1:4000',version,email:config.AdminEmail,password:config.AdminPassword,timeoutMs:240000});
   const ca=fs.readFileSync(installed.localCaCertificate),caHash=crypto.createHash('sha256').update(ca).digest('hex');
+  const address=new URL(installed.managerUrl);
   function request(route,method='GET',body,cookie){return new Promise((resolve,reject)=>{
-    const data=body?JSON.stringify(body):null,req=https.request({hostname:'localhost',port:443,path:route,method,ca,rejectUnauthorized:true,headers:{Origin:'https://localhost',...(data?{'Content-Type':'application/json','Content-Length':Buffer.byteLength(data)}:{}),...(cookie?{Cookie:cookie}:{})}},res=>{const chunks=[];res.on('data',c=>chunks.push(c));res.on('end',()=>resolve({status:res.statusCode,headers:res.headers,text:Buffer.concat(chunks).toString()}))});req.setTimeout(15000,()=>req.destroy(Error('HTTPS timeout')));req.on('error',reject);req.end(data);
+    const data=body?JSON.stringify(body):null,req=https.request({hostname:address.hostname.replace(/^\[|\]$/g,''),port:Number(address.port||443),path:route,method,ca,rejectUnauthorized:true,headers:{Origin:address.origin,...(data?{'Content-Type':'application/json','Content-Length':Buffer.byteLength(data)}:{}),...(cookie?{Cookie:cookie}:{})}},res=>{const chunks=[];res.on('data',c=>chunks.push(c));res.on('end',()=>resolve({status:res.statusCode,headers:res.headers,text:Buffer.concat(chunks).toString()}))});req.setTimeout(15000,()=>req.destroy(Error('HTTPS timeout')));req.on('error',reject);req.end(data);
   });}
   console.log('Checking Caddy HTTPS with the installed CA');
   let login,lastError;const httpsDeadline=Date.now()+60000;

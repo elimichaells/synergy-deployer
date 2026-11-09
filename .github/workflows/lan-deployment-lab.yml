@@ -2,7 +2,7 @@ name: Isolated LAN deployment lab
 on:
   push:
     branches: [codex/isolated-install-validation]
-    paths: ['.github/workflows/lan-deployment-lab.yml', 'tests/lan-lab/**', 'scripts/lan-address.cjs', 'scripts/manager-agent.cjs', 'lib/caddy.ts']
+    paths: ['.github/workflows/lan-deployment-lab.yml', 'tests/lan-lab/**', 'scripts/lan-address.cjs', 'scripts/manager-agent.cjs', 'scripts/verify-manager-installation.cjs', 'lib/caddy.ts']
   workflow_dispatch:
 permissions:
   contents: read

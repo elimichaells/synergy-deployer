@@ -1,7 +1,7 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const http=require('node:http');
-const {verifyInstallation}=require('../scripts/verify-manager-installation.cjs');
+const {verifyInstallation,verifyProxy}=require('../scripts/verify-manager-installation.cjs');
 
 async function fixture(t,mode){
   const seen=[];
@@ -38,4 +38,8 @@ test('fresh installation cannot pass on the wrong release, unavailable database,
 });
 test('installation verification never transmits credentials to a non-loopback address',async()=>{
   await assert.rejects(verifyInstallation({baseUrl:'https://example.com',version:'2.27.0',email:'admin@example.test',password:'secret'}),/local Manager listener/);
+});
+test('HTTPS readiness refuses nonlocal IPs and malformed origins before connecting',async()=>{
+  for(const origin of ['https://203.0.113.1','https://[2001:db8::1]'])await assert.rejects(verifyProxy({origin}),/IP must belong to this server/);
+  for(const origin of ['http://localhost','https://user:pass@localhost','https://localhost/path','https://localhost?query=1'])await assert.rejects(verifyProxy({origin}),/HTTPS origin/);
 });
