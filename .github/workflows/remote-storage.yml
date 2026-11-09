@@ -13,7 +13,10 @@ permissions:
   contents: read
 jobs:
   providers:
-    runs-on: ubuntu-latest
+    # MongoDB 8 refuses affected 6.19+ kernels (SERVER-121912). Keep the lab on
+    # Ubuntu 22.04 (6.8 kernel) until SERVER-136848 is fixed in the 8.0 image.
+    # https://jira.mongodb.org/browse/SERVER-121912
+    runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

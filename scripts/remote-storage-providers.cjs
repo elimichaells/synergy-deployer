@@ -19,11 +19,15 @@ async function execute(root,input,h,driver){
         if(provisioning){
           if(!['127.0.0.1','localhost','::1'].includes(d.host))throw Error('Create MySQL databases using this server’s loopback address; attach external databases with existing credentials');
           const [rows]=await query('select 1 from information_schema.schemata where schema_name=? union all select 1 from mysql.user where user=?',[d.database,d.username]);if(rows.length)throw Error('The database or account already exists. Nothing was changed.');
-          await query('create user ?@\'localhost\' identified by ?',[d.username,d.password]);await query('create database `'+identifier(d.database)+'`');await query('grant all privileges on `'+identifier(d.database)+'`.* to ?@\'localhost\'',[d.username]);
+          // Numeric loopback entries are required when skip_name_resolve is on.
+          // No wildcard or network login is created.
+          const hosts=['localhost','127.0.0.1','::1'];
+          await query('create user '+hosts.map(()=>'?@? identified by ?').join(', '),hosts.flatMap(host=>[d.username,host,d.password]));await query('create database `'+identifier(d.database)+'`');
+          for(const host of hosts)await query('grant all privileges on `'+identifier(d.database)+'`.* to ?@?',[d.username,host]);
         }else if(rotating){
           if(d.username===a.username)throw Error('The administrator password cannot be changed here');
-          const [accounts]=await query('select host from mysql.user where user=?',[d.username]);if(accounts.length!==1||accounts[0].host!=='localhost')throw Error('Only a dedicated local application account can be rotated');
-          await query('alter user ?@\'localhost\' identified by ?',[d.username,input.password]);
+          const [accounts]=await query('select host as account_host from mysql.user where user=?',[d.username]);if(!accounts.length||accounts.length>3||accounts.some(account=>!['localhost','127.0.0.1','::1'].includes(account.account_host)))throw Error('Only a dedicated local application account can be rotated');
+          await query('alter user '+accounts.map(()=>'?@? identified by ?').join(', '),accounts.flatMap(account=>[d.username,account.account_host,input.password]));
         }else await query('select 1');
       }finally{await client.end();}
       if(provisioning||rotating)await verify();
