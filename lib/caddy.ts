@@ -5,6 +5,7 @@ import { runCommand } from './exec'
 import { caddyLogDir, webRoot } from './paths'
 import { isManagerAddress, managerSiteAddress, managerUsesLocalTls, normalizeManagerAddress } from './manager-address'
 import { parseLanAddress, lanCaddyDirectives } from '../scripts/lan-address.cjs'
+import { checkLanListeners } from '../scripts/lan-listener.cjs'
 
 const siteAddress = (address: string) => parseLanAddress(address)?.authority || managerSiteAddress(address)
 
@@ -223,6 +224,7 @@ async function validateCaddyContent(content: string) {
 }
 
 async function commitCaddyContent(content: string, original: string) {
+    await checkLanListeners(content, original)
     await validateCaddyContent(content)
     if (await readFile(CADDYFILE_PATH, 'utf8') !== original) throw new Error('Caddy configuration changed during review; retry without overwriting it')
     await writeFile(CADDYFILE_PATH, content, 'utf8')

@@ -29,7 +29,7 @@ async function run(){
   const occupied=await listen(net.createServer(socket=>socket.end()));
   await assert.rejects(caddy.updateCaddyStrict(lan.lanAddress(ip,occupied).authority,backend));
   assert.equal(await fs.readFile(root+'/Caddyfile','utf8'),before);assert.equal((await request('https://'+address,ca)).body,'institution app');assert.equal((await request(`http://127.0.0.1:${peerPort}`)).body,'existing site preserved');
-  report.checks.push({path:'Manager host',privateIp:ip,httpsVerifiedWithRootCA:true,existingSitePreserved:true,failedReloadRestoresDiskAndActiveRoutes:true});
+  report.checks.push({path:'Manager host',privateIp:ip,httpsVerifiedWithRootCA:true,existingSitePreserved:true,occupiedPortRejectedAndSitesPreserved:true});
   const remotePort=await freePort(),remoteAdmin=await freePort(),remoteStorage=root+'/remote-storage';
   const remoteAddress=lan.lanAddress(ip,remotePort).authority;
   let config=agent.caddyConfig([{name:'Institution app',repo_url:'https://example.com/institution/app',branch:'main',start_cmd:'node app.cjs',port:backend,access_mode:'lan',hostname:remoteAddress}],remoteStorage);

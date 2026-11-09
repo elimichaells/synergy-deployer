@@ -36,7 +36,7 @@ test('LAN creation never calls Cloudflare and preserves a separate existing proj
 });
 test('rejected Caddy reload restores exact file bytes and leaves other sites present',async()=>{
   let file='existing.example.com {\r\n\treverse_proxy 127.0.0.1:9000\r\n}\r\n';const before=file;let reloads=0;
-  const caddy=load('lib/caddy.ts',{'./exec':{runCommand:async(command)=>command.includes(' reload ')?(reloads++,{code:1,output:'address already in use'}):{code:0,output:'valid'}},'./paths':{webRoot:()=>'/fixture',caddyLogDir:()=>'/fixture/logs'},'./manager-address':require('../lib/manager-address.ts'),'./db':{query:async()=>({rows:[]})},'fs/promises':{mkdtemp:async()=>'/candidate',rm:async()=>{},readFile:async()=>file,writeFile:async(name,content)=>{if(!name.includes('candidate'))file=content}}});
+  const caddy=load('lib/caddy.ts',{'../scripts/lan-listener.cjs':{checkLanListeners:async()=>{}},'./exec':{runCommand:async(command)=>command.includes(' reload ')?(reloads++,{code:1,output:'address already in use'}):{code:0,output:'valid'}},'./paths':{webRoot:()=>'/fixture',caddyLogDir:()=>'/fixture/logs'},'./manager-address':require('../lib/manager-address.ts'),'./db':{query:async()=>({rows:[]})},'fs/promises':{mkdtemp:async()=>'/candidate',rm:async()=>{},readFile:async()=>file,writeFile:async(name,content)=>{if(!name.includes('candidate'))file=content}}});
   await assert.rejects(caddy.updateCaddyStrict(app.hostname,3000),/address already in use/);assert.equal(file,before);assert.equal(reloads,1);
 });
 test('standalone downloaded agent embeds private address rules without repository dependencies',async()=>{

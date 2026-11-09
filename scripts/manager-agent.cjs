@@ -16,6 +16,7 @@ const AGENT_VERSION = '1.8.0';
 const LAN_CAPABILITY = 'lan-ip-v1';
 const resources = require('./manager-agent-resources.cjs');
 const { parseLanAddress, lanCaddyDirectives, assertLanInterface } = require('./lan-address.cjs');
+const { checkLanListeners } = require('./lan-listener.cjs');
 const INFRASTRUCTURE_CAPABILITY = 'remote-infrastructure-v1';
 const CONSOLE_CAPABILITY = 'remote-console-v1';
 const RUNTIME_CAPABILITY = 'runtime-versions-v1';
@@ -457,6 +458,7 @@ async function managedCaddyConfig(root,apps,domains) {
 
 async function proxyConfig(root, text, tools) {
   if (!tools.tools.caddy) throw new Error('Install Caddy and put it on the agent account PATH');
+    await checkLanListeners(text,await fs.readFile(path.join(root,'Caddyfile'),'utf8').catch(error=>{if(error.code==='ENOENT')return '';throw error}));
   const shared=await sharedProxySettings(root);
   if(shared)return sharedProxyConfig(root,text,tools,shared);
   const filename = path.join(root,'Caddyfile');
