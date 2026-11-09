@@ -305,7 +305,7 @@ export default function ProjectPage() {
         </TabsContent>
 
         <TabsContent value="domains" className="mt-0 space-y-4">
-          <Section title="Domains" description="Public addresses for the apps in this project. A frontend can share its domain with the backend by path, for example /api."
+          <Section title="Domains" description="Private LAN addresses and public domains for this project's apps. A frontend can share its address with the backend by path, for example /api."
             action={<DropdownMenu.Root>
               <DropdownMenu.Trigger asChild><Button size="sm" disabled={!access.isAdmin}><Plus className="mr-1.5 h-4 w-4" />Add domain<ChevronDown className="ml-1 h-3.5 w-3.5" /></Button></DropdownMenu.Trigger>
               <DropdownMenu.Portal><DropdownMenu.Content align="end" sideOffset={6} className="z-50 w-56 rounded-lg border border-white/10 bg-popover p-1 shadow-2xl shadow-black/60">
