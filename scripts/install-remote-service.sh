@@ -33,7 +33,7 @@ if [ "$mode" = install-version ]; then
   install -d -m 755 "$target"
   "$node_exe" "$stage/install-remote-tool.cjs" "$plan_file" "$target"
   selected="$(cat "$target/executable.txt")";arg=--version;[ "$service" != go ] || arg=version
-  detected="$(runuser -u manager-agent -- "$selected" "$arg")";[[ "$detected" = *"$version"* ]] || exit 1
+  detected="$(cd -- "$root"; runuser -u manager-agent -- "$selected" "$arg")";[[ "$detected" = *"$version"* ]] || exit 1
   "$node_exe" - "$root/runtime-versions.json" "$service" "$version" "$selected" <<'JS'
 const fs=require('fs');const [file,service,version,exe]=process.argv.slice(2);const registry=fs.existsSync(file)?JSON.parse(fs.readFileSync(file)):{};(registry[service]||={})[version]=exe;const temp=file+'.'+require('crypto').randomBytes(12).toString('hex')+'.tmp';fs.writeFileSync(temp,JSON.stringify(registry),{flag:'wx',mode:0o600});fs.renameSync(temp,file);
 JS
@@ -148,7 +148,9 @@ const fs=require('fs'),path=require('path');const [file,tool,exe]=process.argv.s
 JS
 changed_paths=1; chown -h manager-agent:manager-agent "$root/tool-paths.json"
 agent_node="$("$node_exe" -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).node' "$root/tool-paths.json")"
-runuser -u manager-agent -- "$agent_node" "$root/manager-agent.cjs" check-tools --root "$root"
+# The SSH user's home can be inaccessible to the service account. Node resolves
+# package metadata from cwd even for a read-only version check.
+(cd -- "$root"; runuser -u manager-agent -- "$agent_node" "$root/manager-agent.cjs" check-tools --root "$root")
 "$node_exe" - "$plan_file" "$receipt" "$selected" "$created_unit" "$config" "$data" "$username" <<'JS'
 const fs=require('fs');const [planFile,file,exe,serviceName,configPath,dataPath,username]=process.argv.slice(2),p=JSON.parse(fs.readFileSync(planFile));fs.writeFileSync(file,JSON.stringify({status:'success',operationId:p.operationId,service:p.service,mode:p.mode,path:exe,managed:p.mode==='install',serviceName,configPath,dataPath,host:'127.0.0.1',port:p.port,username,...(username?{password:p.databasePassword}:{})}),{mode:0o600});
 JS

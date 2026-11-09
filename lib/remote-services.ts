@@ -8,18 +8,21 @@ import { ensureManagedServers, uuid } from './managed-servers'
 import { encryptSecret, decryptSecret } from './secret-crypto'
 import { credentialSecrets, sshTarget, sshCredentials, connectSsh, inspectConnection, sftpSession, writeRemote, powershell, sshExec, sudoCommand } from './server-ssh'
 import { servicePlan, verifyServicePlan, SERVICES } from '@/scripts/remote-service-policy.cjs'
-import { redact } from '@/scripts/manager-agent.cjs'
+import { redact, SERVICE_TOOLS_CAPABILITY } from '@/scripts/manager-agent.cjs'
 import { remoteRuntimeAsset } from './remote-runtime-catalog'
 import { serviceDownloads } from './remote-service-downloads'
 import type { ServerToolId } from './server-tool-catalog'
 import type { RemoteServicePlan } from './remote-service-catalog'
 import type { SFTPWrapper } from 'ssh2'
+import type { RemoteMetrics } from './managed-server-types'
 const ps=(s:string)=>"'"+s.replace(/'/g,"''")+"'",sh=(s:string)=>"'"+s.replace(/'/g,"'\\''")+"'"
 const digest=(v:unknown)=>createHash('sha256').update(JSON.stringify(v)).digest('hex')
 const readRemote=(sftp:SFTPWrapper,file:string)=>new Promise<string>((resolve,reject)=>sftp.readFile(file,(e,b)=>e?reject(e):b.length>200000?reject(Error('Remote receipt is too large')):resolve(b.toString('utf8'))))
-async function server(id:string){await ensureManagedServers();uuid(id);const row=(await query<{id:string;platform:string;enabled:boolean;enrolled_at:string}>('select * from managed_servers where id=$1',[id])).rows[0];if(!row?.enabled||!row.enrolled_at)throw new ApiError('Connect this server before managing services',409);return row}
+async function server(id:string){await ensureManagedServers();uuid(id);const row=(await query<{id:string;platform:string;enabled:boolean;enrolled_at:string;metrics:RemoteMetrics}>('select * from managed_servers where id=$1',[id])).rows[0];if(!row?.enabled||!row.enrolled_at)throw new ApiError('Connect this server before managing services',409);return row}
 async function connectionFor(id:string,body:Record<string,unknown>){
   const row=await server(id),target=sshTarget(body),auth=sshCredentials(body)
+  const selected=(body.selection as {service?:string}|undefined)?.service
+  if(selected&&['sling','angular','mongodb','sqlserver','redis','phpmyadmin'].includes(selected)&&!row.metrics?.capabilities?.includes(SERVICE_TOOLS_CAPABILITY))throw new ApiError('Update this server in Agent access & updates before configuring this service.',409)
   if(body.acceptFingerprint!==true)throw new ApiError('Verify and accept this server’s SSH identity',400)
   const connection=await connectSsh(target,auth,String(body.fingerprint||''))
   return {row,target,auth,connection}

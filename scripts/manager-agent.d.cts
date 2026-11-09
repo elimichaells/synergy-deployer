@@ -6,6 +6,7 @@ export const SETUP_CAPABILITY: string
 export const UPDATE_CAPABILITY: string
 export const CONSOLE_CAPABILITY: string
 export const RUNTIME_CAPABILITY:string
+export const SERVICE_TOOLS_CAPABILITY:string
 export const LAN_CAPABILITY:string
 export function validateLanSelection(hostname:string,metrics:unknown):void
 export function validateRuntimeSelection(value:unknown,metrics:unknown):Record<string,string>
