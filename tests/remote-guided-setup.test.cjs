@@ -84,7 +84,8 @@ test('guided setup routes enforce administrator mutations, protected environment
   let role='viewer',calls=0;
   const rbac=load('lib/rbac.ts',{'./api':{ApiError}}),bodyTools=load('lib/request-body.ts',{'@/lib/api':{ApiError}});
   const route=load('app/api/servers/[[...path]]/route.ts',{
-    '@/lib/remote-agent-updates':{},
+    '@/lib/update-maintenance':{updateProtected:(_name,work)=>work()},
+    '@/scripts/agent-bundle.cjs':require('../scripts/agent-bundle.cjs'),'@/lib/remote-agent-updates':{},
     '@/lib/auth':{getSessionFromCookie:async()=>role?{id:'fixture-user',role}:null},'@/lib/rbac':rbac,
     '@/lib/api':{ApiError,jsonError:error=>Response.json({error:error.message},{status:error.status||500})},'@/lib/request-body':bodyTools,
     '@/lib/managed-servers':{},'@/lib/remote-app-setup':{remoteSetup:async()=>({app:{env_names:[]}}),remoteSetupEnvironment:async()=>{calls++;return{environment:{}};},importRemoteApp:async()=>{calls++;return{};},changeRemoteSetup:async()=>{calls++;return{};}},
@@ -102,7 +103,7 @@ test('the environment editor loads legacy and guided apps only from the requeste
     '@/lib/db':{query:async(sql,[id,server])=>({rows:records.filter(row=>row.id===id && row.server_id===server && (!sql.includes('guided_setup=true') || row.guided_setup))})},
     '@/lib/api':{ApiError},'@/lib/audit':{},'@/lib/secret-crypto':{decryptSecret:value=>JSON.stringify({API_KEY:value})},
     '@/lib/github-connections':{},'@/lib/git-provider-policy':{},'@/lib/managed-servers':{ensureManagedServers:async()=>{},uuid:value=>value},
-    '@/scripts/manager-agent.cjs':{},'@/lib/remote-setup-policy':{},'@/lib/project-setup-policy':{},
+    '@/scripts/agent-bundle.cjs':require('../scripts/agent-bundle.cjs'),'@/scripts/manager-agent.cjs':{},'@/lib/remote-setup-policy':{},'@/lib/project-setup-policy':{},
   });
   assert.deepEqual(await setup.remoteSetupEnvironment('one','legacy'),{environment:{API_KEY:'legacy-encrypted'}});
   assert.deepEqual(await setup.remoteSetupEnvironment('two','guided'),{environment:{API_KEY:'guided-encrypted'}});
@@ -117,7 +118,7 @@ test('real database: import modes, setup reports, per-server isolation, provisio
   const userId=randomUUID();await query('insert into users values($1)',[userId]);
   process.env.MANAGER_ENCRYPTION_KEY='isolated-guided-setup-test-key';
   const crypto=load('lib/secret-crypto.ts',{});
-  const mocks={'@/lib/db':{db:pool,query},'@/lib/api':{ApiError},'@/lib/audit':{audit:async()=>{}},'@/lib/secret-crypto':crypto,'@/lib/github-connections':{},'@/lib/git-provider-policy':{},'@/scripts/manager-agent.cjs':agent,'@/lib/remote-setup-policy':policy};
+  const mocks={'@/lib/db':{db:pool,query},'@/lib/api':{ApiError},'@/lib/audit':{audit:async()=>{}},'@/lib/secret-crypto':crypto,'@/lib/github-connections':{},'@/lib/git-provider-policy':{},'@/scripts/agent-bundle.cjs':require('../scripts/agent-bundle.cjs'),'@/scripts/manager-agent.cjs':agent,'@/lib/remote-setup-policy':policy};
   const managed=load('lib/managed-servers.ts',mocks);
   const setup=load('lib/remote-app-setup.ts',{...mocks,'@/lib/managed-servers':managed,'@/lib/project-setup-policy':require('../lib/project-setup-policy.ts')});
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'manager-guided-db-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));

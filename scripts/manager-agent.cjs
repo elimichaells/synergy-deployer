@@ -12,7 +12,8 @@ const { randomBytes, X509Certificate, createHash } = require('node:crypto');
 const { rootCertificates } = require('node:tls');
 const { createInterface } = require('node:readline/promises');
 const PROTOCOL_VERSION = 1;
-const AGENT_VERSION = '1.6.0';
+const AGENT_VERSION = '1.7.0';
+const resources = require('./manager-agent-resources.cjs');
 const INFRASTRUCTURE_CAPABILITY = 'remote-infrastructure-v1';
 const CONSOLE_CAPABILITY = 'remote-console-v1';
 const RUNTIME_CAPABILITY = 'runtime-versions-v1';
@@ -174,11 +175,12 @@ function sanitizeMetrics(raw) {
     apps: (Array.isArray(raw.apps) ? raw.apps : []).slice(0, 200).filter(x => ID.test(x.id)).map(x => ({ id: x.id,
       status: ['online','stopped','errored','launching','stopping','missing'].includes(x.status) ? x.status : 'unknown', cpu: number(x.cpu, 10000), memory: number(x.memory),
       uptime:optional(x.uptime),restarts:number(x.restarts??0),pid:optional(x.pid),logBytes:number(x.logBytes??0),
-      check:x.check?{ok:x.check.ok===true,status:optional(x.check.status),ms:number(x.check.ms,60000),reason:str(x.check.reason,500)}:null })),
+      check:x.check?{ok:x.check.ok===true,status:optional(x.check.status),ms:number(x.check.ms,60000),reason:str(x.check.reason,500),diagnostics:resources.sanitizeDiagnostics(x.check.diagnostics)}:null })),
     pm2Error:raw.pm2Error===true,
     caddy:raw.caddy?{mode:raw.caddy.mode==='shared'?'shared':'pm2',status:['running','stopped','unknown'].includes(raw.caddy.status)?raw.caddy.status:'unknown',configPath:str(raw.caddy.configPath,1024),version:str(raw.caddy.version)}:null,
     proxyError: raw.proxyError ? str(raw.proxyError, 500) : null,
-    capabilities: [SETUP_CAPABILITY,UPDATE_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,INFRASTRUCTURE_CAPABILITY].filter(value => Array.isArray(raw.capabilities) && raw.capabilities.includes(value)) };
+    resources:resources.sanitize(raw.resources),
+    capabilities: [SETUP_CAPABILITY,UPDATE_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY].filter(value => Array.isArray(raw.capabilities) && raw.capabilities.includes(value)) };
   if (result.memoryFree > result.memoryTotal || (result.diskFree !== null && result.diskTotal !== null && result.diskFree > result.diskTotal)) throw new Error('Invalid capacity');
   return result;
 }
@@ -436,6 +438,7 @@ async function sharedProxyConfig(root,text,tools,settings) {
 }
 
 async function managedCaddyConfig(root,apps,domains) {
+  apps=await resources.proxyApps(root,apps,resourceHelpers());
   domains=domains||await readJson(path.join(root,'domains.json'),{});
   const aliases=Object.values(domains).flatMap(domain=>{const app=apps.find(a=>a.id===domain.appId);return app&&app.hostname!==domain.hostname?[{...app,hostname:domain.hostname,access_mode:'wan',ip_address:'',ip_port:null}]:[]});
   return caddyConfig([...apps,...aliases],path.join(root,'caddy-storage'));
@@ -552,6 +555,9 @@ async function deploy(root, job, journal, tools, persist, log, dependencies = {}
   await writeEnv(release,appEnv);
   for (const [stage, appCommand] of [['install',app.install_cmd],['build',app.build_cmd]]) {
     if (!appCommand) continue;
+    const minimum=Math.max(1536*1024**2,Math.round(os.totalmem()*.1));
+    const deadline=Date.now()+300000;
+    while(os.freemem()<minimum){if(Date.now()>deadline)throw Error('Not enough free memory to build safely; retry when memory is available');log('[memory] Waiting for free memory before '+stage+'\n');await wait(10000);}
     log(`[stage] ${stage}\n`);
     await command(appCommand,[],{cwd:release,env,shell:true,timeout:1800000,log,secrets});
   }
@@ -577,6 +583,7 @@ child.on('error',e=>{console.error(e.message);process.exit(1)});child.on('exit',
   const definition = {apps:[{name:`manager-remote-${app.id}`,script:runner,cwd:release,interpreter:process.execPath,
     kill_timeout:10000,shutdown_with_message:true,min_uptime:'10s',max_restarts:10,env:{NODE_ENV:'production'}}]};
   await fs.writeFile(ecosystem,`module.exports=${JSON.stringify(definition)};\n`,{mode:0o600});
+  await resources.applyLaunchSettings(root,app.id,ecosystem,resourceHelpers());
   log('[stage] activate\n');
   // Journal precedes ANY change to the live process. Startup recovery restores it after a crash.
   journal.activation={previous,previousApps:JSON.parse(JSON.stringify(applications))};
@@ -613,7 +620,8 @@ async function sampleApplications(saved,list,pm2Error) {
     if(!pm2Error&&!['stopped','stopping'].includes(p?.pm2_env?.status)){
       const at=Date.now();try{
         const response=await fetch(`http://127.0.0.1:${port(app.port,'port')}${app.health_path}`,{redirect:'manual',signal:AbortSignal.timeout(2000)});
-        await response.body?.cancel();check={ok:response.status>=200&&response.status<300,status:response.status,ms:Date.now()-at,reason:response.ok?'':'Readiness must return HTTP 2xx'};
+        const diagnostics=response.ok?undefined:await resources.readDiagnostics(response);
+        await response.body?.cancel().catch(()=>{});check={ok:response.status>=200&&response.status<300,status:response.status,ms:Date.now()-at,reason:response.ok?'':'Readiness must return HTTP 2xx',diagnostics};
       }catch{check={ok:false,status:null,ms:Date.now()-at,reason:'Readiness endpoint did not respond within 2 seconds'}}
     }
     for(const file of [p?.pm2_env?.pm_out_log_path,p?.pm2_env?.pm_err_log_path])if(file)logBytes=Math.max(logBytes,await fs.stat(file).then(s=>s.size).catch(()=>0));
@@ -624,6 +632,7 @@ async function sampleApplications(saved,list,pm2Error) {
 async function infrastructureJob(root,job,tools,log) {
   const {action,id,expiresAt}=job.payload;
   if(!Number.isFinite(expiresAt)||Date.now()>expiresAt)throw Error('Operation expired; review the current server state and retry');
+  if(action==='resource')return resources.execute(root,job,tools,resourceHelpers());
   const saved=await readJson(path.join(root,'apps.json'),{});
   if(action==='domain'){
     const domain=job.payload.domain;
@@ -690,7 +699,7 @@ async function sample(root, tools, prior) {
     memoryTotal:os.totalmem(),memoryFree:os.freemem(),diskTotal:disk?disk.blocks*disk.bsize:null,diskFree:disk?disk.bavail*disk.bsize:null,uptime:os.uptime(),
     addresses:Object.values(os.networkInterfaces()).flat().filter(x=>x&&!x.internal).map(x=>x.address),tools:tools.tools,proxyError,
     pm2Error,caddy:{mode:tools.sharedProxy?'shared':'pm2',status:proxyError?'unknown':tools.sharedProxy||list.some(p=>p.name==='manager-remote-caddy'&&p.pm2_env?.status==='online')?'running':'stopped',configPath:tools.sharedProxy?.configPath||path.join(root,'Caddyfile'),version:tools.tools.caddy},
-    apps:await sampleApplications(saved,list,pm2Error)});
+    apps:await sampleApplications(saved,list,pm2Error),resources:await resources.telemetry(root,saved,list,resourceHelpers())});
   return {metrics,caPem,cpu};
 }
 
@@ -823,7 +832,7 @@ async function runAgent(root) {
   let heartbeatBusy=false;
   const pulse=async()=>{
     if(heartbeatBusy)return;heartbeatBusy=true;
-    try{const data=await sample(root,tools,prior);prior=data.cpu;data.metrics.capabilities=[SETUP_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,INFRASTRUCTURE_CAPABILITY,...(supervised?[UPDATE_CAPABILITY]:[])];await request(config,'heartbeat',{protocol:PROTOCOL_VERSION,metrics:data.metrics,caPem:data.caPem});send({type:'heartbeat',version:AGENT_VERSION,metrics:data.metrics});}
+    try{const data=await sample(root,tools,prior);prior=data.cpu;data.metrics.capabilities=[SETUP_CAPABILITY,CONSOLE_CAPABILITY,RUNTIME_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY,...(supervised?[UPDATE_CAPABILITY]:[])];await request(config,'heartbeat',{protocol:PROTOCOL_VERSION,metrics:data.metrics,caPem:data.caPem});send({type:'heartbeat',version:AGENT_VERSION,metrics:data.metrics});}
     finally{heartbeatBusy=false;}
   };
   const describe=error=>console.error(`[agent] ${redact(error.message,[config.agentToken])}`);
@@ -831,18 +840,22 @@ async function runAgent(root) {
   const consoleTimer=setInterval(()=>{if(consoleAbort){if(stopped||Date.now()-lastConsoleReport>45000)consoleAbort.abort();void report().catch(error=>{if(error.status===401)consoleAbort?.abort();describe(error);});}},1000);
   console.log(`Manager agent ${AGENT_VERSION} running. Outbound connection to ${config.manager}`);
   try{
+    await resources.recover(root,tools,resourceHelpers());
+    await resources.start(root,tools,resourceHelpers());
     while(!stopped){
       try{
         await pulse();
         if(journal){send({type:'idle',idle:false});await report();await wait(5000);continue;}
         if(stopped)break;
+        await resources.recover(root,tools,resourceHelpers());
+        await resources.setBusy(root,true);
         send({type:'idle',idle:true});
         const {job,protocol,paused}=await request(config,'claim',{});
-        if(paused){await wait(5000);continue;}
+        if(paused){await resources.setBusy(root,false);await wait(5000);continue;}
         const nextTools=createHash('sha256').update(JSON.stringify(await readJson(path.join(root,'tool-paths.json'),{}))).digest('hex');
         if(nextTools!==toolsDigest){await loadToolPaths(root);tools=await findTools(root);toolsDigest=nextTools;}
         if(protocol!==PROTOCOL_VERSION)throw new Error('Agent upgrade required');
-        if(!job){await wait(5000);continue;}
+        if(!job){await resources.idle(root,tools,resourceHelpers());await resources.setBusy(root,false);await wait(5000);continue;}
         send({type:'idle',idle:false});
         logSecrets=[...jobSecrets(job.payload),config.agentToken];
         journal={id:job.id,appId:job.payload.id,claimToken:job.claimToken,status:'running',sequence:0,log:'',commitSha:null};
@@ -858,11 +871,12 @@ async function runAgent(root) {
           journal.status='success';
         }
         catch(error){log(`[failed] ${error.message}\n`);journal.status='failed';}
-        consoleAbort=null;await persist();await report();logSecrets=[];
+        consoleAbort=null;await persist();await report();logSecrets=[];await resources.setBusy(root,false);
       }catch(error){describe(error);if(error.status===401){stopped=true;break;}await wait(10000);}
     }
   }finally{
     clearInterval(timer);clearInterval(consoleTimer);while(reportBusy||heartbeatBusy)await wait(100);
+    await resources.stop(root);
     await fs.unlink(lock).catch(()=>{});process.off('SIGINT',onStop);process.off('SIGTERM',onStop);
     if(supervised){process.off('message',onMessage);process.off('disconnect',onStop);if(process.connected)process.disconnect();}
   }
@@ -908,6 +922,7 @@ function serveStatic(root,portNumber) {
 function jobSecrets(payload) {
   const database = payload.database || {};
   const values = [...Object.values(payload.environment || {}),payload.git?.token,database.password,database.adminPassword,
+    payload.resource?.connection?.password,...(Array.isArray(payload.resource?.connections)?payload.resource.connections.flatMap(d=>[d.password,d.adminPassword]):[]),
     payload.git?.token ? Buffer.from(`${payload.git.username}:${payload.git.token}`).toString('base64') : ''].filter(x=>typeof x==='string' && x);
   return [...values,...values.flatMap(value=>{try{return [encodeURIComponent(value)];}catch{return [];}}),...values.map(x=>x.replace(/'/g,"''"))];
 }
@@ -1080,6 +1095,8 @@ async function main(){
   }else await fs.chmod(root,0o700);
   if(action==='check-tools')await checkConfiguredTools(root);else if(action==='enroll')await enrollCli(root,options);else await runAgent(root);
 }
+
+function resourceHelpers(){return {run,readJson,atomicJson,contained,processList,healthy,baseEnv,proxyConfig,managedCaddyConfig,redact};}
 
 module.exports={managedCaddyConfig,sampleApplications,infrastructureJob,INFRASTRUCTURE_CAPABILITY,toolVersion,validateRuntimeSelection,RUNTIME_CAPABILITY,validateRuntimeVersions,runtimeEnvironment,installedRuntimeVersions,CONSOLE_CAPABILITY,consoleJob,PROTOCOL_VERSION,AGENT_VERSION,SETUP_CAPABILITY,UPDATE_CAPABILITY,validateApp,sanitizeMetrics,redact,streamRedactor,caddyConfig,managerAddress,contained,run,request,deploy,restoreActivation,healthy,atomicJson,readJson,enrollCli,detectFramework,inspectRepository,validateDatabase,databaseEnvironment,setupDatabase,validateSetup,jobSecrets,findStaticRoot,serveStatic,loadToolPaths,checkConfiguredTools,privatePm2Environment,findTools,proxyConfig,sharedProxySettings,sharedProxyState,configDigest};
 if(require.main===module)main().catch(error=>{console.error(error.message);process.exitCode=1;});

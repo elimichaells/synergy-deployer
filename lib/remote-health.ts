@@ -4,6 +4,7 @@ import type { RemoteMetrics } from './managed-server-types'
 import { advanceState } from '@/scripts/server-monitor-policy.cjs'
 import { recordHistory, summarizeHistory } from '@/scripts/health-history.cjs'
 import { INFRASTRUCTURE_CAPABILITY } from '@/scripts/manager-agent.cjs'
+import { recordUptime } from '@/scripts/uptime-history.cjs'
 
 export async function recordRemoteHealth(serverId:string,metrics:RemoteMetrics) {
   if(!metrics.capabilities?.includes(INFRASTRUCTURE_CAPABILITY))return
@@ -25,6 +26,9 @@ export async function recordRemoteHealth(serverId:string,metrics:RemoteMetrics) 
     const state=advanceState(prior.state,sample)
     for(const incident of state.incidents)incident.source='Remote server'
     await client.query('update remote_health set state=$2::jsonb,history=$3::jsonb where server_id=$1',[serverId,JSON.stringify(state),JSON.stringify(recordHistory(prior.history,sample))])
+    await client.query('insert into remote_resources(server_id) values($1) on conflict do nothing',[serverId])
+    const uptime=(await client.query('select uptime from remote_resources where server_id=$1 for update',[serverId])).rows[0]?.uptime
+    await client.query('update remote_resources set uptime=$2 where server_id=$1',[serverId,JSON.stringify(recordUptime(uptime,sample))])
     await client.query('commit')
   }catch(error){await client.query('rollback');throw error}finally{client.release()}
 }

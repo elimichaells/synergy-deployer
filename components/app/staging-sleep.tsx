@@ -5,6 +5,7 @@ import { Loader2, Moon, Power } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { SLEEP_CHOICES, sleepLabel } from '@/lib/staging-sleep-policy'
 import { cn } from '@/lib/utils'
+import { scopedInfrastructureFetch } from '@/lib/infrastructure-client'
 
 export interface SleepState { environment?: string | null; sleep_after_minutes: number | null; sleeping_since: string | null; last_active_at: string | null }
 
@@ -15,13 +16,13 @@ const ago = (iso: string | null) => {
 }
 
 /** Sets how long a staging app may sit idle before it sleeps. */
-export function SleepSelect({ projectId, minutes, disabled, onChanged, className }: { projectId: string; minutes: number | null; disabled?: boolean; onChanged: (minutes: number | null, warning: string | null) => void; className?: string }) {
+export function SleepSelect({ projectId, minutes, disabled, onChanged, className, serverId }: { projectId: string; minutes: number | null; disabled?: boolean; onChanged: (minutes: number | null, warning: string | null) => void; className?: string; serverId?:string }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const change = async (value: string) => {
     setSaving(true); setError('')
     try {
-      const response = await fetch(`/api/sites/${projectId}/sleep`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ minutes: value ? Number(value) : null }) })
+      const response = await scopedInfrastructureFetch(serverId, `/api/sites/${projectId}/sleep`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ minutes: value ? Number(value) : null }) })
       const body = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(body.error || 'Could not save')
       onChanged(body.minutes ?? null, body.caddyWarning ?? null)
@@ -41,11 +42,11 @@ export function SleepSelect({ projectId, minutes, disabled, onChanged, className
   )
 }
 
-export function WakeButton({ projectId, disabled, onWoken }: { projectId: string; disabled?: boolean; onWoken?: () => void }) {
+export function WakeButton({ projectId, disabled, onWoken, serverId }: { projectId: string; disabled?: boolean; onWoken?: () => void; serverId?:string }) {
   const [state, setState] = useState<'idle' | 'starting' | 'error'>('idle')
   const wake = async () => {
     setState('starting')
-    const response = await fetch(`/api/sites/${projectId}/wake`, { method: 'POST' }).catch(() => null)
+    const response = await scopedInfrastructureFetch(serverId, `/api/sites/${projectId}/wake`, { method: 'POST' }).catch(() => null)
     if (!response?.ok) { setState('error'); return }
     // Starting takes about as long as a restart; check back after a short while.
     window.setTimeout(() => { setState('idle'); onWoken?.() }, 20_000)

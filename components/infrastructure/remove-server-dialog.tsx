@@ -61,6 +61,7 @@ export function RemoveServerDialog({ serverId, serverName, leaveWorkspace = fals
                 <li>Deployments, monitoring, console access, runtime controls and agent updates stop through this connection.</li>
                 <li>{review.applications.length} application record{review.applications.length === 1 ? '' : 's'}, {review.domains.length} domain record{review.domains.length === 1 ? '' : 's'}, {review.history.jobs} job record{review.history.jobs === 1 ? '' : 's'}, health history, saved environment values and service credentials are deleted from Manager.</li>
                 <li>{review.queuedOperations} queued operation{review.queuedOperations === 1 ? '' : 's'} will never start through this connection. Previously revoked work may still finish on the server.</li>
+                {!!review.automation && <li>{review.automation.schedules} scheduled jobs stop being dispatched. {review.automation.workers} registered workers lose Manager controls; workers already running remain on the server.</li>}
                 <li>Export any configuration and credentials you need first. Reconnecting requires new enrollment and importing applications again; it does not restore this history.</li>
               </ul>
             </div>

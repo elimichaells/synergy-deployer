@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { dataServiceRemovalReason, migrationRemovalReason } from '@/lib/data-removal-policy'
+import { resourceWorkspacesFixture } from './resource-workspaces-api'
 import { remoteServersFixture } from './remote-servers-api'
 import { releaseCleanupFixture } from './release-cleanup-api'
 
@@ -16,6 +17,7 @@ const listedServices = () => dataState.services.map(service => ({ ...service, re
 const fixtureRuntimes = () => ['git', 'node', 'go', 'php', 'composer', 'angular', 'postgresql', 'mysql', 'mariadb', 'caddy', 'sling', 'phpmyadmin'].map(id => ({ id, name: ({ node: 'Node.js', go: 'Go', php: 'PHP', mysql: 'MySQL', postgresql: 'PostgreSQL tools', phpmyadmin: 'phpMyAdmin', angular: 'Angular CLI', caddy: 'Caddy', git: 'Git', composer: 'Composer', mariadb: 'MariaDB', sling: 'Sling migration engine' } as Record<string, string>)[id], purpose: 'Application host dependency', installed: !['mariadb', 'angular'].includes(id), version: ['mariadb', 'angular'].includes(id) ? null : id === 'node' ? 'v24.13.0' : '1.0.0', installedVersions: ['node', 'php', 'go'].includes(id) ? ['1.0.0', '2.0.0'] : [], canInstall: true, canUpdate: true, canConfigure: id === 'mysql', versioned: ['node', 'php', 'go'].includes(id), updateAvailable: id === 'node', latestVersion: id === 'node' ? '24.14.0' : null, updateRisk: 'minor', activeJob: null, latestJob: null }))
 export async function GET(request: Request) {
   const cleanup = await releaseCleanupFixture(request, state.role); if (cleanup) return cleanup
+  const resources = await resourceWorkspacesFixture(request, state.role); if (resources) return resources
   const remote = await remoteServersFixture(request); if (remote) return remote
   const url = new URL(request.url); const pathname = url.pathname
   if(pathname==='/api/manager-updates') return result(url.searchParams.get('check')==='1'?{version:'2.22.0',newer:true,available:true,url:'https://github.com/elimichaells/synergy-deployer/releases',notes:'Example release notes for the isolated UI preview.'}:{version:updateState.version,configured:true,assetName:'manager-update-win32-x64-node24.tar',recoveryDirectory:'C:\\ProgramData\\Manager\\updates',job:updateState.job,history:updateState.job?[updateState.job]:[]})
@@ -58,6 +60,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const cleanup = await releaseCleanupFixture(request, state.role); if (cleanup) return cleanup
+  const resources = await resourceWorkspacesFixture(request, state.role); if (resources) return resources
   const remote = await remoteServersFixture(request); if (remote) return remote
   const pathname = new URL(request.url).pathname
   const body = await request.json().catch(() => ({}))
@@ -105,6 +108,8 @@ export async function POST(request: Request) {
   return result({ ok: true })
 }
 export async function PATCH(request: Request) {
+  const resources = await resourceWorkspacesFixture(request, state.role); if (resources) return resources
+  const remote = await remoteServersFixture(request); if (remote) return remote
   const body = await request.json()
   const map: Record<string, string> = { projectType: 'project_type', runtimeVersions: 'runtime_versions', buildCmd: 'build_cmd', startCmd: 'start_cmd', deployScript: 'deploy_script', autoDeploy: 'auto_deploy' }
   for (const [key, value] of Object.entries(body)) state.project[map[key] || key] = value
@@ -120,6 +125,7 @@ export async function PUT(request: Request) {
   return result({ ok: true, updated: Object.keys(body) })
 }
 export async function DELETE(request: Request) {
+  const resources = await resourceWorkspacesFixture(request, state.role); if (resources) return resources
   const remote = await remoteServersFixture(request); if (remote) return remote
   const pathname = new URL(request.url).pathname
   if (pathname.endsWith('/related')) state.grouped = false

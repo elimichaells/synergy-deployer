@@ -1,6 +1,11 @@
 'use client'
 import { DomainsWorkspace } from '@/components/infrastructure/domains-workspace'
 import { RemoveServerDialog } from '@/components/infrastructure/remove-server-dialog'
+import { RenameServerDialog } from '@/components/infrastructure/rename-server-dialog'
+import { MemoryWorkspace } from '@/components/infrastructure/memory-workspace'
+import { DiskWorkspace } from '@/components/infrastructure/disk-workspace'
+import { OperationsWorkspace } from '@/components/infrastructure/operations-workspace'
+import { AutomationWorkspace } from '@/components/infrastructure/automation-workspace'
 
 
 import { AgentUpdates } from '@/components/infrastructure/agent-updates'
@@ -108,10 +113,15 @@ function ManagedServerWorkspace({ id }: { id: string }) {
   const titles = { overview: 'Overview', applications: 'Projects', deployments: openedJob ? openedJob.app_name : 'Deployments', 'server-access': { health: 'Health & alerts', runtimes: 'Runtimes & tools', processes: 'Processes', agent: 'Agent access & updates', console:'Server console' }[infraSection] || 'Infrastructure', storage: 'Storage', domains: 'Domains & DNS', new: 'Add a new app', app: selected?.name || 'Application unavailable' }
   const title = projectId ? project?.name || 'Project unavailable' : titles[view]
   const notice = 'rounded-lg border border-status-building/25 bg-status-building/5 p-4 text-sm leading-6 text-status-building'
+  if (view === 'server-access') {
+    const SharedWorkspace = ({ memory: MemoryWorkspace, disk: DiskWorkspace, operations: OperationsWorkspace, automation: AutomationWorkspace } as Record<string,typeof MemoryWorkspace>)[infraSection]
+    if (SharedWorkspace) return <SharedWorkspace key={`${id}:${infraSection}`} serverId={id} onWorkspaceHashChange={setHash} />
+  }
   return <Tabs value={project ? projectTab : appTab} onValueChange={changeTab}><AppShell infrastructureSection={params.get('section')} area={view === 'server-access' || view === 'domains' ? 'infrastructure' : undefined} title={title} onWorkspaceHashChange={setHash} unsavedChanges={formDirty} workspace={{ href: `${root}${params.size ? `?${params}` : ''}${hash}`, project: parentProject ? { name: parentProject.name, href: remoteProjectHref(id, parentProject.id) } : undefined, environment: selected ? selected.environment_name || 'production' : project ? projectEnvironment : undefined, page: project?.name || (openedJob ? `Release ${openedJob.id.slice(0,8)}` : undefined), destinations: Object.fromEntries(summary.apps.map(app => [`#app-${app.id}`, `${app.name}${app.environment_name ? ` · ${app.environment_name}` : ''}`])) }} subtitle={selected ? <span className="flex items-center gap-2"><EnvironmentBadge environment={selected.environment_name || 'production'} /><span className="font-mono text-xs">{selected.repo_url.replace(/^https?:\/\//, '').replace(/\.git$/, '')}</span></span> : project ? `${project.apps.filter(app => !app.production_id).length} app · ${databaseCount || 'no'} ${databaseCount === 1 ? 'database' : 'databases'} · ${domainCount || 'no'} ${domainCount === 1 ? 'domain' : 'domains'}` : view === 'applications' ? `${projects.length} projects · ${summary.apps.length} environments` : `${server.name} · ${server.platform === 'win32' ? 'Windows' : 'Linux'}${server.location ? ` · ${server.location}` : ''}`}
     back={parentProject ? { href: remoteProjectHref(id, parentProject.id, 'overview', selected?.environment_name), label: parentProject.name } : projectId ? { href: `${root}#applications`, label: 'Projects' } : view === 'app' || view === 'new' ? { href: `${root}#applications`, label: 'Projects' } : openedJob ? { href: `${root}#deployments`, label: 'Deployments' } : undefined}
     tabs={project ? <ProjectTabs unavailable={server.metrics?.capabilities?.includes('remote-console-v1')?{}:{ logs: remoteRuntimeToolsUnavailable }} /> : selected ? <ApplicationTabs unavailable={server.metrics?.capabilities?.includes('remote-console-v1')?{}:{ logs: remoteRuntimeToolsUnavailable }} activeTab={appTab} showSetupTab={!!selected.guided_setup && (!selected.setup_completed_at || appTab === 'setup')} /> : undefined}
     actions={<>
+      {admin && !selected && !projectId && (view === 'overview' || (view === 'server-access' && infraSection === 'agent')) && <RenameServerDialog serverId={id} serverName={server.name} onRenamed={name => setData(current => current ? { ...current, server: { ...current.server, name } } : current)} />}
       {admin && !selected && !projectId && (view === 'overview' || (view === 'server-access' && infraSection === 'agent')) && <RemoveServerDialog serverId={id} serverName={server.name} leaveWorkspace disabled={sshBusy} />}
       {selected && !selected.hostname.endsWith('.invalid') && <Button asChild variant="outline" size="sm"><a href={`https://${selected.hostname}`} target="_blank" rel="noreferrer">Visit<ArrowUpRight className="ml-1.5 h-3.5 w-3.5" /></a></Button>}
       <Button variant="outline" size="sm" onClick={() => void load()}><RefreshCw className="mr-1.5 h-3.5 w-3.5" />Refresh</Button>

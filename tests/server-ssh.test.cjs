@@ -8,7 +8,7 @@ const catalog = load('lib/server-tool-catalog.ts',{});
 const discovery = load('lib/server-discovery.ts',{'./server-tool-catalog':catalog});
 class ApiError extends Error { constructor(message,status){super(message);this.status=status;} }
 const ssh = load('lib/server-ssh.ts', {
-  '@/lib/db': {}, '@/lib/api': {ApiError}, '@/lib/audit': {}, '@/lib/managed-servers': {}, '@/scripts/manager-agent.cjs': policy,
+  '@/lib/db': {}, '@/lib/api': {ApiError}, '@/lib/audit': {}, '@/lib/managed-servers': {}, '@/scripts/agent-bundle.cjs':require('../scripts/agent-bundle.cjs'),'@/scripts/manager-agent.cjs': policy,
   '@/lib/server-discovery':discovery, '@/lib/server-tool-catalog':catalog,
 });
 

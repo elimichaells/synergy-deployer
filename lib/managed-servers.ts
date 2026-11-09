@@ -33,6 +33,7 @@ export function ensureManagedServers() {
       await client.query(await readFile(path.join(process.cwd(), 'db/migrations/027_remote_agent_updates.sql'), 'utf8'))
       await client.query(await readFile(path.join(process.cwd(), 'db/migrations/028_remote_operations.sql'), 'utf8'))
       await client.query(await readFile(path.join(process.cwd(), 'db/migrations/029_remote_infrastructure.sql'), 'utf8'))
+      await client.query(await readFile(path.join(process.cwd(), 'db/migrations/030_remote_resources.sql'), 'utf8'))
       await client.query('commit')
     } catch (error) { await client.query('rollback'); throw error } finally { client.release() }
   })().catch(error => { schema = null; throw error })
@@ -80,6 +81,21 @@ export async function addServer(body: Record<string, unknown>, userId: string) {
   [text(body.name, 'server name'), body.location ? text(body.location, 'location') : '', body.platform, hash(enrollmentToken)])
   await audit(userId, 'server.create', rows[0].id, { name: body.name, platform: body.platform })
   return { id: rows[0].id, enrollmentToken, expiresInMinutes: 60 }
+}
+
+export async function renameServer(id: string, body: Record<string, unknown>, userId: string) {
+  uuid(id)
+  const name = text(body.name, 'server name')
+  if (typeof body.previousName !== 'string' || body.previousName.length > 100) throw new ApiError('The current server name is required', 400)
+  await ensureManagedServers()
+  // Compare the displayed name to avoid silently overwriting another administrator's rename.
+  const result = await query('update managed_servers set name=$2 where id=$1 and name=$3 returning id,name', [id, name, body.previousName])
+  if (!result.rowCount) {
+    if (!(await query('select id from managed_servers where id=$1', [id])).rowCount) throw new ApiError('Server not found', 404)
+    throw new ApiError('This server was renamed elsewhere. Refresh the page and try again with its current name.', 409)
+  }
+  if (name !== body.previousName) await audit(userId, 'server.rename', id, { previousName: body.previousName, name })
+  return result.rows[0] as { id: string; name: string }
 }
 
 export async function changeServer(id: string, action: unknown, userId: string) {
@@ -149,6 +165,7 @@ export async function heartbeat(server: { id: string; platform: string }, body: 
   }
   await query('update managed_servers set last_seen_at=now(),metrics=$2::jsonb,ca_pem=coalesce($3,ca_pem) where id=$1 and enabled=true', [server.id, JSON.stringify(metrics), certificate])
   if(metrics.capabilities?.includes(INFRASTRUCTURE_CAPABILITY))await (await import('@/lib/remote-health')).recordRemoteHealth(server.id,metrics)
+  if(metrics.resources)await (await import('@/lib/remote-resources')).recordRemoteMemory(server.id,metrics)
   return { ok: true }
 }
 
@@ -307,6 +324,7 @@ export async function reportJob(serverId: string, body: Record<string, unknown>)
     if (finished && kind === 'database') await client.query(`update remote_apps set database_config=jsonb_set(database_config,'{status}',to_jsonb($2::text)),
       setup_decisions=setup_decisions||jsonb_build_object('database',case when $2='ready' then 'configured' else 'pending' end),setup_completed_at=null where id=$1`,[job.app_id,body.status === 'success' ? 'ready' : 'failed'])
     if (body.status === 'success' && kind === 'validate') await client.query("update remote_apps set setup_completed_at=now(),setup_step='review' where id=$1",[job.app_id])
+    if(finished&&job.resource_action)await (await import('@/lib/remote-automation')).finishResource(client,serverId,job,payload,body.status==='success',result)
     await client.query('commit')
     return { ok: true, cancelRequested:job.cancel_requested===true }
   } catch (error) { await client.query('rollback'); throw error } finally { client.release() }

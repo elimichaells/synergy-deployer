@@ -11,7 +11,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useWorkspace } from './workspace-provider'
 
 export type WorkspaceContextInfo = { href?: string; project?: { name: string; href: string }; environment?: 'production' | 'staging'; page?: string; destinations?: Record<string, string> }
-const sectionNames: Record<string, string> = { overview: 'Overview', env: 'Environment', environment: 'Environment', setup: 'Setup', settings: 'Settings', logs: 'Logs', console: 'Console', deployments: 'Deployments', domains: 'Domains', storage: 'Storage', stack: 'Stack', health: 'Health', apps: 'Applications', databases: 'Databases', team: 'Team', general: 'General', updates: 'Updates', applications: 'Projects', new: 'New app', 'server-access': 'Infrastructure' }
+const sectionNames: Record<string, string> = { memory: 'Memory', disk: 'Disk cleanup', operations: 'AI Operations', automation: 'Jobs & workers', runtimes: 'Runtimes & tools', agent: 'Agent access & updates', processes: 'Processes', overview: 'Overview', env: 'Environment', environment: 'Environment', setup: 'Setup', settings: 'Settings', logs: 'Logs', console: 'Console', deployments: 'Deployments', domains: 'Domains', storage: 'Storage', stack: 'Stack', health: 'Health', apps: 'Applications', databases: 'Databases', team: 'Team', general: 'General', updates: 'Updates', applications: 'Projects', new: 'New app', 'server-access': 'Infrastructure' }
 const pageNames: Record<string, string> = { '/': 'Servers', '/overview': 'Overview', '/projects': 'Projects', '/sites': 'Applications', '/sites/new': 'New application', '/settings': 'Settings', '/storage': 'Storage', '/deployments': 'Deployments', '/infrastructure': 'Infrastructure', '/infrastructure/servers': 'Server connections' }
 
 export function WorkspaceBar({ title, context, onNew, onHashChange }: { title: string; context?: WorkspaceContextInfo; onNew: () => void; onHashChange: (hash: string) => void }) {
@@ -28,7 +28,10 @@ export function WorkspaceBar({ title, context, onNew, onHashChange }: { title: s
     sync(); window.addEventListener('hashchange', sync); window.addEventListener('popstate', sync); document.addEventListener('click', click)
     return () => { clearTimeout(timer); window.removeEventListener('hashchange', sync); window.removeEventListener('popstate', sync); document.removeEventListener('click', click) }
   }, [pathname, params])
-  useEffect(() => { onHashChange(hash) }, [hash, onHashChange])
+  // A newly mounted shared workspace starts with an empty React hash. Do not
+  // publish that placeholder to the parent before the browser hash is sampled:
+  // it would replace the selected screen, remount us and repeat indefinitely.
+  useEffect(() => { if(hash===window.location.hash)onHashChange(hash) }, [hash, onHashChange])
   const href = workspaceHref(`${pathname}${params.size ? `?${params}` : ''}${hash}`)
   const activeId = href ? workspaceTabId(href) : ''
   const serverId = href ? workspaceServer(href) : 'fleet'

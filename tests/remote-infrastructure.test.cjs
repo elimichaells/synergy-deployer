@@ -107,7 +107,7 @@ test('real PostgreSQL infrastructure admission, claims, reports, health retentio
   await assert.rejects(infra.remoteInfrastructureJob(randomUUID(),job.id,true),e=>e.status===404);
   await load('lib/managed-servers.ts',mocks).ensureManagedServers();
   await query(await fs.readFile(path.resolve(__dirname,'../db/migrations/028_remote_operations.sql'),'utf8')); // Previous Manager can reapply its migration after rollback.
-  const health=load('lib/remote-health.ts',{'./db':{db:pool,query},'./managed-servers':managed,'@/scripts/manager-agent.cjs':agent,'@/scripts/server-monitor-policy.cjs':require('../scripts/server-monitor-policy.cjs'),'@/scripts/health-history.cjs':require('../scripts/health-history.cjs')});
+  const health=load('lib/remote-health.ts',{'./db':{db:pool,query},'./managed-servers':managed,'@/scripts/manager-agent.cjs':agent,'@/scripts/server-monitor-policy.cjs':require('../scripts/server-monitor-policy.cjs'),'@/scripts/uptime-history.cjs':require('../scripts/uptime-history.cjs'),'@/scripts/health-history.cjs':require('../scripts/health-history.cjs')});
   await health.recordRemoteHealth(server.id,metrics);
   assert.equal((await health.remoteHealth(server.id)).incidents.length,0);
   await query("update remote_health set state=jsonb_set(state,'{checkedAt}',to_jsonb((now()-interval '61 seconds')::text)) where server_id=$1",[server.id]);

@@ -9,6 +9,7 @@ import { ApiError } from '@/lib/api'
 import { audit } from '@/lib/audit'
 import { changeServer, ensureManagedServers, uuid } from '@/lib/managed-servers'
 import { redact } from '@/scripts/manager-agent.cjs'
+import { agentBundle } from '@/scripts/agent-bundle.cjs'
 import { discoveryPaths, selectedTools, toolCompatible, verifyToolPlan } from '@/lib/server-discovery'
 import { SERVER_TOOLS, type ServerToolId, type ServerInventory, type ToolCandidate } from '@/lib/server-tool-catalog'
 
@@ -295,7 +296,7 @@ export async function setupServerSsh(serverId: string, body: Record<string, unkn
     const windowsStage = stage.replace(/^\/([A-Za-z]:\/)/,'$1').replace(/\//g,'\\')
     if (server.platform === 'win32') await sshExec(connection,powershell(`$ErrorActionPreference='Stop'; $p=${psQuote(windowsStage)}; $account=[Security.Principal.WindowsIdentity]::GetCurrent().Name; & icacls.exe $p /inheritance:r /grant:r ($account+':(OI)(CI)F') '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'; if($LASTEXITCODE -ne 0){exit 1}`))
     const write = async (name: string, content: string) => { files.push(path.posix.join(stage,name)); await writeRemote(sftp!,path.posix.join(stage,name),content) }
-    await write('manager-agent.cjs',await readFile(path.join(process.cwd(),'scripts/manager-agent.cjs'),'utf8'))
+    await write('manager-agent.cjs',await agentBundle())
     await write('manager-agent-supervisor.cjs',await readFile(path.join(process.cwd(),'scripts/manager-agent-supervisor.cjs'),'utf8'))
     await write('enrollment.json',JSON.stringify({ manager,serverId,enrollmentToken }))
     await write('tool-paths.json',JSON.stringify(reuse))

@@ -1,4 +1,5 @@
 export interface RemoteMetrics {
+  resources?: ReturnType<typeof import('@/scripts/manager-agent-resources.cjs').sanitize>
   hostname: string
   platform: 'win32' | 'linux'
   arch?: string
@@ -12,7 +13,7 @@ export interface RemoteMetrics {
   uptime: number
   addresses: string[]
   tools: { node: string; git: string | null; pm2: string | null; caddy: string | null } & Record<string, string | null>
-  apps: { id: string; status: string; cpu: number; memory: number; uptime?: number|null; restarts?: number; pid?:number|null; logBytes?:number; check?:{ok:boolean;status:number|null;ms:number;reason:string}|null }[]
+  apps: { id: string; status: string; cpu: number; memory: number; uptime?: number|null; restarts?: number; pid?:number|null; logBytes?:number; check?:{ok:boolean;status:number|null;ms:number;reason:string;diagnostics?:{dependency:string;issueCode:string;detail:string;nextStep:string}}|null }[]
   pm2Error?:boolean
   caddy?:{mode:string;status:string;configPath:string;version:string}|null
   proxyError?: string | null

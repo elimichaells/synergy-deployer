@@ -6,7 +6,9 @@ import { getSessionFromCookie } from '@/lib/auth'
 import { requireRole } from '@/lib/rbac'
 import { ApiError, jsonError } from '@/lib/api'
 import { readBody, requireSameOrigin } from '@/lib/request-body'
-import { addServer, cancelQueuedJob, changeServer, listServers, queueRemoteDeploy, saveRemoteApp, serverCertificate, serverDetail } from '@/lib/managed-servers'
+import { addServer, cancelQueuedJob, changeServer, listServers, queueRemoteDeploy, renameServer, saveRemoteApp, serverCertificate, serverDetail } from '@/lib/managed-servers'
+import { updateProtected } from '@/lib/update-maintenance'
+import { agentBundle } from '@/scripts/agent-bundle.cjs'
 import { importRemoteApp, remoteSetup, remoteSetupEnvironment, changeRemoteSetup } from '@/lib/remote-app-setup'
 import { agentUpdateStatus, queueAgentUpdate, cancelAgentUpdate } from '@/lib/remote-agent-updates'
 
@@ -33,7 +35,7 @@ export async function GET(_request: Request, context: Context) {
     if (parts.length === 1 && ['agent','agent-supervisor'].includes(parts[0])) {
       requireRole(user, ['admin'])
       const filename = parts[0] === 'agent' ? 'manager-agent.cjs' : 'manager-agent-supervisor.cjs'
-      const source = await readFile(path.join(process.cwd(), 'scripts',filename), 'utf8')
+      const source = parts[0] === 'agent' ? await agentBundle() : await readFile(path.join(process.cwd(), 'scripts',filename), 'utf8')
       return new NextResponse(source, { headers: { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${filename}"`, 'Cache-Control': 'no-store' } })
     }
     if (parts.length === 2 && parts[1] === 'ca') {
@@ -43,6 +45,17 @@ export async function GET(_request: Request, context: Context) {
     }
     if (parts.length === 1) return NextResponse.json({ ...await serverDetail(parts[0]), role: user!.role })
     throw new ApiError('Not found', 404)
+  } catch (error) { return jsonError(error) }
+}
+
+export async function PATCH(request: Request, context: Context) {
+  try {
+    const user = await getSessionFromCookie()
+    requireRole(user, ['admin']); requireSameOrigin(request)
+    const parts = (await context.params).path || []
+    if (parts.length !== 1) throw new ApiError('Not found', 404)
+    const body = await readBody(request, 4096)
+    return NextResponse.json(await updateProtected('Rename server', () => renameServer(parts[0], body, user!.id)), { headers: { 'Cache-Control': 'no-store' } })
   } catch (error) { return jsonError(error) }
 }
 

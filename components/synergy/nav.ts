@@ -49,11 +49,12 @@ export function workspaceInfrastructureItems(pathname: string) {
   const scope = serverScope(pathname)
   if (scope.kind !== 'remote') return infrastructureItems
   const root = serverOverview(scope.id)
+  const destinations: Record<string, string> = {
+    '/infrastructure/operations': 'operations', '/infrastructure/health': 'health', '/services': 'processes',
+    '/infrastructure/memory': 'memory', '/infrastructure/disk': 'disk', '/automation': 'automation', '/infrastructure/runtimes': 'runtimes',
+  }
   return [
-    { href: `${root}?section=health#server-access`, label: 'Health & alerts', icon: Gauge, description: 'Reported CPU, memory, disk and connection health' },
-    { href: `${root}#domains`, label: 'Domains & DNS', icon: Globe2, description: 'Application hostnames, IP access and Caddy HTTPS' },
-    { href: `${root}?section=processes#server-access`, label: 'Processes', icon: Cpu, description: 'Application processes reported by this server' },
-    { href: `${root}?section=runtimes#server-access`, label: 'Runtimes & tools', icon: Wrench, description: 'Installed tools reported by the agent' },
+    ...infrastructureItems.map(item => ({ ...item, href: item.href === '/domains' ? `${root}#domains` : destinations[item.href] ? `${root}?section=${destinations[item.href]}#server-access` : item.href })),
     { href: `${root}?section=console#server-access`, label:'Server console', icon:Terminal, description:'Audited commands on this server' },
     { href: `${root}?section=agent#server-access`, label: 'Agent access & updates', icon: ShieldCheck, description: 'Connection, safe agent updates and enrollment' },
   ]

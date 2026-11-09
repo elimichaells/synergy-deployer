@@ -1,6 +1,7 @@
 import { db, query } from '@/lib/db'
 import { encryptSecret, decryptSecret } from '@/lib/secret-crypto'
 import { ApiError } from '@/lib/api'
+import type { PoolClient } from 'pg'
 
 export const AI_SCHEMA = `
 create table if not exists manager_ai_settings (
@@ -22,6 +23,21 @@ create table if not exists manager_ai_reviews (
  result jsonb
 );
 create index if not exists manager_ai_reviews_project on manager_ai_reviews(project_id,created_at desc);
+alter table manager_ai_events add column if not exists server_id uuid;
+create table if not exists remote_ai_settings (
+ server_id uuid primary key, enabled boolean not null default false, model text not null default '',
+ key_ciphertext text, recovery_enabled boolean not null default true, updated_at timestamptz not null default now()
+);
+do $$ begin
+ if to_regclass('managed_servers') is not null then
+  if not exists(select 1 from pg_constraint where conname='remote_ai_settings_server_fk') then
+   alter table remote_ai_settings add constraint remote_ai_settings_server_fk foreign key(server_id) references managed_servers(id) on delete cascade;
+  end if;
+  if not exists(select 1 from pg_constraint where conname='manager_ai_events_server_fk') then
+   alter table manager_ai_events add constraint manager_ai_events_server_fk foreign key(server_id) references managed_servers(id) on delete cascade;
+  end if;
+ end if;
+end $$;
 `
 export async function ensureAiSchema() {
   if (process.env.MANAGER_PREVIEW === '1') throw new ApiError('Preview is read-only', 503)
@@ -34,32 +50,38 @@ export async function ensureAiSchema() {
     await client.query('commit')
   } catch (error) { await client.query('rollback'); throw error } finally { client.release() }
 }
-export async function aiSettings() {
+export async function aiSettings(serverId?:string,transaction?:PoolClient) {
   try {
-    const row = (await query('select enabled,model,key_ciphertext,recovery_enabled from manager_ai_settings where id=1')).rows[0]
+    const sql=serverId?'select enabled,model,key_ciphertext,recovery_enabled from remote_ai_settings where server_id=$1':'select enabled,model,key_ciphertext,recovery_enabled from manager_ai_settings where id=1',args=serverId?[serverId]:[]
+    const row = (await (transaction?transaction.query(sql,args):query(sql,args))).rows[0]
     return { enabled: row?.enabled === true, model: row?.model || '', configured: !!row?.key_ciphertext, recoveryEnabled: row?.recovery_enabled !== false }
   } catch (error) {
     if ((error as { code?: string }).code !== '42P01') throw error
     return { enabled: false, model: '', configured: false, recoveryEnabled: true }
   }
 }
-export async function saveAiSettings(body: Record<string, unknown>) {
+export async function saveAiSettings(body: Record<string, unknown>,serverId?:string,transaction?:PoolClient) {
   if (typeof body.enabled !== 'boolean' || typeof body.recoveryEnabled !== 'boolean' || typeof body.model !== 'string' || (body.model && !/^[a-zA-Z0-9._:-]{1,100}$/.test(body.model))) throw new ApiError('Invalid AI connection settings', 400)
   if (body.apiKey !== undefined && (typeof body.apiKey !== 'string' || body.apiKey.length < 20 || body.apiKey.length > 1024 || /\s/.test(body.apiKey))) throw new ApiError('Invalid API key', 400)
-  await ensureAiSchema()
-  const before = await aiSettings()
+  if(!transaction)await ensureAiSchema()
+  const before = await aiSettings(serverId,transaction)
   if (body.enabled && (!body.model || (!before.configured && !body.apiKey) || body.removeKey)) throw new ApiError('Supply a model and API key before enabling AI diagnosis', 400)
+  if(serverId) {
+    const sql=`insert into remote_ai_settings(server_id,enabled,model,key_ciphertext,recovery_enabled) values($1,$2,$3,$4,$5) on conflict(server_id) do update set enabled=$2,model=$3,key_ciphertext=case when $6 then null else coalesce($4,remote_ai_settings.key_ciphertext) end,recovery_enabled=$5,updated_at=now()`,args=[serverId,body.enabled,body.model,body.apiKey?encryptSecret(body.apiKey as string):null,body.recoveryEnabled,body.removeKey===true]
+    await (transaction?transaction.query(sql,args):query(sql,args))
+    return aiSettings(serverId,transaction)
+  }
   await query(`insert into manager_ai_settings (id,enabled,model,key_ciphertext,recovery_enabled) values(1,$1,$2,$3,$4)
     on conflict(id) do update set enabled=$1,model=$2,key_ciphertext=case when $5 then null else coalesce($3,manager_ai_settings.key_ciphertext) end,recovery_enabled=$4,updated_at=now()`,
   [body.enabled, body.model, body.apiKey ? encryptSecret(body.apiKey as string) : null, body.recoveryEnabled, body.removeKey === true])
   return aiSettings()
 }
-export async function aiKey() {
-  const row = (await query('select key_ciphertext from manager_ai_settings where id=1 and enabled=true')).rows[0]
+export async function aiKey(serverId?:string) {
+  const row = (await query(serverId?'select key_ciphertext from remote_ai_settings where server_id=$1 and enabled=true':'select key_ciphertext from manager_ai_settings where id=1 and enabled=true',serverId?[serverId]:[])).rows[0]
   if (!row?.key_ciphertext) throw new ApiError('Connect AI diagnosis in settings first', 409)
   return decryptSecret(row.key_ciphertext)
 }
-export async function aiHistory() {
-  try { return (await query(`select id,kind,status,project_id,details,created_at from manager_ai_events order by created_at desc limit 50`)).rows }
-  catch (error) { if ((error as { code?: string }).code === '42P01') return []; throw error }
+export async function aiHistory(serverId?:string) {
+  try { return (await query(`select id,kind,status,project_id,details,created_at from manager_ai_events where server_id is not distinct from $1::uuid order by created_at desc limit 50`,[serverId||null])).rows }
+  catch (error) { if ((error as { code?: string }).code === '42P01') return []; if(!serverId&&(error as {code?:string}).code==='42703')return (await query('select id,kind,status,project_id,details,created_at from manager_ai_events order by created_at desc limit 50')).rows; throw error }
 }
