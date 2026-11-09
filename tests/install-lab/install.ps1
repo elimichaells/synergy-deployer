@@ -81,12 +81,14 @@ try {
   Write-Host '[pass] Published installer completed; authenticated HTTPS, isolated databases, local CA and startup registration verified.'
 } catch { $record.error=$_.Exception.Message; throw }
 finally {
+  Save-Json $record (Join-Path $results 'install-result.json')
   if(Test-Path -LiteralPath (Join-Path $private 'installer.log')){
-    $log=[IO.File]::ReadAllText((Join-Path $private 'installer.log'))
-    if(Test-Path -LiteralPath (Join-Path $private 'installer-error.log')){$log+="`n"+[IO.File]::ReadAllText((Join-Path $private 'installer-error.log'))}
+    # PM2 can retain inherited handles after the installer exits. Read with shared
+    # access so diagnostics never mask the original installation failure.
+    $log=Get-Content -LiteralPath (Join-Path $private 'installer.log') -Raw
+    if(Test-Path -LiteralPath (Join-Path $private 'installer-error.log')){$log+="`n"+(Get-Content -LiteralPath (Join-Path $private 'installer-error.log') -Raw)}
     foreach($secret in $secrets){$log=$log.Replace($secret,'[redacted]')}
     [IO.File]::WriteAllText((Join-Path $results 'installer.log'),$log,[Text.UTF8Encoding]::new($false))
-    Get-Content -LiteralPath (Join-Path $results 'installer.log') -Tail 35
+    Get-Content -LiteralPath (Join-Path $results 'installer.log') -Tail 100
   }
-  Save-Json $record (Join-Path $results 'install-result.json')
 }
