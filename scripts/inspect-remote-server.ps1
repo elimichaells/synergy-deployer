@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'Stop'
+$env:PSModulePath=(Join-Path $PSHOME 'Modules')+';'+$env:PSModulePath
 $paths = '__MANAGER_PATHS__' | ConvertFrom-Json
 $ids = @('node','git','caddy','pm2','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer','sling','ng','mongod','sqlcmd','redis')
 $tools = @{}

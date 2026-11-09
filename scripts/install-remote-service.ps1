@@ -1,5 +1,6 @@
 param([Parameter(Mandatory=$true)][string]$PlanFile)
 $ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'
+$env:PSModulePath=(Join-Path $PSHOME 'Modules')+';'+$env:PSModulePath
 [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
 $plan=Get-Content -LiteralPath $PlanFile -Raw | ConvertFrom-Json
 $stage=Split-Path -Parent $PlanFile

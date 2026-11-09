@@ -78,7 +78,7 @@ else
       "$node_exe" "$stage/install-remote-tool.cjs" "$plan_file" "$target"
       selected="$(cat "$target/executable.txt")"; "$selected" --version
       useradd --system --no-create-home --shell /usr/sbin/nologin manager-redis
-      data="$target/data";config="$target/redis.conf";install -d -m 700 -o manager-redis -g manager-redis "$data"
+      data="$target/data";config="$target/manager-redis.conf";install -d -m 700 -o manager-redis -g manager-redis "$data"
       "$node_exe" - "$plan_file" "$config" "$data" "$target/src/redis-server" <<'JS'
 const fs=require('fs'),[file,config,data,exe]=process.argv.slice(2),p=JSON.parse(fs.readFileSync(file));if(!/^[a-f0-9]{72}$/.test(p.databasePassword))throw Error('Invalid Redis credential');
 const q=s=>'"'+s.replaceAll('\\','\\\\').replaceAll('"','\\"')+'"';
