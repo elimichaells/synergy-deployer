@@ -1,0 +1,35 @@
+name: Isolated database tuning lab
+on:
+  push:
+    branches: [codex/isolated-install-validation]
+    paths: ['.github/workflows/database-tuning-lab.yml', 'tests/database-lab/**', 'scripts/tune-database-memory.ps1', 'scripts/database-service.ps1', 'scripts/manager-agent-resources.cjs']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  database:
+    runs-on: windows-2025
+    timeout-minutes: 35
+    env:
+      MANAGER_DATABASE_LAB: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Provision disposable MySQL and MariaDB instances at custom paths
+        shell: pwsh
+        run: ./tests/database-lab/prepare.ps1
+      - name: Exercise real local and agent tuning with preserved peer databases
+        run: node tests/database-lab/verify.cjs
+      - name: Save sanitized test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: isolated-database-tuning
+          path: C:/ManagerDatabaseLab/results/*
+          if-no-files-found: error
+          retention-days: 7
