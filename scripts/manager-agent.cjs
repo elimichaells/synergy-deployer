@@ -444,7 +444,7 @@ async function sharedProxyConfig(root,text,tools,settings) {
     const source=previous.source.replace(previous.importLine,'import '+JSON.stringify(candidate.replace(/\\/g,'/')));
     await fs.writeFile(settings.candidatePath,source);
     const next=JSON.parse(await run(tools.caddy,['adapt','--config',settings.candidatePath,'--adapter','caddyfile'],{cwd:path.dirname(settings.configPath),stdoutOnly:true}));
-    if(next.apps?.tls?.automation?.policies?.some(policy=>policy.issuers?.some(issuer=>issuer.module==='internal'))&&next.apps?.pki?.certificate_authorities?.local?.install_trust!==false)throw Error('Shared Caddy needs skip_install_trust in its existing global options before enabling local HTTPS. Its owner must prepare this setting; existing sites and trust stores were preserved.');
+    if(/^\s*tls\s+internal(?:\s|$)/m.test(sites)&&next.apps?.pki?.certificate_authorities?.local?.install_trust!==false)throw Error('Shared Caddy needs skip_install_trust in its existing global options before enabling local HTTPS. Its owner must prepare this setting; existing sites and trust stores were preserved.');
     await atomicJson(transaction,{previousHash:configDigest(previous.config),nextHash:configDigest(next),sites});
     const response=await fetch(settings.admin+'/config/',{method:'POST',headers:{'Content-Type':'application/json','If-Match':previous.etag,Origin:settings.admin},body:JSON.stringify(next),signal:AbortSignal.timeout(30000),redirect:'error'});
     if(!response.ok)throw new Error(response.status===412?'Caddy changed concurrently; no managed routes were applied':'Existing Caddy rejected the managed routes (HTTP '+response.status+')');
