@@ -21,8 +21,15 @@ export async function GET() {
       try {
         const origin=`${admin.startsWith('http://')?'':'http://'}${admin}`
         const response=await fetch(`${origin}/pki/ca/local`,{headers:{Origin:origin},cache:'no-store',redirect:'error',signal:AbortSignal.timeout(3000)})
-        if(response.ok){const ca=await response.json();if(typeof ca.root_certificate==='string')return download(ca.root_certificate)}
-      } catch (error) { console.warn('[Caddy] Could not read the active public CA:',(error as Error).message) }
+        if(response.status===404)throw new ApiError('The running proxy has no local CA yet. Start its first LAN route before downloading the certificate.',409)
+        if(response.ok){
+          try {const ca=await response.json();if(typeof ca.root_certificate!=='string')throw Error('Missing public certificate');return download(ca.root_certificate)}
+          catch {throw new ApiError('The running proxy did not return a valid public CA certificate.',409)}
+        }
+      } catch (error) {
+        if(error instanceof ApiError)throw error
+        console.warn('[Caddy] Could not read the active public CA:',(error as Error).message)
+      }
     }
     const candidates = [
       process.env.CADDY_CA_CERTIFICATE,

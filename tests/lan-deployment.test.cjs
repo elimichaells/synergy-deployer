@@ -54,3 +54,13 @@ test('standalone downloaded agent embeds private address rules without repositor
   const source=await require('../scripts/agent-bundle.cjs').agentBundle();
   assert.ok(!source.includes("require('./lan-address.cjs')"));assert.match(source,/lan-ip-v1/);new(require('node:vm').Script)(source);
 });
+test('a running proxy without its local CA cannot return an unrelated certificate from disk',async t=>{
+  class ApiError extends Error{constructor(message,status){super(message);this.status=status}}
+  let diskReads=0;
+  const previous=global.fetch;t.after(()=>{global.fetch=previous});
+  const route=load('app/api/system/local-ca/route.ts',{'node:fs/promises':{readFile:async()=>{diskReads++;throw Error('Stale certificate must not be read')}},'@/lib/auth':{getSessionFromCookie:async()=>({role:'admin'})},'@/lib/rbac':{requireRole:()=>{}},'@/lib/api':{ApiError,jsonError:error=>{throw error}}});
+  global.fetch=async()=>new Response('{}',{status:404});
+  await assert.rejects(route.GET(),/running proxy has no local CA/);
+  global.fetch=async()=>Response.json({root_certificate:'invalid certificate'});
+  await assert.rejects(route.GET(),/valid public CA/);assert.equal(diskReads,0);
+});
