@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 
 interface Plan {
+  review?:string
   database: string; serverName: string; currentUser: string | null; roleName: string; objectCount: number; objectKinds: Record<string, number>
   apps: { serviceId: string; name: string; environment: string; files: { file: string; changes: number }[] }[]
   blockers: string[]; notes: string[]
@@ -23,16 +24,18 @@ export function DedicatedUserSheet({ serviceId, open, onOpenChange, onDone }: { 
   const [running, setRunning] = useState(false)
   const [understood, setUnderstood] = useState(false)
   const [result, setResult] = useState<{ ok: boolean; steps?: string[]; message?: string } | null>(null)
+  const [recovery,setRecovery]=useState<{id:string;status:string;error?:string}|null>(null)
 
   useEffect(() => {
     if (!open) return
     const controller=new AbortController()
-    setPlan(null); setResult(null); setUnderstood(false); setLoading(true)
+    setPlan(null); setRecovery(null); setResult(null); setUnderstood(false); setLoading(true)
     void fetch(`/api/storage/${serviceId}/dedicated-user`, { cache: 'no-store',signal:controller.signal }).then(async response => {
       const body = await response.json().catch(() => ({}))
       if(controller.signal.aborted)return
       if (!response.ok) throw new Error(body.error || 'Could not prepare the switch')
       setPlan(body.plan)
+      setRecovery(body.recovery||null)
     }).catch(error => {if(!controller.signal.aborted)setResult({ ok: false, message: error.message })}).finally(() => {if(!controller.signal.aborted)setLoading(false)})
     return()=>controller.abort()
   }, [open, serviceId,fetch])
@@ -40,10 +43,12 @@ export function DedicatedUserSheet({ serviceId, open, onOpenChange, onDone }: { 
   const run = async () => {
     setRunning(true); setResult(null)
     try {
-      const response = await fetch(`/api/storage/${serviceId}/dedicated-user`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true }) })
+      const response = await fetch(`/api/storage/${serviceId}/dedicated-user`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true,review:plan?.review,...(recovery?{reconcile:recovery.id}:{}) }) })
       const body = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(body.error || 'The switch failed')
+      if(body.rolledBack){setRecovery(null);setPlan(null);setResult({ok:false,message:'The operation was rolled back. The apps retain their previous settings. Close and reopen these checks before trying again.'});onDone();return}
       setResult({ ok: true, steps: body.steps })
+      setRecovery(null)
       onDone()
     } catch (error) { setResult({ ok: false, message: (error as Error).message }) } finally { setRunning(false) }
   }
@@ -53,10 +58,11 @@ export function DedicatedUserSheet({ serviceId, open, onOpenChange, onDone }: { 
       <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
         <SheetHeader>
           <SheetTitle>Give this database its own user</SheetTitle>
-          <SheetDescription>Replace the superuser login with a user that can only reach {plan?.database || 'this database'}.</SheetDescription>
+          <SheetDescription>Replace the superuser login with a limited user for {plan?.database || 'this database'}.</SheetDescription>
         </SheetHeader>
         <div className="mt-6 space-y-5">
           {loading && <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Checking the database and its apps…</div>}
+          {recovery&&<div role="alert" className="space-y-3 rounded-lg border border-amber-400/25 bg-amber-400/5 p-3 text-sm"><p>{recovery.status==='running'?'A database change is still running. Close and reopen these checks when the operation finishes.':recovery.error||'Verify the interrupted database operation before making another change.'}</p>{recovery.status==='needs_review'&&<Button onClick={()=>void run()} disabled={running}>{running?'Verifying…':'Verify the recorded outcome'}</Button>}</div>}
 
           {plan && !result?.ok && (
             <>

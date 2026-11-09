@@ -79,7 +79,7 @@ export async function remoteStorageDetail(serverId:string,id:string){
 }
 const name=(value:unknown,label:string,max=63)=>{const result=text(value,label,max);if(!/^[A-Za-z_][A-Za-z0-9_]*$/.test(result))throw new ApiError(`${label} must use letters, numbers and underscores`,400);return result}
 const password=()=>randomBytes(30).toString('base64url')
-async function idle(client:PoolClient,serverId:string){if((await client.query("select 1 from remote_jobs where server_id=$1 and status in ('queued','running') union all select 1 from remote_storage_renames where server_id=$1 and status in ('running','needs_review')",[serverId])).rowCount)throw new ApiError('Finish the current server operation or verify the pending database rename first',409)}
+async function idle(client:PoolClient,serverId:string){if((await client.query("select 1 from remote_jobs where server_id=$1 and status in ('queued','running') union all select 1 from remote_storage_renames where server_id=$1 and status in ('running','needs_review') union all select 1 from remote_storage_changes where server_id=$1 and status in ('running','needs_review')",[serverId])).rowCount)throw new ApiError('Finish the current server operation or verify the pending database change first',409)}
 async function application(client:PoolClient,serverId:string,id:string){const app=(await client.query('select * from remote_apps where server_id=$1 and id=$2 for update',[serverId,uuid(id)])).rows[0];if(!app)throw new ApiError('Application not found on this server',404);return app}
 const credential=(item:Record<string,any>)=>({provider:item.provider,host:item.host,port:item.port,username:item.username,password:decode(item.password_ciphertext),database:item.database_name,tls:item.tls_enabled})
 const administrator=(item:Record<string,any>)=>({provider:item.provider,host:item.host,port:item.port,username:item.administrator,password:decode(item.administrator_ciphertext),database:'postgres',tls:item.tls_enabled})
@@ -217,6 +217,7 @@ export async function remoteStorageOperation(serverId:string,id:string,operation
 export async function finishStorageOperation(client:PoolClient,serverId:string,job:{id:string;resource_target:string},payload:Record<string,any>,success:boolean,result:Record<string,any>|null){
   const resource=payload.resource
   if((parseServerDatabaseId(resource?.serviceId||'')?.connectionId||resource?.serviceId)!==job.resource_target)throw new ApiError('Database receipt does not match this operation',400)
+  if(['dedicated-plan','dedicated-user','dedicated-reconcile'].includes(resource.operation)){await(await import('./remote-storage-changes')).finishRemoteStorageChange(client,serverId,resource,success,result);return}
   if(['inventory','server-create','server-drop','restrict'].includes(resource.operation)){await(await import('./remote-storage-servers')).finishRemoteStorageServerOperation(client,serverId,resource,success,result);return}
   if(parseServerDatabaseId(resource.serviceId)&&['tables','rows','sql','rename-plan'].includes(resource.operation))return
   if(['rename','rename-reconcile'].includes(resource.operation)){await(await import('./remote-storage-rename')).finishRemoteStorageRename(client,serverId,resource,success,result);return}

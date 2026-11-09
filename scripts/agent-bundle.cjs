@@ -5,6 +5,7 @@ const path = require('node:path');
 // in-place supervisor update. Source modules can still be tested independently.
 async function agentBundle(root = process.cwd()) {
   let source = await fs.readFile(path.join(root, 'scripts/manager-agent.cjs'), 'utf8');
+  source=source.replace("const createWindowsPidUsage = require('./windows-pidusage.cjs');",`const createWindowsPidUsage = ${require('./windows-pidusage.cjs').toString()};`);
   const releaseData=await fs.readFile(path.join(root,'scripts/remote-release-data.cjs'),'utf8');
   source=source.replace("const releaseData = require('./remote-release-data.cjs');",`const releaseData = (()=>{const module={exports:{}};\n${releaseData}\nreturn module.exports;})();`);
   const audit=await fs.readFile(path.join(root,'scripts/dependency-audit.cjs'),'utf8');
@@ -22,6 +23,12 @@ async function agentBundle(root = process.cwd()) {
   storage=storage.replace("async function driver(_root,_helpers,name,_archive){switch(name){case 'mysql2/promise':return require('mysql2/promise');case 'mssql':return require('mssql');case 'mongodb':return require('mongodb');case 'redis':return require('redis');default:throw Error('Unknown database driver');}}","async function driver(root,helpers,name,archive){return loadPostgresRuntime(root,archive,helpers,name);}");
   storage=storage.replace("async function postgres(_root,_helpers){return require('pg');}",`const {loadPostgresRuntime}=(()=>{const module={exports:{}};\n${loader}\nreturn module.exports;})();\nasync function postgres(root,helpers){return loadPostgresRuntime(root,${JSON.stringify(postgresArchive)},helpers);}`);
   resources=resources.replace("const storage = require('./remote-storage-agent.cjs');",`const storage=(()=>{const module={exports:{}};\n${storage}\nreturn module.exports;})();`);
+  let storageSwitch=await fs.readFile(path.join(root,'scripts/remote-storage-switch.cjs'),'utf8');
+  for(const [binding,file] of [['env','database-env-rewrite'],['ownership','postgres-ownership']]){
+    const code=await fs.readFile(path.join(root,`scripts/${file}.cjs`),'utf8');
+    storageSwitch=storageSwitch.replace(`const ${binding}=require('./${file}.cjs');`,`const ${binding}=(()=>{const module={exports:{}};const exports=module.exports;\n${code}\nreturn module.exports;})();`);
+  }
+  resources=resources.replace("const storageSwitch = require('./remote-storage-switch.cjs');",`const storageSwitch=(()=>{const module={exports:{}};\n${storageSwitch}\nreturn module.exports;})();`);
   resources=resources.replace("require('./manager-agent-windows-memory.cjs')",JSON.stringify(require('./manager-agent-windows-memory.cjs')));
   const diagnostics=await fs.readFile(path.join(root,'scripts/health-diagnostics.cjs'),'utf8');
   const health=(await fs.readFile(path.join(root,'scripts/http-health.cjs'),'utf8')).replace("const { readDiagnostics } = require('./health-diagnostics.cjs');",`const { readDiagnostics } = (()=>{const module={exports:{}};\n${diagnostics}\nreturn module.exports;})();`);

@@ -69,6 +69,7 @@ export async function installRemoteService(id:string,body:Record<string,unknown>
     const client=await db.connect()
     try{
       await client.query('begin');await client.query('select id from managed_servers where id=$1 for update',[id])
+      if((await client.query("select 1 from remote_storage_changes where server_id=$1 and status in ('running','needs_review')",[id])).rowCount)throw new ApiError('Verify the pending database change in Storage before installing services',409)
       if((await client.query("select 1 from remote_jobs where server_id=$1 and status in ('queued','running')",[id])).rowCount || (await client.query("select 1 from remote_agent_updates where server_id=$1 and status in ('queued','installing','recovery_required')",[id])).rowCount || (await client.query("select 1 from remote_service_operations where server_id=$1 and status in ('running','interrupted')",[id])).rowCount)throw new ApiError('Wait for the current server operation, or recover its interrupted installation',409)
       operationId=randomUUID();secret=selection.mode==='install'&&selection.port?randomBytes(36).toString('hex'):''
       const credentials=secret?{provider:selection.service,host:'127.0.0.1',port:selection.port,username:row.platform==='win32'&&selection.service!=='postgresql'?'root':'manager_provisioner',password:secret}:null

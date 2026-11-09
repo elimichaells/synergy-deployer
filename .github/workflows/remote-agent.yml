@@ -15,6 +15,13 @@ on:
       - 'db/migrations/03*.sql'
       - 'app/api/webhooks/remote/**'
       - 'scripts/manager-agent.cjs'
+      - 'scripts/manager-agent-*.cjs'
+      - 'scripts/remote-storage*.cjs'
+      - 'scripts/database-env-rewrite.cjs'
+      - 'scripts/postgres-ownership.cjs'
+      - 'scripts/agent-bundle.cjs'
+      - 'tests/remote-storage-switch.test.cjs'
+      - 'tests/fixtures/storage-change-manager.cjs'
       - 'scripts/manager-agent-supervisor.cjs'
       - 'lib/remote-agent-updates.ts'
       - 'tests/agent-updater.test.cjs'
@@ -98,7 +105,7 @@ jobs:
           node-version: '24'
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: sudo apt-get update && sudo apt-get install -y postgresql-client
-      - run: node --require ./tests/register.cjs --test --test-concurrency=1 tests/remote-guided-setup.test.cjs tests/managed-servers.test.cjs tests/agent-update-api.test.cjs tests/remote-infrastructure.test.cjs tests/server-removal.test.cjs tests/application-removal.test.cjs tests/remote-app-controls.test.cjs tests/remote-resources.test.cjs tests/remote-operations.test.cjs tests/remote-storage.test.cjs tests/remote-storage-agent.test.cjs
+      - run: node --require ./tests/register.cjs --test --test-concurrency=1 tests/remote-guided-setup.test.cjs tests/managed-servers.test.cjs tests/agent-update-api.test.cjs tests/remote-infrastructure.test.cjs tests/server-removal.test.cjs tests/application-removal.test.cjs tests/remote-app-controls.test.cjs tests/remote-resources.test.cjs tests/remote-operations.test.cjs tests/remote-storage.test.cjs tests/remote-storage-agent.test.cjs tests/remote-storage-switch.test.cjs
         env:
           MANAGER_GUIDED_PG_LAB: '1'
           MANAGER_REMOTE_TEST_DATABASE_URL: postgresql://manager_setup_test:isolated-setup-fixture@127.0.0.1:55439/manager_remote_test_guided

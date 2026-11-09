@@ -73,6 +73,7 @@ export function remoteDeployment(job: RemoteJob, apps: RemoteApp[]): DeploymentS
 export function remoteProcessState(server: ManagedServer, app: RemoteApp, fresh: boolean) {
   const process = server.metrics?.apps.find(item => item.id === app.id)
   return !fresh ? { readiness: 'unknown', label: 'Unknown' }
+    : process?.status === 'online' && process.check?.ok===false ? {readiness:'offline',label:'Unhealthy'}
     : process?.status === 'online' ? { readiness: 'ready', label: 'Running' }
     : { readiness: 'offline', label: process?.status || 'Not running' }
 }

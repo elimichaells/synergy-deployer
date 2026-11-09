@@ -43,6 +43,7 @@ export function ensureManagedServers() {
       await client.query(await readFile(path.join(process.cwd(), 'db/migrations/031_remote_application_groups.sql'), 'utf8'))
       await client.query(await readFile(path.join(process.cwd(), 'db/migrations/033_remote_application_controls.sql'), 'utf8'))
       await client.query(await readFile(path.join(process.cwd(), 'db/migrations/034_remote_storage.sql'), 'utf8'))
+      await client.query(await readFile(path.join(process.cwd(), 'db/migrations/035_remote_storage_changes.sql'), 'utf8'))
       await client.query('commit')
     } catch (error) { await client.query('rollback'); throw error } finally { client.release() }
   })().catch(error => { schema = null; throw error })
@@ -210,6 +211,7 @@ export async function saveRemoteApp(serverId: string, appId: string | null, body
     await client.query('begin')
     const server = await client.query('select id,metrics from managed_servers where id=$1 and enabled=true for update', [serverId])
     if (!server.rowCount) throw new ApiError('Server is revoked or missing', 409)
+    if((await client.query("select 1 from remote_storage_changes where server_id=$1 and status in ('running','needs_review')",[serverId])).rowCount)throw new ApiError('Verify the pending database change in Storage before editing applications',409)
     if (appId && (await client.query('select id from remote_apps where id=$1 and server_id=$2 and guided_setup=true', [appId,serverId])).rowCount) throw new ApiError('Use guided setup to change this application', 409)
     if (appId && (await client.query("select id from remote_jobs where (app_id=$1 or server_id=$2 and resource_action='storage') and status in ('queued','running')", [appId,serverId])).rowCount) throw new ApiError('Wait for the active application or storage operation before editing this app', 409)
     if(appId&&body.runtime_versions===undefined)app.runtime_versions=(await client.query('select runtime_versions from remote_apps where id=$1 and server_id=$2',[appId,serverId])).rows[0]?.runtime_versions||{}
@@ -266,6 +268,7 @@ export async function queueRemoteDeploy(serverId: string, appId: string, userId:
     await client.query('begin')
     const server = (await client.query('select * from managed_servers where id=$1 for update', [serverId])).rows[0]
     if (!server?.enabled || !server.enrolled_at) throw new ApiError('Enroll an active server first', 409)
+    if((await client.query("select 1 from remote_storage_changes where server_id=$1 and status in ('running','needs_review')",[serverId])).rowCount)throw new ApiError('Verify the pending database change in Storage before deploying applications',409)
     const app = (await client.query('select * from remote_apps where id=$1 and server_id=$2', [appId, serverId])).rows[0]
     if (!app) throw new ApiError('App not found', 404)
     let commitSha:string|undefined

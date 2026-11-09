@@ -69,6 +69,7 @@ async function snapshot(client: PoolClient, serverId: string | null, appId: stri
   }
   let requiresAgent = false
   if (serverId) {
+    if(await exists(client,'remote_storage_changes')&&(await client.query("select 1 from remote_storage_changes where server_id=$1 and status in ('running','needs_review')",[serverId])).rowCount)blockers.push('Verify the pending database change in Storage before removing applications.')
     if(await exists(client,'remote_storage_renames')&&(await client.query("select 1 from remote_storage_renames where server_id=$1 and status in ('running','needs_review') and apps @> $2::jsonb",[serverId,JSON.stringify([{projectId:appId}])])).rowCount)blockers.push('Verify the pending database rename before removing this application.')
     if(await exists(client,'remote_domain_routes')&&(await client.query('select 1 from remote_domain_routes r join remote_domains d on d.id=r.domain_id where r.server_id=$1 and (r.project_id=$2 or d.project_id=$2) limit 1',[serverId,appId])).rowCount)blockers.push('Remove shared domain paths before removing this application.')
     const server = (await client.query('select * from managed_servers where id=$1', [serverId])).rows[0]

@@ -18,6 +18,7 @@ const resources = require('./manager-agent-resources.cjs');
 const { probeHttp, validateHealthProfile } = require('./http-health.cjs');
 const { assertAuditPassed, formatAuditFindings } = require('./dependency-audit.cjs');
 const releaseData = require('./remote-release-data.cjs');
+const createWindowsPidUsage = require('./windows-pidusage.cjs');
 const { parseLanAddress, lanCaddyDirectives, lanProxyHeaders, assertLanInterface } = require('./lan-address.cjs');
 const { checkLanListeners } = require('./lan-listener.cjs');
 const INFRASTRUCTURE_CAPABILITY = 'remote-infrastructure-v1';
@@ -342,7 +343,9 @@ async function privatePm2Environment(root,pm2,platform=process.platform) {
   const source=`'use strict';
 const fs=require('node:fs'),Module=require('node:module'),net=require('node:net');
 const target=fs.realpathSync.native(${JSON.stringify(pathsFile)}).toLowerCase(),load=Module._load,wrapped=new WeakMap();
+const nativePidUsage=(${createWindowsPidUsage.toString()})();
 Module._load=function(request,parent,main){
+  if(request==='pidusage'&&parent?.filename){let owner;try{owner=fs.realpathSync.native(parent.filename).toLowerCase();}catch{}if(owner?.startsWith(${JSON.stringify(packageRoot.toLowerCase()+path.sep)}))return nativePidUsage;}
   const result=load.apply(this,arguments);
   if(typeof result!=='function'||typeof request!=='string'||!/(^|[\\\\/])paths(?:\\.js)?$/.test(request))return result;
   let resolved;try{resolved=fs.realpathSync.native(Module._resolveFilename(request,parent,main)).toLowerCase();}catch{return result;}

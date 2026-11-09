@@ -6,7 +6,7 @@ Production applications, databases and shared proxy configuration are outside th
 | Page/module | Changes and evidence | Still to verify or implement |
 | --- | --- | --- |
 | Server directory, rename, removal | Existing scoped directory and reviewed removal; PostgreSQL tests cover pending, offline and enrolled records, roles and stale reviews | Browser comparison of all directory states |
-| Navigation | Shared host/remote infrastructure menu; scoped URL tests and browser navigation through every remote destination | Host browser comparison |
+| Navigation | Shared host/remote infrastructure menu; scoped URL tests and browser navigation through every remote destination; host menu and server-switch resume compared | Global settings and account navigation |
 | Projects | Server-scoped groups, names, component roles and environment links; real PostgreSQL cross-server and concurrent-change checks | Empty old group navigation after moving an app |
 | App removal | Shared review dialog; typed name, acknowledgement and state-bound review; encrypted management-record archive; deployed remote apps require an agent preservation receipt; active jobs/workers and shared paths block removal. Real isolated Manager PostgreSQL → agent → PM2/Caddy receipt test passes, including rejected forged receipt, preserved process/files/TLS route and untouched peer | No recovery UI for the archive yet |
 | App removal preservation | Removal detaches management. Files, running processes, databases, DNS and routes remain. Agent retains detached route/port reservations and cleanup exclusions. Tests cover replay and stale reviews | This is not an uninstall or database deletion operation |
@@ -23,7 +23,8 @@ Production applications, databases and shared proxy configuration are outside th
 | Staging promotion | Shared promotion review; server/repository/environment pairing and stale review checks; exact shared-branch commit or merge of the reviewed staging commit. Real HTTPS Git merge/conflict/push tests pass; push happens only after healthy activation. One-deployment security override retains the reviewed promotion and rejects changed staging/production state in PostgreSQL tests | Provider comparison history |
 | Git automation | Shared settings; GitHub/Gitea/GitLab signature and provider CRUD tests; exact pushed commits, deduplication, scoped callback deletion and encrypted secrets; PostgreSQL queue tests pass. Signed deliveries through an isolated HTTP listener pass for all three providers, with wrong-server, invalid-signature and disabled-auto-deploy checks | External provider delivery remains outside the fixture test |
 | Dependency security gate | Shared setting/findings; pre-install and final-candidate audits; trusted exceptions and explicit expiring overrides; malformed audit output fails closed. Role and receipt tests pass | Browser error/retry case |
-| Storage / database detail | Shared list, server inventory, app services and database detail; agent-only transport, encrypted private query results, six offline drivers, multi-service credentials and environment sync. Real PostgreSQL tests cover browsing, bounded SQL, provisioning, rotation, backup/restore, rename/recovery, server create/drop and detached database preservation. MySQL 8.4, MariaDB 11.4, MongoDB 8, SQL Server 2022 and Redis 7 provision/test/rotate/preservation CI passes. Host/remote Data, SQL, Backup, Connection, Settings and server-inventory screens compared; scope changes reset forms and abort stale reads | Migrations, database move and dedicated-user switch remain unwired; complete browser comparison and installation coverage |
+| Storage / database detail | Shared list, server inventory, app services and database detail; agent-only transport, encrypted private query results, six offline drivers, multi-service credentials and environment sync. Real PostgreSQL tests cover browsing, bounded SQL, provisioning, rotation, backup/restore, rename/recovery, server create/drop and detached database preservation. MySQL 8.4, MariaDB 11.4, MongoDB 8, SQL Server 2022 and Redis 7 provision/test/rotate/preservation CI passes. Host/remote Data, SQL, Backup, Connection, Settings and server-inventory screens compared; scope changes reset forms and abort stale reads | Migrations and database move remain unwired; complete browser comparison and installation coverage |
+| Database account switch | Shared dedicated-user review now queues the selected agent. Real PostgreSQL tests verify limited-role ownership, linked app/worker settings, stopped-process preservation, readiness rollback, stale reviews, interrupted journal recovery and lost-receipt reconciliation. Pending outcomes block conflicting operations and updates. Saved user environment remains separate from generated runtime variables | Full live PM2/Manager receipt test and browser review after packaging |
 | Infrastructure health | Shared charts, history and alerts; browser inspected | Exercise stale/offline states |
 | Infrastructure processes / proxy | Shared controls; browser checked configuration viewer and protected shared proxy buttons | Repeat configuration viewer after fixture correction |
 | Infrastructure disk | Shared scan/cleanup/retention; tests protect current, referenced, detached and linked paths; browser ran synthetic scan only | Real isolated cleanup after multiple deployments |
@@ -45,6 +46,16 @@ CA that is not installed into the operating system. Windows Node 24 / PM2 6 test
 persistent files, environment rollback, workers, merge promotion and application detachment. A second
 run includes the real Manager PostgreSQL queue and authenticated removal receipt. These are separate
 from the synthetic browser preview and do not prove a reboot or a new-server installation.
+
+Linux PM2 6/7 and Windows PM2 6 lifecycle CI pass. Windows PM2 7 exposed stalled WMI
+counter requests; the private daemon now uses bounded native counters, pending the full
+CI rerun. A Windows 8.3 path alias also bypassed the earlier private-pipe preload in a
+local compatibility test. Two exact fixture processes were added to the host daemon;
+both were identified by their temporary script path and removed. All 36 pre-existing
+entries retained their PIDs, status and restart counts. Caddy's configuration hash and
+the database service PIDs remained unchanged. Native path resolution and a refusal to
+connect to shared PM2 pipes now guard the preload; tests verify the private daemon is
+empty before any fixture process is started.
 
 Evidence screenshots are stored locally in the ManagerValidation/server-feature-parity-20261109
 folder. Production baseline hashes and process observations are recorded separately, without secrets.

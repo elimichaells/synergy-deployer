@@ -16,11 +16,12 @@ export async function resourceTransaction<T>(serverId:string, work:(client:PoolC
   catch(error){await client.query('rollback');throw error}finally{client.release()}
 }
 /** Serializes with deployments, server removal, SSH setup and agent updates. */
-export async function admitResource(client:PoolClient,serverId:string) {
+export async function admitResource(client:PoolClient,serverId:string,storageChangeId?:string) {
   const server=(await client.query('select * from managed_servers where id=$1 for update',[serverId])).rows[0]
   if(!server?.enabled||!server.last_seen_at||Date.now()-Date.parse(server.last_seen_at)>90000)throw new ApiError('Connect this server before changing its resources',409)
   if(!server.metrics?.capabilities?.includes(CAPABILITY))throw new ApiError('Update this server’s agent in Agent access & updates to enable these controls',409)
   if(!server.metrics?.capabilities?.includes('remote-console-v1'))throw new ApiError('The agent did not advertise its resource job transport; update or reconnect it',409)
+  if((await client.query("select 1 from remote_storage_changes where server_id=$1 and status in ('running','needs_review') and ($2::uuid is null or id<>$2)",[serverId,storageChangeId||null])).rowCount)throw new ApiError('Verify the pending database change in Storage before changing this server',409)
   if((await client.query("select 1 from remote_jobs where server_id=$1 and status in ('queued','running') union all select 1 from remote_service_operations where server_id=$1 and status in ('running','interrupted') union all select 1 from remote_agent_updates where server_id=$1 and status in ('queued','installing','recovery_required')",[serverId])).rowCount)throw new ApiError('Wait for the current server operation to finish',409)
   if(!(await client.query("select pg_try_advisory_xact_lock(hashtext('manager-ssh-setup'),hashtext($1)) as ok",[serverId])).rows[0].ok)throw new ApiError('Server setup is running',409)
   return server

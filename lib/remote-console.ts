@@ -26,6 +26,7 @@ export async function queueRemoteConsole(serverId: string, appId: string | null,
     const server=(await client.query('select * from managed_servers where id=$1 for update',[serverId])).rows[0]
     if(!server?.enabled || !server.enrolled_at || !server.last_seen_at || Date.now()-Date.parse(server.last_seen_at)>90_000)throw new ApiError('Connect this server before opening its console',409)
     if(!server.metrics?.capabilities?.includes(CONSOLE_CAPABILITY))throw new ApiError('Update the agent to enable remote console and runtime logs',409)
+    if((await client.query("select 1 from remote_storage_changes where server_id=$1 and status in ('running','needs_review')",[serverId])).rowCount)throw new ApiError('Verify the pending database change in Storage before opening the console',409)
     if((await client.query("select 1 from remote_service_operations where server_id=$1 and status in ('running','interrupted')",[serverId])).rowCount)throw new ApiError('Finish the service operation before opening the console',409)
     if((await client.query("select 1 from remote_jobs where server_id=$1 and status in ('queued','running')",[serverId])).rowCount)throw new ApiError('Wait for the current server operation to finish',409)
     if((await client.query("select 1 from remote_agent_updates where server_id=$1 and status in ('queued','installing','recovery_required')",[serverId])).rowCount)throw new ApiError('Finish the agent update or recovery before opening the console',409)

@@ -13,6 +13,7 @@ import {syncRemoteStorageEnvironment} from '@/lib/remote-storage'
 import {discoverRemoteStorage,adoptRemoteStorage} from '@/lib/remote-storage-discovery'
 import {reviewRemoteStorageRename,renameRemoteStorage,listRemoteStorageRenames,reconcileRemoteStorageRename} from '@/lib/remote-storage-rename'
 import {remoteStorageEngines,remoteServerDatabases,refreshRemoteStorageInventory,changeRemoteServerDatabase,restrictRemoteStorageServer} from '@/lib/remote-storage-servers'
+import {reviewRemoteDedicatedUser,changeRemoteDedicatedUser} from '@/lib/remote-storage-changes'
 export const dynamic='force-dynamic'
 type Context={params:Promise<{id:string;path?:string[]}>}
 export async function GET(request:Request,context:Context){try{
@@ -48,6 +49,7 @@ async function mutate(request:Request,context:Context){try{
     if(path[0]==='databases'&&path[1]==='engines'&&path.length===4&&path[3]==='restrict'&&request.method==='POST')return restrictRemoteStorageServer(id,path[2],user!.id)
     if(path[0]==='databases'&&path[1]==='servers'&&path[3]==='databases'&&(path.length===4&&request.method==='POST'||path.length===5&&request.method==='DELETE'))return changeRemoteServerDatabase(id,path[2],path[4],body,user!.id)
     if(route==='databases/adopt'&&request.method==='POST')return adoptRemoteStorage(id,String(body.projectId),body.source,user!.id)
+    if(path[0]==='databases'&&path.length===3&&path[2]==='dedicated-user'&&request.method==='POST')return body.preview===true?reviewRemoteDedicatedUser(id,path[1],user!.id):changeRemoteDedicatedUser(id,path[1],body,user!.id)
     if(path[0]==='databases'&&path.length===3&&path[2]==='rename'&&request.method==='POST')return body.preview===true?reviewRemoteStorageRename(id,path[1],user!.id):renameRemoteStorage(id,path[1],body,user!.id)
     if(path[0]==='databases'&&path[1]==='renames'&&path.length===4&&path[3]==='reconcile'&&request.method==='POST')return reconcileRemoteStorageRename(id,path[2],user!.id)
     if(route==='data/connections'&&request.method==='POST')return createRemoteStorageConnection(id,body,user!.id)

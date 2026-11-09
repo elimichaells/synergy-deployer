@@ -20,6 +20,7 @@ async function connection(id: string | null, repo: string) {
 async function lockServer(client: PoolClient, serverId: string) {
   const server = (await client.query('select * from managed_servers where id=$1 for update',[serverId])).rows[0]
   if (!server?.enabled || !server.enrolled_at) throw new ApiError('Connect this server before importing applications',409)
+  if((await client.query("select 1 from remote_storage_changes where server_id=$1 and status in ('running','needs_review')",[serverId])).rowCount)throw new ApiError('Verify the pending database change in Storage before editing applications',409)
   if (!server.metrics?.capabilities?.includes(REMOTE_SETUP_CAPABILITY)) throw new ApiError('Update this server to Manager agent 1.1.0 or later for guided setup. Download the current agent from Server access.',409)
   return server
 }

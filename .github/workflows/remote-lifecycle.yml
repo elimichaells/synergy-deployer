@@ -3,11 +3,16 @@ on:
   pull_request:
     paths:
       - 'scripts/manager-agent*.cjs'
+      - 'scripts/windows-pidusage.cjs'
       - 'scripts/remote-release-data.cjs'
       - 'scripts/remote-storage*.cjs'
       - 'tests/remote-live-lifecycle.test.cjs'
       - 'tests/fixtures/*live-agent*.cjs'
       - 'tests/fixtures/manager-removal-lab.cjs'
+      - 'tests/fixtures/live-database-switch.cjs'
+      - 'tests/fixtures/storage-change-manager.cjs'
+      - 'scripts/database-env-rewrite.cjs'
+      - 'scripts/postgres-ownership.cjs'
       - 'lib/application-removal*.ts'
       - 'lib/managed-servers.ts'
       - '.github/workflows/remote-lifecycle.yml'
@@ -32,6 +37,7 @@ jobs:
           node-version: '24'
       - run: npm install --prefix "${{ runner.temp }}/manager-live-tools" --ignore-scripts --no-audit --no-fund pm2@${{ matrix.pm2 }}
       - run: node tests/fixtures/prepare-live-agent-lab.cjs
+      - run: node --test tests/private-pm2-isolation.test.cjs tests/windows-pidusage.test.cjs
       - run: node --test tests/remote-live-lifecycle.test.cjs
   manager-receipt:
     runs-on: ubuntu-latest

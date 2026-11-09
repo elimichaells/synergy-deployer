@@ -36,6 +36,7 @@ test('overview excludes setup jobs, foreign apps, and stale process health', () 
   assert.deepEqual(summary.jobs.map(item => item.id), [job.id]);
   assert.equal(summary.running,1);
   assert.equal(remoteProcessState(server,app,false).label,'Unknown');
+  assert.equal(remoteProcessState({...server,metrics:{apps:[{id:appId,status:'online',check:{ok:false}}]}},app,true).label,'Unhealthy');
   assert.equal(remoteOverview(server,[app],[job],now+91000).running,null);
 });
 test('workspace restores remote tabs, import and resource pages without secrets', () => {

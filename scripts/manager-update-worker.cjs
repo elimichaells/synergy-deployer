@@ -49,7 +49,7 @@ function connection(c) {
   const env=require('dotenv').parse(fs.readFileSync(path.join(c.managerRoot,'.env.local')));
   return {env, options:env.DATABASE_URL?{connectionString:env.DATABASE_URL}:{host:env.DATABASE_HOST||'127.0.0.1',port:Number(env.DATABASE_PORT||5432),database:env.DATABASE_NAME,user:env.DATABASE_USER,password:env.DATABASE_PASSWORD}};
 }
-const busyTables=[['deployments','status',['queued','running']],['runtime_jobs','status',['queued','running']],['data_migration_jobs','status',['queued','running','validating']],['database_moves','status',['running']],['database_renames','status',['running']],['cron_jobs','last_status',['running']],['backup_schedules','last_status',['running']],['data_service_backup_schedules','last_status',['running']],['remote_jobs','status',['queued','running']],['remote_service_operations','status',['running','interrupted']]];
+const busyTables=[['deployments','status',['queued','running']],['runtime_jobs','status',['queued','running']],['data_migration_jobs','status',['queued','running','validating']],['database_moves','status',['running']],['database_renames','status',['running']],['cron_jobs','last_status',['running']],['backup_schedules','last_status',['running']],['data_service_backup_schedules','last_status',['running']],['remote_jobs','status',['queued','running']],['remote_service_operations','status',['running','interrupted']],['remote_storage_changes','status',['running','needs_review']]];
 async function assertIdle(c) {
   const {Client}=require('pg'); const client=new Client({...connection(c).options,connectionTimeoutMillis:5000});
   await client.connect();
