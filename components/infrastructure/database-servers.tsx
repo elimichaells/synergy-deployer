@@ -79,7 +79,7 @@ function ServerCard({ server, canTune, onTuned, serverId }: { server: Server; ca
           : <p className="text-xs text-muted-foreground">An administrator can apply these.</p>}
       </div>}
 
-      {!server.error && server.recommendations.length === 0 && server.engine !== 'postgresql' && <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground"><Check className="h-3.5 w-3.5 text-status-ready" />Memory settings already suit this server.</p>}
+      {!server.error && server.connections && server.service && server.memoryMb !== null && server.recommendations.length === 0 && server.engine !== 'postgresql' && <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground"><Check className="h-3.5 w-3.5 text-status-ready" />Memory settings already suit this server.</p>}
       {result && <div role="status" className={cn('mt-3 rounded-md border px-3 py-2 text-xs', result.ok ? 'border-status-ready/30 text-status-ready' : 'border-status-failed/30 text-red-300')}>
         {result.ok ? `Applied and ${engine} is running. Memory before ${gb(result.before)}, now ${gb(result.after)}; it settles over the next minutes.` : 'The change did not complete.'}
         {result.log.length > 0 && <pre className="mt-2 whitespace-pre-wrap font-mono text-[11px] text-muted-foreground">{result.log.join('\n')}</pre>}
@@ -105,10 +105,11 @@ export function DatabaseServers({serverId}:{serverId?:string}) {
   }, [serverId])
   useEffect(load, [load])
   const total = (servers ?? []).reduce((sum, server) => sum + (server.memoryMb ?? 0), 0)
+  const measured = servers?.length && servers.every(server => server.memoryMb !== null)
 
   return (
     <Section title="Database servers"
-      description={<>One server per engine holds many databases, each with its own login. {servers ? <>Together they use <span className="text-foreground">{gb(total)}</span>.</> : null} Settings changes restart that one server; its apps reconnect when it is back.</>}
+      description={<>One server per engine holds many databases, each with its own login. {servers?.length ? measured ? <>Together they use <span className="text-foreground">{gb(total)}</span>.</> : <>Total memory usage is unavailable until every server is measured.</> : null} Settings changes restart that one server; its apps reconnect when it is back.</>}
       action={<Button variant="outline" size="sm" onClick={load} disabled={loading}><RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', loading && 'animate-spin')} />Check again</Button>}>
       {error && <p role="alert" className="notice-error">{error}</p>}
       {!servers && !error && <div className="h-32 animate-pulse rounded-lg border border-border" />}
