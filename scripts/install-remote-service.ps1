@@ -57,7 +57,7 @@ try{
   Write-Json $receipt @{status='running';service=$plan.service;operationId=$plan.operationId;pid=$PID;processStartedAt=(Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')}
   $savedPaths=Get-Content -LiteralPath $pathsFile -Raw;$paths=@{};($savedPaths|ConvertFrom-Json).PSObject.Properties|ForEach-Object{$paths[$_.Name]=$_.Value}
   [IO.File]::WriteAllText((Join-Path $stage 'previous-paths.json'),$savedPaths,$utf8)
-  $tool=@{postgresql='psql';mysql='mysql';mariadb='mariadb';angular='ng';mongodb='mongod'}[$plan.service];if(-not $tool){$tool=$plan.service}
+  $tool=@{postgresql='psql';mysql='mysql';mariadb='mariadb';angular='ng';mongodb='mongod';sqlserver='sqlcmd'}[$plan.service];if(-not $tool){$tool=$plan.service}
   $result=@{status='success';operationId=$plan.operationId;service=$plan.service;mode=$plan.mode;port=$plan.port;host='127.0.0.1';managed=($plan.mode -eq 'install')}
   if($plan.mode -eq 'install-version'){
     if($plan.service -notin @('node','go','php') -or $plan.version -notmatch '^\d+\.\d+\.\d+$'){throw 'Invalid runtime version'}
@@ -92,7 +92,7 @@ try{
     if(-not(Test-Path -LiteralPath $plan.path -PathType Leaf)){throw 'Selected executable is missing'}
     $paths[$tool]=$plan.path
   }else{
-    $match=@{postgresql='postgres';mysql='mysql|maria';mariadb='mysql|maria';caddy='caddy';mongodb='mongo'}[$plan.service]
+    $match=@{postgresql='postgres';mysql='mysql|maria';mariadb='mysql|maria';caddy='caddy';mongodb='mongo';sqlserver='mssql|sqlservr'}[$plan.service]
     if($match -and @(Get-CimInstance Win32_Service|Where-Object{($_.Name+' '+$_.PathName) -match $match}).Count){throw 'An existing service was found. Reuse it instead of installing another instance.'}
     if($plan.port -and (Get-NetTCPConnection -LocalPort $plan.port -State Listen -ErrorAction SilentlyContinue)){throw 'The selected port is already in use'}
     if($plan.service -eq 'caddy' -and (Get-NetTCPConnection -LocalPort 80,443,2019,2029 -State Listen -ErrorAction SilentlyContinue)){throw 'An existing web service occupies the proxy ports'}
@@ -100,7 +100,12 @@ try{
     if(Test-Path -LiteralPath $target){throw 'The service destination already exists. It will not be initialized or overwritten.'}
     Private-Folder $target
     Run 'icacls.exe' @($target,'/grant','*S-1-5-19:(OI)(CI)RX')
-    if($plan.service -eq 'mongodb'){
+    if($plan.service -eq 'sqlserver'){
+      . (Join-Path $stage 'install-remote-sqlserver.ps1')
+      $createdService='MSSQL$MANAGER'
+      $sqlResult=Install-RemoteSqlServer $plan $target $stage $paths.node $PlanFile
+      $paths.sqlcmd=$sqlResult.path;$result.username=$sqlResult.username;$result.serviceName=$sqlResult.serviceName;$result.dataPath=$sqlResult.dataPath
+    }elseif($plan.service -eq 'mongodb'){
       foreach($existing in @('C:\data\db',(Join-Path $env:ProgramData 'MongoDB'))){if((Test-Path -LiteralPath $existing -PathType Container) -and @(Get-ChildItem -LiteralPath $existing -Force).Count){throw 'Existing MongoDB data was found. Reuse it instead of creating another installation.'}}
       $vc=Join-Path $target 'vcredist.exe';Fetch-Verified $plan.downloads.vcredist $vc
       $setup=Start-Process -FilePath $vc -ArgumentList @('/install','/quiet','/norestart') -Wait -PassThru -WindowStyle Hidden

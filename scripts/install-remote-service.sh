@@ -25,6 +25,7 @@ trap cleanup EXIT
 tool="$service"; [ "$service" != postgresql ] || tool=psql
 [ "$service" != angular ] || tool=ng
 [ "$service" != mongodb ] || tool=mongod
+[ "$service" != sqlserver ] || tool=sqlcmd
 target="$files/$service"; config=''; data=''; username=''
 if [ "$mode" = install-version ]; then
   version="$("$node_exe" -p 'require(process.argv[1]).version' "$plan_file")"

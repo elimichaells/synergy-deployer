@@ -12,13 +12,19 @@ on:
 permissions:
   contents: read
 jobs:
-  mongodb:
+  database:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-22.04]
+        include:
+          - os: windows-latest
+            engine: mongodb
+          - os: ubuntu-22.04
+            engine: mongodb
+          - os: windows-latest
+            engine: sqlserver
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,11 +37,13 @@ jobs:
       - shell: bash
         run: npm install --prefix "$RUNNER_TEMP/manager-live-tools" --ignore-scripts --no-audit --no-fund pm2@6
       - if: runner.os == 'Windows'
-        run: node --require ./tests/register.cjs --test tests/remote-mongodb-install.test.cjs
+        run: node --require ./tests/register.cjs --test tests/remote-database-install.test.cjs
         env:
           MANAGER_SERVICE_INSTALL_LAB: '1'
+          MANAGER_SERVICE_INSTALL_ENGINE: ${{ matrix.engine }}
       - if: runner.os == 'Linux'
         shell: bash
-        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,TEST_CADDY,TEST_PM2_PACKAGE_ROOT,MANAGER_SERVICE_INSTALL_LAB "$(command -v node)" --require ./tests/register.cjs --test tests/remote-mongodb-install.test.cjs
+        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,TEST_CADDY,TEST_PM2_PACKAGE_ROOT,MANAGER_SERVICE_INSTALL_LAB,MANAGER_SERVICE_INSTALL_ENGINE "$(command -v node)" --require ./tests/register.cjs --test tests/remote-database-install.test.cjs
         env:
           MANAGER_SERVICE_INSTALL_LAB: '1'
+          MANAGER_SERVICE_INSTALL_ENGINE: ${{ matrix.engine }}

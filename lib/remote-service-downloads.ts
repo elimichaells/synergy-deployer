@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { ApiError } from './api'
 import { installerDownloads } from './server-ssh'
+import offlineAssets from '../installer/offline/dependencies.lock.json'
 const archives={
   postgresql:'https://get.enterprisedb.com/postgresql/postgresql-18.6-5-windows-x64-binaries.zip',
   mysql:'https://cdn.mysql.com/Downloads/MySQL-8.4/mysql-8.4.13-winx64.zip',
@@ -20,6 +21,11 @@ async function officialAsset(url:string){
 }
 export async function serviceDownloads(service:string,platform:string,arch:string,distribution?:{id:string;version:string}){
   if(!['win32','linux'].includes(platform)||!['x64','arm64'].includes(arch)||platform==='win32'&&arch!=='x64')throw new ApiError('Automatic service installation supports Windows x64 and Linux x64/ARM64',400)
+  if(service==='sqlserver'){
+    if(platform!=='win32')throw new ApiError('Reuse an existing SQL Server installation on Linux. Automatic SQL Server Express installation requires Windows x64.',400)
+    const assets=Object.fromEntries(['sqlserver','sqlserver-update','vcredist'].map(id=>{const asset=offlineAssets.artifacts.find(a=>a.id===id);if(!asset)throw new ApiError('SQL Server package is missing from this Manager build',503);return[id,asset]}))
+    return{...assets,sqlcmd:{url:'https://github.com/microsoft/go-sqlcmd/releases/download/v1.10.0/sqlcmd-windows-amd64.zip',sha256:'a4c28332fcc6e497d655e53ac8f4939f4ab170f9cfd32d0fa5081b60f4d9d691'}}
+  }
   if(service==='mongodb'){
     // MongoDB's official full.json catalog, Community 8.0.34 (not Enterprise).
     const distro=distribution?.id==='ubuntu'&&['22.04','24.04'].includes(distribution.version)?'ubuntu'+distribution.version.replace('.',''):distribution?.id==='debian'&&distribution.version==='12'?'debian12':''

@@ -24,7 +24,7 @@ export async function ensureRemoteStorage(serverId:string){
   await resourceTransaction(serverId,async client=>{
     const installs=(await client.query("select id,service_id,credentials_ciphertext from remote_service_operations where server_id=$1 and status='success' and credentials_ciphertext is not null order by created_at",[serverId])).rows
     for(const item of installs){
-      if(!['postgresql','mysql','mariadb','mongodb'].includes(item.service_id))continue
+      if(!['postgresql','mysql','mariadb','mongodb','sqlserver'].includes(item.service_id))continue
       const d=JSON.parse(decryptSecret(item.credentials_ciphertext))
       if(!d.username||!d.password||!Number.isInteger(d.port))continue
       await client.query(`insert into remote_storage_connections(server_id,name,provider,host,port,username,password_ciphertext,managed,provisioning_enabled,last_status,source_operation_id)

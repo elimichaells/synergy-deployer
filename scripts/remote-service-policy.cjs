@@ -1,6 +1,6 @@
 'use strict';
 const path=require('node:path');
-const SERVICES={postgresql:{tool:'psql',port:5432,match:/postgres/i},mysql:{tool:'mysql',port:3306,match:/mysql|maria/i},mariadb:{tool:'mariadb',port:3306,match:/mysql|maria/i},node:{tool:'node'},git:{tool:'git'},caddy:{tool:'caddy',match:/caddy/i},pm2:{tool:'pm2'},go:{tool:'go'},php:{tool:'php'},python:{tool:'python'},composer:{tool:'composer'},sling:{tool:'sling'},angular:{tool:'ng'},mongodb:{tool:'mongod',port:27017,match:/mongo/i}};
+const SERVICES={postgresql:{tool:'psql',port:5432,match:/postgres/i},mysql:{tool:'mysql',port:3306,match:/mysql|maria/i},mariadb:{tool:'mariadb',port:3306,match:/mysql|maria/i},node:{tool:'node'},git:{tool:'git'},caddy:{tool:'caddy',match:/caddy/i},pm2:{tool:'pm2'},go:{tool:'go'},php:{tool:'php'},python:{tool:'python'},composer:{tool:'composer'},sling:{tool:'sling'},angular:{tool:'ng'},mongodb:{tool:'mongod',port:27017,match:/mongo/i},sqlserver:{tool:'sqlcmd',port:1433,match:/mssql|sqlservr/i}};
 function absolute(value,platform,label){
   if(typeof value!=='string'||!value||value.length>1024||/[\x00-\x1f\x7f"<>|*?]/.test(value)||platform==='win32'&&(/[;]/.test(value)||value.slice(2).includes(':'))||platform==='linux'&&value.includes(':'))throw Error('Enter an absolute '+label+' path');
   const p=platform==='win32'?path.win32:path.posix;
@@ -26,6 +26,7 @@ function verifyServicePlan(plan,inventory){
     if(!candidates.some(x=>x.compatible&&(inventory.platform==='win32'?x.path.toLowerCase()===plan.path.toLowerCase():x.path===plan.path)))throw Error('Inspect and verify this executable path before reusing it');
     return;
   }
+  if(plan.service==='sqlserver'&&inventory.platform!=='win32')throw Error('Reuse an existing SQL Server installation on Linux. Automatic SQL Server Express installation requires Windows x64.');
   if(plan.service==='mongodb'&&inventory.platform==='linux'){
     const d=inventory.distribution,supported=d?.id==='ubuntu'&&['22.04','24.04'].includes(d.version)||d?.id==='debian'&&d.version==='12'&&inventory.arch==='x64';
     if(!supported)throw Error('Automatic MongoDB installation supports Ubuntu 22.04/24.04 or Debian 12 x64. Reuse an existing MongoDB path on this distribution.');

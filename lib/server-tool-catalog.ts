@@ -14,6 +14,7 @@ export const SERVER_TOOLS = [
   { id: 'composer', name: 'Composer', required: false },
   { id: 'ng', name: 'Angular CLI', required: false },
   { id: 'mongod', name: 'MongoDB server', required: false },
+  { id: 'sqlcmd', name: 'SQL Server client', required: false },
   { id: 'sling', name: 'Sling migration engine', required: false },
 ] as const
 export type ServerToolId = typeof SERVER_TOOLS[number]['id']

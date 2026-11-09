@@ -35,7 +35,7 @@ let configuredTools = {};
 const inheritedToolPath = process.env.Path || process.env.PATH || '';
 const executable = name => configuredTools[name] || name;
 const toolVersion = async id => {
-  const argument=id==='go'||id==='ng'?'version':'--version';
+  const argument=id==='sqlcmd'?'-?':id==='go'||id==='ng'?'version':'--version';
   let version;
   if (process.platform==='win32' && ['composer','ng'].includes(id) && /\.(cmd|bat)$/i.test(executable(id))) {
     // Let cmd expand the literal path once. Node's default argument escaping
@@ -46,11 +46,12 @@ const toolVersion = async id => {
   }else version=await run(id==='ng'&&/\.js$/i.test(executable(id))?executable('node'):executable(id),[...(id==='ng'&&/\.js$/i.test(executable(id))?[executable(id)]:[]),argument],{timeout:10000,env:{...baseEnv(),NG_CLI_ANALYTICS:'false',FORCE_COLOR:'0',NO_COLOR:'1'}});
   version=version.replace(/\u001b\[[0-9;]*m/g,'');
   if(id==='ng'){const match=version.match(/Angular CLI\s*:\s*\d+\.\d+\.\d+/);if(!match)throw Error('Angular CLI version check failed');return match[0].replace(/\s*:\s*/,': ');}
+  if(id==='sqlcmd'){const match=version.match(/Version[: ]+v?(\d+\.\d+(?:\.\d+)*)/i);if(!match||!/sqlcmd|SQL Server Command Line Tool/i.test(version))throw Error('SQL Server client version check failed');return 'sqlcmd version '+match[1];}
   return version;
 };
 async function loadToolPaths(root) {
   const paths = await readJson(path.join(root,'tool-paths.json'),{});
-  const allowed = ['node','git','caddy','pm2','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer','sling','ng','mongod'];
+  const allowed = ['node','git','caddy','pm2','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer','sling','ng','mongod','sqlcmd'];
   if(!paths || typeof paths!=='object' || Array.isArray(paths))throw new Error('Invalid tool path configuration');
   for(const [id,file] of Object.entries(paths)) {
     if(!allowed.includes(id)||typeof file!=='string'||!path.isAbsolute(file)||/[\x00-\x1f\x7f]/.test(file)||(process.platform==='win32'?file.slice(2):file).includes(path.delimiter))throw new Error('Invalid configured tool path: '+id);
@@ -73,7 +74,7 @@ async function checkConfiguredTools(root) {
       const version = await run(executable(id),args,{timeout:10000});
       if(!signature.test(version))throw new Error('Unsupported '+id+' executable');
     }
-    for(const id of ['psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer','sling','ng','mongod']) {
+    for(const id of ['psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer','sling','ng','mongod','sqlcmd']) {
       if(configuredTools[id])await toolVersion(id);
     }
     const pm2 = configuredTools.pm2 || path.join(root,'tools','node_modules','pm2','bin','pm2');
@@ -190,7 +191,7 @@ function sanitizeMetrics(raw) {
     cpuPercent: number(raw.cpuPercent, 100), memoryTotal: number(raw.memoryTotal), memoryFree: number(raw.memoryFree),
     diskTotal: optional(raw.diskTotal), diskFree: optional(raw.diskFree), uptime: number(raw.uptime),
     addresses: (Array.isArray(raw.addresses) ? raw.addresses : []).filter(x => typeof x === 'string' && net.isIP(x)).slice(0, 30),
-    tools: Object.fromEntries(['node','git','pm2','caddy','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer','sling','ng','mongod'].filter(key => ['node','git','pm2','caddy'].includes(key) || Object.hasOwn(raw.tools || {},key)).map(key => [key, str(raw.tools?.[key]) || null])),
+    tools: Object.fromEntries(['node','git','pm2','caddy','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer','sling','ng','mongod','sqlcmd'].filter(key => ['node','git','pm2','caddy'].includes(key) || Object.hasOwn(raw.tools || {},key)).map(key => [key, str(raw.tools?.[key]) || null])),
     apps: (Array.isArray(raw.apps) ? raw.apps : []).slice(0, 200).filter(x => ID.test(x.id)).map(x => ({ id: x.id,
       status: ['online','stopped','errored','launching','stopping','missing'].includes(x.status) ? x.status : 'unknown', cpu: number(x.cpu, 10000), memory: number(x.memory),
       uptime:optional(x.uptime),restarts:number(x.restarts??0),pid:optional(x.pid),logBytes:number(x.logBytes??0),
@@ -384,7 +385,7 @@ async function findTools(root) {
   tools.pm2 = (await pm(['--version'])).split('\n').pop();
   const caddy = configuredTools.caddy || process.env.MANAGER_AGENT_CADDY || (process.platform === 'win32' ? 'caddy.exe' : 'caddy');
   tools.caddy = await run(caddy,['version']).catch(() => null);
-  for(const id of ['psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer','sling','ng','mongod']) {
+  for(const id of ['psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer','sling','ng','mongod','sqlcmd']) {
     if(configuredTools[id])tools[id] = await toolVersion(id).then(text=>text.split(/\r?\n/)[0]).catch(()=>null);
   }
   return { pm, caddy, tools, sharedProxy:await sharedProxySettings(root) };
