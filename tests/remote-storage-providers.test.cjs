@@ -36,6 +36,7 @@ test('standalone agent provisions and rotates disposable MySQL, MariaDB, MongoDB
     const changed=randomUUID()+randomUUID();assert.equal((await run({operation:'rotate',connection:app,administrator,password:changed})).rotated,true);
     await assert.rejects(run({operation:'test',connection:app}),error=>!error.message.includes(app.password));
     assert.equal((await run({operation:'test',connection:{...app,password:changed}})).connected,true);
+    if(provider==='mongodb'){assert.equal((await run({operation:'test',connection:{...app,password:changed,database:'admin',authSource:app.database}})).connected,true);await assert.rejects(run({operation:'test',connection:{...app,password:changed,authSource:'admin'}}));}
     await assert.rejects(run({operation:'rotate',connection:administrator,administrator,password:changed}),/administrator|dedicated/);
     assert.equal((await run({operation:'test'})).connected,true,'administrator was preserved');
   });

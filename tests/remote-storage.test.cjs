@@ -66,4 +66,13 @@ test('remote storage isolates metadata, requires agent receipts, encrypts query 
   await storage.changeRemoteStorageService(a.id,app.id,ready.id,true,actor);assert.equal((await storage.remoteStorageServices(a.id,app.id)).length,0);const saved=(await query('select * from remote_apps where id=$1',[app.id])).rows[0];assert.equal(saved.database_ciphertext,null);assert.equal(JSON.parse(secret.decryptSecret(saved.env_ciphertext)).DATABASE_URL,payload.environment.DATABASE_URL);assert.equal(mocks['@/lib/environment-text'].parseEnvironmentText((await environment.readRemoteEnvironmentFile(a.id,app.id,'.env')).content).KEPT,'original');
   assert.equal((await query('select 1 from pg_database where datname=$1',[url.pathname.slice(1)])).rowCount,1);
   await assert.rejects(storage.saveRemoteStorageSchedule(a.id,{serviceId:ready.id},actor),e=>e.status===404);assert.throws(()=>storage.backupConfig({retentionCount:0}),e=>e.status===400);
+  await storage.createRemoteStorageConnection(a.id,{name:'Existing MongoDB',provider:'mongodb',host:'127.0.0.1',port:27017,username:'existing_admin',password:'isolated-mongo-password',provisioningEnabled:true,options:{database:'inventory',authSource:'identity',rejectUnauthorized:false,password:'must-not-persist'}},actor);
+  const mongoCheck=await claim();assert.equal(mongoCheck.payload.resource.connection.database,'inventory');assert.equal(mongoCheck.payload.resource.connection.authSource,'identity');await finish(mongoCheck,{ok:true,connected:true});
+  const mongo=(await storage.remoteStorageConnections(a.id)).find(c=>c.provider==='mongodb');assert.deepEqual(mongo.options,{database:'inventory',authSource:'identity'});
+  await storage.createRemoteStorageService(a.id,app.id,{mode:'existing',connectionId:mongo.id,name:'existing_mongo',databaseName:'inventory',username:'existing_app',password:'isolated-app-password',options:{authSource:'users'}},actor);
+  const attached=await claim();assert.equal(attached.payload.resource.connection.authSource,'users');await finish(attached,{ok:true,connected:true});
+  const existingMongo=(await storage.remoteStorageServices(a.id,app.id)).find(s=>s.name==='existing_mongo');assert.match(storage.remoteStorageUrl(existingMongo,'private'),/authSource=users&tls=false/);
+  await storage.createRemoteStorageService(a.id,app.id,{mode:'provision',connectionId:mongo.id,name:'new_mongo',databaseName:'new_inventory'},actor);
+  const provisioned=await claim();assert.equal(provisioned.payload.resource.administrator.authSource,'identity');assert.equal(provisioned.payload.resource.connection.authSource,'new_inventory');await finish(provisioned,{ok:true,connected:true,database:'new_inventory',username:provisioned.payload.resource.connection.username});
+
 });

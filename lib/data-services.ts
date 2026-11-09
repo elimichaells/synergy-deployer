@@ -484,7 +484,7 @@ async function provisionProviderDatabase(connection: SecretConnection, databaseN
   }
 }
 
-export async function testProjectServiceCredential(connection: SecretConnection, databaseName: string, username: string | null, password: string) {
+export async function testProjectServiceCredential(connection: SecretConnection, databaseName: string, username: string | null, password: string, authSource?: string) {
   if (connection.provider === 'postgresql') {
     const { Client } = await import('pg')
     const client = new Client({ host: connection.host, port: connection.port, user: username || undefined, password, database: databaseName, ssl: connection.tls_enabled ? { rejectUnauthorized: false } : false, connectionTimeoutMillis: 10_000 })
@@ -507,7 +507,7 @@ export async function testProjectServiceCredential(connection: SecretConnection,
   if (connection.provider === 'mongodb') {
     const { MongoClient } = await import('mongodb')
     const auth = username ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@` : ''
-    const client = new MongoClient(`mongodb://${auth}${connection.host}:${connection.port}/${encodeURIComponent(databaseName)}?authSource=${encodeURIComponent(String(connection.options.authSource || databaseName))}`, { connectTimeoutMS: 10_000, tls: connection.tls_enabled })
+    const client = new MongoClient(`mongodb://${auth}${connection.host}:${connection.port}/${encodeURIComponent(databaseName)}?authSource=${encodeURIComponent(String(authSource || connection.options.authSource || databaseName))}`, { connectTimeoutMS: 10_000, tls: connection.tls_enabled })
     await client.connect()
     try { await client.db(databaseName).command({ ping: 1 }) } finally { await client.close() }
     return
@@ -600,7 +600,7 @@ export async function shareProjectDataService(projectId: string, input: Record<s
         (project_id,connection_id,name,database_name,username,password_ciphertext,env_prefix,options,created_by)
        values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id`,
       [projectId, source.connection_id, name, source.database_name, source.username, source.password_ciphertext,
-        envPrefix(String(input.envPrefix || source.env_prefix)), { ownership: 'shared', sharedFrom: sourceServiceId, sharedFromProjectId: source.source_project_id }, createdBy || null]
+        envPrefix(String(input.envPrefix || source.env_prefix)), { ownership: 'shared', sharedFrom: sourceServiceId, sharedFromProjectId: source.source_project_id, ...(source.options.authSource?{authSource:source.options.authSource}:{}) }, createdBy || null]
     )
     if (input.applicationPrimary === true) await setProjectDataServiceApplicationPrimary(projectId, inserted[0].id, true)
     return (await listProjectDataServices(projectId)).find((item) => item.id === inserted[0].id)
@@ -620,6 +620,8 @@ export async function provisionProjectDataService(projectId: string, input: Reco
   const connection = await getSecretConnection(requiredText(input.connectionId, 'Data connection'))
   assertNotControlPlane(connection.provider, connection.host, connection.port)
   const attachExisting = input.mode === 'existing'
+  const serviceOptions=typeof input.options==='object'&&input.options&&!Array.isArray(input.options)?input.options as Record<string,unknown>:{}
+  if(serviceOptions.authSource!==undefined&&(typeof serviceOptions.authSource!=='string'||!serviceOptions.authSource||serviceOptions.authSource.length>128||/[\x00-\x1f]/.test(serviceOptions.authSource)))throw new ApiError('Invalid authentication database',400)
   if (!attachExisting && !connection.provisioning_enabled) throw new ApiError('Provisioning is disabled for this data connection', 409)
   if (!attachExisting && connection.last_status !== 'healthy') throw new ApiError('Test this data connection successfully before provisioning', 409)
   const name = safeName(requiredText(input.name, 'Service name'), 40)
@@ -644,7 +646,7 @@ export async function provisionProjectDataService(projectId: string, input: Reco
   const password = attachExisting ? requestedPassword : connection.provider === 'redis' ? connectionPassword(connection) : requestedPassword || newPassword()
   if (attachExisting) {
     try {
-      await testProjectServiceCredential(connection, databaseName, username, password)
+      await testProjectServiceCredential(connection, databaseName, username, password, String(serviceOptions.authSource||connection.options.authSource||databaseName))
     } catch (error) {
       throw new ApiError(error instanceof Error ? error.message.slice(0, 1000) : 'Existing database credential could not be verified', 400)
     }
@@ -657,7 +659,7 @@ export async function provisionProjectDataService(projectId: string, input: Reco
       `insert into project_data_services
         (project_id,connection_id,name,database_name,username,password_ciphertext,env_prefix,options,created_by)
        values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id`,
-      [projectId, connection.id, name, databaseName, username, password ? encryptSecret(password) : null, envPrefix(String(input.envPrefix || name)), { ...(typeof input.options === 'object' && input.options ? input.options : {}), ownership: attachExisting ? 'external' : 'manager' }, createdBy || null]
+      [projectId, connection.id, name, databaseName, username, password ? encryptSecret(password) : null, envPrefix(String(input.envPrefix || name)), { ...serviceOptions, ownership: attachExisting ? 'external' : 'manager', ...(connection.provider==='mongodb'?{authSource:attachExisting?String(serviceOptions.authSource||connection.options.authSource||databaseName):databaseName}:{}) }, createdBy || null]
     )
     if (connection.provider === 'postgresql' && input.backupEnabled !== false) {
       const { configureDataServiceBackup } = await import('@/lib/data-service-backups')
@@ -788,7 +790,7 @@ export async function rotateProjectDataServicePassword(projectId: string, servic
   const previousPassword = service.password_ciphertext ? decryptSecret(service.password_ciphertext) : ''
   await setProjectServicePassword(connection, service, password)
   try {
-    await testProjectServiceCredential(connection, service.database_name, service.username, password)
+    await testProjectServiceCredential(connection, service.database_name, service.username, password, String(service.options.authSource||service.database_name))
     // Stack applications sharing this database receive the rotated credential too.
     await query(`update project_data_services set password_ciphertext=$1,updated_at=now() where id=$2 or options->>'sharedFrom'=$2::text`, [encryptSecret(password), service.id])
   } catch (error) {
@@ -802,7 +804,7 @@ function serviceUrl(service: ProjectDataService, password: string) {
   const auth = service.username ? `${encodeURIComponent(service.username)}:${encodeURIComponent(password)}@` : password ? `:${encodeURIComponent(password)}@` : ''
   const protocol = service.provider === 'postgresql' ? 'postgresql' : service.provider === 'sqlserver' ? 'sqlserver' : service.provider
   const database = service.provider === 'redis' ? service.database_name : encodeURIComponent(service.database_name)
-  return `${protocol}${service.tls_enabled && service.provider === 'redis' ? 's' : ''}://${auth}${service.host}:${service.port}/${database}`
+  return `${protocol}${service.tls_enabled && service.provider === 'redis' ? 's' : ''}://${auth}${service.host}:${service.port}/${database}${service.provider==='mongodb'?`?authSource=${encodeURIComponent(String(service.options.authSource||service.database_name))}&tls=${service.tls_enabled?'true':'false'}`:''}`
 }
 
 export async function getProjectDataServiceEnv(projectId: string) {

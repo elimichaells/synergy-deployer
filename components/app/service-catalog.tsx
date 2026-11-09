@@ -46,7 +46,7 @@ export function ServiceCatalog({ role, selectedConnectionId, onSelect }: {
   const [connectFor, setConnectFor] = useState<Engine | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState('')
-  const [form, setForm] = useState({ name: '', host: '127.0.0.1', port: 5433, username: '', password: '', tlsEnabled: false, isDefault: false })
+  const [form, setForm] = useState({ name: '', host: '127.0.0.1', port: 5433, username: '', password: '', database:'',authSource:'',tlsEnabled: false, isDefault: false })
   const poll = useRef<number | null>(null)
   const isAdmin = role === 'admin'
 
@@ -119,7 +119,7 @@ export function ServiceCatalog({ role, selectedConnectionId, onSelect }: {
 
   const openConnect = (engine: Engine) => {
     const definition = ENGINES.find(item => item.id === engine)!
-    setForm({ name: `${providerMeta[engine].label} on this server`, host: '127.0.0.1', port: definition.port, username: engine === 'postgresql' ? 'postgres' : engine === 'mysql' || engine === 'mariadb' ? 'root' : engine === 'sqlserver' ? 'sa' : '', password: '', tlsEnabled: false, isDefault: !(connections || []).some(connection => connection.provider === engine) })
+    setForm({ name: `${providerMeta[engine].label} on this server`, host: '127.0.0.1', port: definition.port, username: engine === 'postgresql' ? 'postgres' : engine === 'mysql' || engine === 'mariadb' ? 'root' : engine === 'sqlserver' ? 'sa' : '', password: '', database:'',authSource:'',tlsEnabled: false, isDefault: !(connections || []).some(connection => connection.provider === engine) })
     setConnectFor(engine); setError('')
   }
 
@@ -127,7 +127,7 @@ export function ServiceCatalog({ role, selectedConnectionId, onSelect }: {
     if (!connectFor) return
     setBusy('connect'); setError('')
     try {
-      const response = await fetch('/api/data/connections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...form, provider: connectFor, purpose: 'shared_application', provisioningEnabled: true }) })
+      const response = await fetch('/api/data/connections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...form,options:{...(form.database?{database:form.database}:{}),...(connectFor==='mongodb'&&form.authSource?{authSource:form.authSource}:{})}, provider: connectFor, purpose: 'shared_application', provisioningEnabled: true }) })
       const body = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(body.error || 'Connection failed')
       setConnectFor(null)
@@ -186,6 +186,8 @@ export function ServiceCatalog({ role, selectedConnectionId, onSelect }: {
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="field-label">Admin username<input className="control-input" autoComplete="off" value={form.username} onChange={event => setForm({ ...form, username: event.target.value })} /></label>
             <label className="field-label">Admin password<input className="control-input" type="password" autoComplete="new-password" value={form.password} onChange={event => setForm({ ...form, password: event.target.value })} /></label>
+            <label className="field-label">Connection database<input className="control-input" value={form.database} onChange={event=>setForm({...form,database:event.target.value})} placeholder="Provider default" /></label>
+            {connectFor==='mongodb'&&<label className="field-label">Authentication database<input className="control-input" value={form.authSource} onChange={event=>setForm({...form,authSource:event.target.value})} placeholder="admin" /></label>}
           </div>
           <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
             <label className="flex items-center gap-2"><Switch checked={form.isDefault} onCheckedChange={isDefault => setForm({ ...form, isDefault })} />Recommended for new apps</label>

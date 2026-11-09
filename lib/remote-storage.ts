@@ -1,5 +1,6 @@
 import {randomUUID,randomBytes} from 'node:crypto'
 import {isIP} from 'node:net'
+import {connectionOptions} from '../scripts/database-connection-options.cjs'
 import type {PoolClient} from 'pg'
 import {ApiError} from './api'
 import {query} from './db'
@@ -64,9 +65,9 @@ export async function remoteStorageService(client:PoolClient,serverId:string,id:
     const c=(await client.query("select * from remote_storage_connections where server_id=$1 and id=$2 and provider='postgresql' and provisioning_enabled for update",[serverId,uuid(raw.connectionId)])).rows[0]
     if(!c)throw new ApiError('PostgreSQL administrator connection not found on this server',404)
     if(!raw.database||Buffer.byteLength(raw.database)>63||/[\0\r\n]/.test(raw.database))throw new ApiError('Invalid database name',400)
-    return{...c,id,connection_id:c.id,connection_name:c.name,database_name:raw.database,administrator:c.username,administrator_ciphertext:c.password_ciphertext,options:{ownership:'external',untracked:true},status:'ready'}
+    return{...c,id,connection_id:c.id,connection_name:c.name,database_name:raw.database,administrator:c.username,administrator_ciphertext:c.password_ciphertext,connection_options:c.options,options:{ownership:'external',untracked:true},status:'ready'}
   }
-  const row=(await client.query(`select s.*,c.provider,c.host,c.port,c.tls_enabled,c.name as connection_name,c.username as administrator,c.password_ciphertext as administrator_ciphertext,c.provisioning_enabled
+  const row=(await client.query(`select s.*,c.provider,c.host,c.port,c.tls_enabled,c.options as connection_options,c.name as connection_name,c.username as administrator,c.password_ciphertext as administrator_ciphertext,c.provisioning_enabled
     from remote_storage_services s join remote_storage_connections c on c.id=s.connection_id and c.server_id=s.server_id where s.server_id=$1 and s.id=$2 for update of s`,[serverId,uuid(id)])).rows[0]
   if(!row)throw new ApiError('Database not found on this server',404)
   return row
@@ -83,13 +84,14 @@ const name=(value:unknown,label:string,max=63)=>{const result=text(value,label,m
 const password=()=>randomBytes(30).toString('base64url')
 async function idle(client:PoolClient,serverId:string){if((await client.query("select 1 from remote_jobs where server_id=$1 and status in ('queued','running') union all select 1 from remote_storage_renames where server_id=$1 and status in ('running','needs_review') union all select 1 from remote_storage_changes where server_id=$1 and status in ('running','needs_review')",[serverId])).rowCount)throw new ApiError('Finish the current server operation or verify the pending database change first',409)}
 async function application(client:PoolClient,serverId:string,id:string){const app=(await client.query('select * from remote_apps where server_id=$1 and id=$2 for update',[serverId,uuid(id)])).rows[0];if(!app)throw new ApiError('Application not found on this server',404);return app}
-const credential=(item:Record<string,any>)=>({provider:item.provider,host:item.host,port:item.port,username:item.username,password:decode(item.password_ciphertext),database:item.database_name,tls:item.tls_enabled})
-const administrator=(item:Record<string,any>)=>({provider:item.provider,host:item.host,port:item.port,username:item.administrator,password:decode(item.administrator_ciphertext),database:'postgres',tls:item.tls_enabled})
+const savedOptions=(value:unknown)=>{try{return connectionOptions(value)}catch(error){throw new ApiError(error instanceof Error?error.message:'Invalid connection settings',400)}}
+const credential=(item:Record<string,any>)=>({provider:item.provider,host:item.host,port:item.port,username:item.username,password:decode(item.password_ciphertext),database:item.database_name,tls:item.tls_enabled,caPem:(item.connection_options||item.options)?.caPem,authSource:item.options?.authSource||(item.database_name?item.database_name:item.options?.database||'admin')})
+const administrator=(item:Record<string,any>)=>({provider:item.provider,host:item.host,port:item.port,username:item.administrator,password:decode(item.administrator_ciphertext),database:item.connection_options?.database||({postgresql:'postgres',mysql:'mysql',mariadb:'mysql',sqlserver:'master',mongodb:'admin',redis:'0'} as Record<string,string>)[item.provider],tls:item.tls_enabled,...savedOptions(item.connection_options)})
 function backupCredential(item:Record<string,any>,config:Record<string,any>|undefined){if(config?.credentialSource==='connection'){if(!item.provisioning_enabled||!item.administrator_ciphertext)throw new ApiError('Save a PostgreSQL administrator connection before using it for backups',409);return{...administrator(item),database:item.database_name}}return credential(item)}
 export function remoteStorageUrl(item:Record<string,any>,secretValue:string){
   const host=isIP(item.host)===6?`[${item.host}]`:item.host,auth=item.username?`${encodeURIComponent(item.username)}:${encodeURIComponent(secretValue)}@`:secretValue?`:${encodeURIComponent(secretValue)}@`:''
   const protocol=item.provider==='mariadb'?'mysql':item.provider==='redis'&&item.tls_enabled?'rediss':item.provider
-  return `${protocol}://${auth}${host}:${item.port}/${encodeURIComponent(item.database_name)}${item.provider==='postgresql'?`?sslmode=${item.tls_enabled?'verify-full':'disable'}`:''}`
+  return `${protocol}://${auth}${host}:${item.port}/${encodeURIComponent(item.database_name)}${item.provider==='postgresql'?`?sslmode=${item.tls_enabled?'verify-full':'disable'}`:item.provider==='mongodb'?`?authSource=${encodeURIComponent(String(item.options?.authSource||item.database_name))}&tls=${item.tls_enabled?'true':'false'}`:''}`
 }
 export function remoteServiceEnvironment(item:Record<string,any>,projectType:string){
   if(item.options?.ownership==='adopted'||item.options?.injectEnv===false)return{}
@@ -123,8 +125,8 @@ export async function createRemoteStorageConnection(serverId:string,body:Record<
   return resourceTransaction(serverId,async client=>{
     await admitResource(client,serverId);const id=randomUUID()
     if(body.isDefault===true)await client.query('update remote_storage_connections set is_default=false where server_id=$1 and provider=$2',[serverId,engine])
-    await client.query(`insert into remote_storage_connections(id,server_id,name,provider,host,port,username,password_ciphertext,tls_enabled,purpose,is_default,provisioning_enabled,created_by)
-      values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,[id,serverId,text(body.name,'connection name'),engine,hostKey(host),port,engine==='redis'&&!body.username?'':text(body.username,'database administrator',128),encryptSecret(engine==='redis'&&!body.password?'':secret(body.password)),body.tlsEnabled===true,body.purpose||'shared_application',body.isDefault===true,body.provisioningEnabled===true,actor])
+    await client.query(`insert into remote_storage_connections(id,server_id,name,provider,host,port,username,password_ciphertext,tls_enabled,purpose,is_default,provisioning_enabled,created_by,options)
+      values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,[id,serverId,text(body.name,'connection name'),engine,hostKey(host),port,engine==='redis'&&!body.username?'':text(body.username,'database administrator',128),encryptSecret(engine==='redis'&&!body.password?'':secret(body.password)),body.tlsEnabled===true,body.purpose||'shared_application',body.isDefault===true,body.provisioningEnabled===true,actor,JSON.stringify(savedOptions(body.options))])
     return queueConnectionTest(client,serverId,id,actor)
   })
 }
@@ -145,19 +147,20 @@ export async function createRemoteStorageService(serverId:string,appId:string,bo
     if(body.mode==='shared'){
       const source=await service(client,serverId,String(body.sourceServiceId));const sourceApp=await application(client,serverId,source.app_id)
       if(source.app_id===appId||!app.application_group_id||app.application_group_id!==sourceApp.application_group_id||app.environment_name!==sourceApp.environment_name||source.status!=='ready')throw new ApiError('Share only a verified database within this project and environment',409)
-      item={id:source.connection_id,...source};serviceName=source.name;dbName=source.database_name;username=source.username;secretValue=decode(source.password_ciphertext);options={ownership:'shared',sharedFrom:source.id}
+      item={id:source.connection_id,...source};serviceName=source.name;dbName=source.database_name;username=source.username;secretValue=decode(source.password_ciphertext);options={ownership:'shared',sharedFrom:source.id,...(source.options?.authSource?{authSource:source.options.authSource}:{})}
     }else{
       if(!['existing','provision'].includes(String(body.mode)))throw new ApiError('Choose a database action',400)
       item=(await client.query('select * from remote_storage_connections where server_id=$1 and id=$2',[serverId,uuid(body.connectionId)])).rows[0];if(!item)throw new ApiError('Connection not found on this server',404)
       if(body.mode==='provision'&&(!item.provisioning_enabled||item.purpose==='external_service'||item.last_status!=='healthy'))throw new ApiError('Test a provisioning connection before creating a database',409)
       serviceName=name(body.name||'primary','service name',40);dbName=item.provider==='redis'?String(body.databaseName||'0'):(body.mode==='existing'?text:name)(body.databaseName||`app_${appId.replaceAll('-','').slice(0,12)}_${serviceName}`,'database name');username=item.provider==='redis'?String(body.username||item.username||''):(body.mode==='existing'?text:name)(body.username||`app_${id.replaceAll('-','').slice(0,20)}`,'database user',item.provider==='mysql'||item.provider==='mariadb'?32:63);secretValue=body.password?secret(body.password):item.provider==='redis'?decode(item.password_ciphertext):body.mode==='provision'?password():secret(body.password);options={ownership:body.mode==='provision'&&item.provider!=='redis'?'manager':'external'}
+      if(item.provider==='mongodb')options.authSource=body.mode==='provision'?dbName:savedOptions(body.options).authSource||item.options?.authSource||dbName
       if(item.provider==='redis'&&(!/^\d{1,2}$/.test(dbName)||Number(dbName)>15))throw new ApiError('Redis database must be between 0 and 15',400)
     }
     const prefix=name(body.envPrefix||serviceName.toUpperCase(),'environment prefix',40).toUpperCase();options.pendingPrimary=body.applicationPrimary===true;options.backupEnabled=item.provider==='postgresql'&&body.backupEnabled===true
     await client.query(`insert into remote_storage_services(id,server_id,app_id,connection_id,name,database_name,username,password_ciphertext,env_prefix,options,created_by) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,[id,serverId,appId,item.connection_id||item.id,serviceName,dbName,username,encryptSecret(secretValue),prefix,JSON.stringify(options),actor])
     await client.query('update remote_apps set storage_catalog_enabled=true where server_id=$1 and id=$2',[serverId,appId])
-    const connection={provider:item.provider,host:item.host,port:item.port,tls:item.tls_enabled,database:dbName,username,password:secretValue}
-    return enqueueResource(client,serverId,{action:'storage',serviceId:id,operation:body.mode==='provision'&&item.provider!=='redis'?'provision':'test',connection,...(body.mode==='provision'?{administrator:{...connection,username:item.username,password:decode(item.password_ciphertext),database:item.provider==='postgresql'?'postgres':item.provider==='sqlserver'?'master':'admin'}}:{})},actor,id)
+    const connection={provider:item.provider,host:item.host,port:item.port,tls:item.tls_enabled,database:dbName,username,password:secretValue,caPem:(item.connection_options||item.options)?.caPem,...(options.authSource?{authSource:options.authSource}:{})}
+    return enqueueResource(client,serverId,{action:'storage',serviceId:id,operation:body.mode==='provision'&&item.provider!=='redis'?'provision':'test',connection,...(body.mode==='provision'?{administrator:{...connection,username:item.username,password:decode(item.password_ciphertext),database:item.options?.database||(item.provider==='postgresql'?'postgres':item.provider==='sqlserver'?'master':'admin'),authSource:item.options?.authSource||'admin'}}:{})},actor,id)
   })
 }
 export async function changeRemoteStorageService(serverId:string,appId:string,id:string,remove:boolean,actor:string){

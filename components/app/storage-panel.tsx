@@ -72,7 +72,7 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
   const [busy, setBusy] = useState(false)
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<AddMode>('new')
-  const [form, setForm] = useState({ connectionId: '', name: 'primary', envPrefix: 'PRIMARY', databaseName: '', customCredentials: false, username: '', password: '', confirm: '', applicationPrimary: true, backup: true, syncEnv: false, sourceServiceId: '' })
+  const [form, setForm] = useState({ connectionId: '', name: 'primary', envPrefix: 'PRIMARY', databaseName: '', authSource:'',customCredentials: false, username: '', password: '', confirm: '', applicationPrimary: true, backup: true, syncEnv: false, sourceServiceId: '' })
   const [passwordFor, setPasswordFor] = useState<Service | null>(null)
   const [password, setPassword] = useState({ value: '', confirm: '' })
   const isAdmin = role === 'admin'
@@ -107,7 +107,7 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
     const recommended = usableConnections.find(connection => connection.is_default) || usableConnections[0]
     setMode(next)
     setForm(current => ({ ...current, connectionId: next === 'new' ? recommended?.id || '' : next === 'existing' ? connections[0]?.id || '' : '',
-      name: 'primary', envPrefix: 'PRIMARY', databaseName: '', customCredentials: false, username: '', password: '', confirm: '',
+      name: 'primary', envPrefix: 'PRIMARY', databaseName: '', authSource:'',customCredentials: false, username: '', password: '', confirm: '',
       applicationPrimary: !hasPrimary, backup: true, syncEnv: false, sourceServiceId: available[0]?.id || '' }))
     setNotice(null)
     setOpen(true)
@@ -160,7 +160,7 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
       ? { mode: 'shared', sourceServiceId: form.sourceServiceId, applicationPrimary: form.applicationPrimary, envPrefix: form.envPrefix || undefined }
       : {
         mode: mode === 'existing' ? 'existing' : 'provision', connectionId: form.connectionId, name: form.name, envPrefix: form.envPrefix,
-        databaseName: form.databaseName, username: mode === 'existing' || form.customCredentials ? form.username : '',
+        databaseName: form.databaseName,options:mode==='existing'&&selectedConnection?.provider==='mongodb'&&form.authSource?{authSource:form.authSource}:{}, username: mode === 'existing' || form.customCredentials ? form.username : '',
         password: mode === 'existing' || form.customCredentials ? form.password : '', applicationPrimary: form.applicationPrimary,
         backupEnabled: selectedConnection?.provider === 'postgresql' && form.backup,
       }
@@ -356,6 +356,7 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
                 <div className="grid gap-4 sm:grid-cols-2">
                   <label className="field-label">Name<input className="control-input" value={form.name} onChange={event => setForm({ ...form, name: event.target.value, envPrefix: envName(event.target.value) })} /></label>
                   <label className="field-label">{mode === 'existing' ? 'Database name' : <span>Database name <span className="font-normal text-muted-foreground">optional</span></span>}<input className="control-input font-mono" value={form.databaseName} onChange={event => setForm({ ...form, databaseName: event.target.value })} placeholder={mode === 'existing' ? 'existing_database' : 'Generated'} /></label>
+                  {mode==='existing'&&selectedConnection?.provider==='mongodb'&&<label className="field-label">Authentication database<input className="control-input" value={form.authSource} onChange={event=>setForm({...form,authSource:event.target.value})} placeholder="Use saved connection setting" /><span className="text-xs text-muted-foreground">Where this application's existing MongoDB account was created.</span></label>}
                 </div>
                 {mode === 'new' && selectedConnection?.provider !== 'redis' && <label className="flex items-center justify-between gap-4 text-sm"><span>Choose my own username and password</span><Switch checked={form.customCredentials} onCheckedChange={customCredentials => setForm({ ...form, customCredentials })} /></label>}
                 {(mode === 'existing' || form.customCredentials) && (

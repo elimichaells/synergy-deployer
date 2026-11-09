@@ -13,7 +13,7 @@ async function execute(root,input,h,driver){
   try{
     if(['mysql','mariadb'].includes(d.provider)){
       const mysql=await driver(root,h,'mysql2/promise',input.driverArchive),c=provisioning||rotating?a:d;
-      const client=await mysql.createConnection({host:c.host,port:c.port,user:c.username,password:c.password,...(provisioning||rotating?{}:{database:d.database}),ssl:c.tls?{rejectUnauthorized:true}:undefined,connectTimeout:10000,enableKeepAlive:true,multipleStatements:false});
+      const client=await mysql.createConnection({host:c.host,port:c.port,user:c.username,password:c.password,...(provisioning||rotating?{}:{database:d.database}),ssl:c.tls?{rejectUnauthorized:true,...(c.caPem?{ca:c.caPem}:{})}:undefined,connectTimeout:10000,enableKeepAlive:true,multipleStatements:false});
       try{
         const query=(sql,args)=>client.query({sql,timeout:20000},args);
         if(provisioning){
@@ -33,7 +33,7 @@ async function execute(root,input,h,driver){
       if(provisioning||rotating)await verify();
     }else if(d.provider==='sqlserver'){
       const sql=await driver(root,h,'mssql',input.driverArchive),c=provisioning||rotating?a:d;
-      const config={server:c.host,port:c.port,user:c.username,password:c.password,database:provisioning||rotating?'master':d.database,options:{encrypt:c.tls===true,trustServerCertificate:!c.tls},connectionTimeout:10000,requestTimeout:20000,pool:{max:1,min:0}};
+      const config={server:c.host,port:c.port,user:c.username,password:c.password,database:provisioning||rotating?'master':d.database,options:{encrypt:c.tls===true,trustServerCertificate:!c.tls,...(c.tls&&c.caPem?{cryptoCredentialsDetails:{ca:c.caPem}}:{})},connectionTimeout:10000,requestTimeout:20000,pool:{max:1,min:0}};
       const client=await new sql.ConnectionPool(config).connect();
       try{
         if(provisioning){
@@ -47,7 +47,7 @@ async function execute(root,input,h,driver){
       }finally{await client.close();}if(provisioning||rotating)await verify();
     }else if(d.provider==='mongodb'){
       const {MongoClient}=await driver(root,h,'mongodb',input.driverArchive),c=provisioning||rotating?a:d,host=c.host.includes(':')?'['+c.host+']':c.host;
-      const client=new MongoClient(`mongodb://${encodeURIComponent(c.username)}:${encodeURIComponent(c.password)}@${host}:${c.port}/?authSource=${encodeURIComponent(c.authSource||(provisioning||rotating?'admin':d.database))}`,{tls:c.tls===true,connectTimeoutMS:10000,serverSelectionTimeoutMS:10000,socketTimeoutMS:20000});
+      const client=new MongoClient(`mongodb://${encodeURIComponent(c.username)}:${encodeURIComponent(c.password)}@${host}:${c.port}/?authSource=${encodeURIComponent(c.authSource||(provisioning||rotating?'admin':d.database))}`,{tls:c.tls===true,...(c.tls&&c.caPem?{ca:c.caPem}:{}),connectTimeoutMS:10000,serverSelectionTimeoutMS:10000,socketTimeoutMS:20000});
       try{await client.connect();if(provisioning){const existing=await client.db('admin').admin().listDatabases({nameOnly:true}),users=await client.db(d.database).command({usersInfo:d.username});if(existing.databases.some(db=>db.name===d.database)||users.users?.length)throw Error('The database or account already exists. Nothing was changed.');await client.db(d.database).command({createUser:d.username,pwd:d.password,roles:[{role:'readWrite',db:d.database}]});}
         else if(rotating){if(d.username===a.username)throw Error('The administrator password cannot be changed here');await client.db(d.database).command({updateUser:d.username,pwd:input.password});}
         else await client.db(d.database).command({ping:1});
@@ -55,7 +55,7 @@ async function execute(root,input,h,driver){
     }else{
       if(rotating)throw Error('Manage Redis account passwords on the database server');
       const {createClient}=await driver(root,h,'redis',input.driverArchive),host=d.host.includes(':')?'['+d.host+']':d.host,auth=d.username?`${encodeURIComponent(d.username)}:${encodeURIComponent(d.password)}@`:d.password?`:${encodeURIComponent(d.password)}@`:'';
-      const client=createClient({url:`${d.tls?'rediss':'redis'}://${auth}${host}:${d.port}/${d.database}`,socket:{connectTimeout:10000,reconnectStrategy:false}});client.on('error',()=>{});
+      const client=createClient({url:`${d.tls?'rediss':'redis'}://${auth}${host}:${d.port}/${d.database}`,socket:{connectTimeout:10000,reconnectStrategy:false,...(d.tls?{tls:true,rejectUnauthorized:true,...(d.caPem?{ca:d.caPem}:{})}:{})}});client.on('error',()=>{});
       let timer;try{await Promise.race([(async()=>{await client.connect();await client.ping();})(),new Promise((_,reject)=>{timer=setTimeout(()=>{if(client.isOpen)client.destroy();reject(Error('Database connection timed out'));},15000);})]);}finally{clearTimeout(timer);if(client.isOpen)client.destroy();}
     }
     return{ok:true,connected:true,database:d.database,...(provisioning?{username:d.username}:{}),...(rotating?{rotated:true}:{})};
