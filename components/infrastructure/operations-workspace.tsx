@@ -156,7 +156,7 @@ export function OperationsWorkspace({ serverId, onWorkspaceHashChange }: Infrast
             {operator && event.kind === 'recovery' && (event.status === 'failed' || event.status === 'running' && Date.now() - Date.parse(event.created_at) > 600000) && <button className={`${button} mt-2`} disabled={!!busy} onClick={() => void post('acknowledge', { eventId: event.id })}>Mark incident reviewed</button>}
           </li>)}</ul>}
         </section>
-        <p className="text-xs text-muted-foreground">Alerts stay inside the deployer. When its host is unreachable, review the recorded evidence after access returns. <Link href="/infrastructure/health" className="underline">Open Health & alerts</Link></p>
+        <p className="text-xs text-muted-foreground">Alerts stay inside the deployer. When its host is unreachable, review the recorded evidence after access returns. <Link href={serverId ? `/infrastructure/servers/${serverId}?section=health#server-access` : '/infrastructure/health'} className="underline">Open Health & alerts</Link></p>
       </>}
     </div>
   </AppShell>
