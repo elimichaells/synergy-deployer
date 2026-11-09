@@ -121,13 +121,13 @@ async function stackDomainRoutes(domain: string): Promise<StackDomainRoute[]> {
  * For a staging app that sleeps: when Caddy cannot reach it (502), the manager's wake page
  * answers instead, starts the app, and reloads itself until the app is back.
  */
-function renderWakeHandler() {
+function renderWakeHandler(domain: string) {
     const managerPort = Number(process.env.MANAGER_PORT || 4000)
     return `
 \thandle_errors {
 \t\t@asleep expression {err.status_code} == 502
 \t\thandle @asleep {
-\t\t\trewrite * /api/wake?host={host}
+\t\t\trewrite * /api/wake?host=${encodeURIComponent(domain)}
 \t\t\treverse_proxy 127.0.0.1:${managerPort}
 \t\t}
 \t}
@@ -158,7 +158,7 @@ ${renderReverseProxy(port, '\t\t')}
     return `# ${domain}
 ${address} {
 ${tls}${lanCaddyDirectives(domain)}${parseLanAddress(domain) ? '\thandle {\n' + proxyBlock + '\n\t}' : proxyBlock}
-${wake ? renderWakeHandler() : ''}
+${wake ? renderWakeHandler(domain) : ''}
 \tlog {
 \t\toutput file ${/\s/.test(logFile) ? `"${logFile}"` : logFile} {
 \t\t\troll_size 10MB
@@ -257,7 +257,7 @@ async function wakeEnabledFor(domain: string) {
         const { rows } = await query<{ id: string }>(`
             select p.id from projects p
             where p.environment = 'staging' and p.sleep_after_minutes is not null
-              and (lower(regexp_replace(coalesce(p.url, ''), '^https?://([^/:]+).*$', '\\1')) = lower($1)
+              and (lower(regexp_replace(coalesce(p.url, ''), '^https?://([^/]+).*$', '\\1')) = lower($1)
                    or exists (select 1 from project_domains d where d.project_id = p.id and lower(d.hostname) = lower($1)))
             limit 1`, [domain])
         return rows.length > 0
