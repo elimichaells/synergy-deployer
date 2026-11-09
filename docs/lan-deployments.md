@@ -27,6 +27,12 @@ allowed when unused; use separate ports from 1024–65535 when other sites alrea
 use 443. Occupied ports are rejected before replacing the proxy configuration.
 Independent connected servers can use the same private address in separate LANs.
 
+Browsers share cookies across ports on the same IP. Configure distinct cookie
+names for applications sharing an IP. Manager reserves `manager_session` and
+filters it from private-IP application requests and responses; its own sign-in
+route retains the cookie. Use separate internal hostnames when applications need
+separate browser cookie namespaces.
+
 Caddy issues and renews local certificates. Devices without the root certificate
 show a browser trust warning. Each server has its own CA; downloading a remote
 server's certificate does not download the Manager host's certificate. Private-IP
