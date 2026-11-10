@@ -5,7 +5,11 @@ const path = require('node:path');
 // in-place supervisor update. Source modules can still be tested independently.
 async function agentBundle(root = process.cwd()) {
   let source = await fs.readFile(path.join(root, 'scripts/manager-agent.cjs'), 'utf8');
-  source=source.replace("const createWindowsPidUsage = require('./windows-pidusage.cjs');",`const createWindowsPidUsage = ${require('./windows-pidusage.cjs').toString()};`);
+  // Read source bytes: Next's production compiler can rewrite a required
+  // function to close over webpack variables. Function#toString would then
+  // embed references that do not exist in the standalone agent.
+  const windowsCounters=await fs.readFile(path.join(root,'scripts/windows-pidusage.cjs'),'utf8');
+  source=source.replace("const createWindowsPidUsage = require('./windows-pidusage.cjs');",()=>`const createWindowsPidUsage=(()=>{const module={exports:{}};\n${windowsCounters}\nreturn module.exports;})();`);
   const browser=await fs.readFile(path.join(root,'scripts/database-browser-agent.cjs'),'utf8');
   source=source.replace("const databaseBrowser = require('./database-browser-agent.cjs');",`const databaseBrowser=(()=>{const module={exports:{}};\n${browser}\nreturn module.exports;})();`);
   const consolePolicy=await fs.readFile(path.join(root,'scripts/console-policy.cjs'),'utf8');

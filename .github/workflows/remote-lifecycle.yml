@@ -3,10 +3,13 @@ on:
   pull_request:
     paths:
       - 'scripts/manager-agent*.cjs'
+      - 'scripts/agent-bundle.cjs'
       - 'scripts/windows-pidusage.cjs'
       - 'scripts/remote-release-data.cjs'
       - 'scripts/remote-storage*.cjs'
       - 'tests/remote-live-lifecycle.test.cjs'
+      - 'tests/remote-agent-startup.test.cjs'
+      - 'tests/agent-bundle-source.test.cjs'
       - 'tests/fixtures/*live-agent*.cjs'
       - 'tests/fixtures/manager-removal-lab.cjs'
       - 'tests/fixtures/live-database-switch.cjs'
@@ -37,11 +40,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm install --prefix "${{ runner.temp }}/manager-live-tools" --ignore-scripts --no-audit --no-fund pm2@${{ matrix.pm2 }}
       - run: node tests/fixtures/prepare-live-agent-lab.cjs
       - run: node --test tests/private-pm2-isolation.test.cjs tests/windows-pidusage.test.cjs
       - run: node --test tests/pm2-compatibility.test.cjs
       - run: node --test tests/remote-live-lifecycle.test.cjs
+      - run: node --test tests/agent-bundle-source.test.cjs tests/remote-agent-startup.test.cjs
   manager-receipt:
     runs-on: ubuntu-latest
     timeout-minutes: 15

@@ -115,6 +115,12 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
+      - name: Verify the production agent artifact
+        env:
+          TEST_PRODUCTION_BUILD: "1"
+          MANAGER_PREVIEW: "1"
+        run: node --test tests/production-agent-bundle.test.cjs
+
       - name: Build application package and setup executable
         if: matrix.node == 22
         shell: pwsh
