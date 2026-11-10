@@ -22,6 +22,9 @@ interface RuntimeStatus {
   canConfigure: boolean
   canReuse?: boolean
   updateCheckSupported?: boolean
+  updateCheckError?:string|null
+  updateSourceUrl?:string|null
+  updateInstructions?:string|null
   offline?: boolean
   installSource?: string
   versioned: boolean
@@ -110,7 +113,8 @@ export function RuntimeManager({ isAdmin, runtimeIds, workspace = false, onChang
       setRuntimes(body.runtimes || [])
       const count = (body.runtimes || []).filter((runtime: RuntimeStatus) => runtime.updateAvailable).length
       const checked=(body.runtimes||[]).filter((runtime:RuntimeStatus)=>runtime.updateCheckSupported!==false&&runtime.updateCheckedAt).length
-      setMessage(count ? `${count} dependenc${count === 1 ? 'y has' : 'ies have'} an update available.` : checked?`No updates found among ${checked} checked dependencies.`:'No update results are available for these dependencies.')
+      const failed=(body.runtimes||[]).filter((runtime:RuntimeStatus)=>runtime.updateCheckSupported&&runtime.updateCheckError).length
+      setMessage((count ? `${count} dependenc${count === 1 ? 'y has' : 'ies have'} an update available.` : checked?`No updates found among ${checked} checked dependencies.`:'No update results are available for these dependencies.')+(failed?` ${failed} vendor check${failed===1?' was':'s were'} unavailable; see the affected rows.`:''))
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Update check failed') }
     finally { setChecking(false) }
   }
@@ -154,6 +158,8 @@ export function RuntimeManager({ isAdmin, runtimeIds, workspace = false, onChang
           badges={<>{runtime.updateAvailable && <Badge variant="outline" className="border-amber-500/30 text-amber-400">{runtime.latestVersion} available{runtime.updateRisk ? ` · ${runtime.updateRisk}` : ''}</Badge>}{runtime.id === 'mysql' && runtime.latestJob?.action === 'configure' && runtime.latestJob.status === 'success' && <Badge variant="secondary">Provisioning ready</Badge>}{runtime.installedVersions.length > 0 && <Badge variant="secondary">{runtime.installedVersions.length} project version{runtime.installedVersions.length === 1 ? '' : 's'}</Badge>}</>}
           detail={<>
             {runtime.installSource && <p className="mt-1 pl-6 text-xs text-muted-foreground">{runtime.installSource}</p>}
+            {runtime.updateCheckError&&<p className="mt-1 pl-6 text-xs text-amber-500">{runtime.updateCheckError}</p>}
+            {runtime.updateInstructions&&<p className="mt-1 pl-6 text-xs text-muted-foreground">{runtime.updateInstructions} {runtime.updateSourceUrl&&<a className="underline" href={runtime.updateSourceUrl} target="_blank" rel="noreferrer">Vendor releases</a>}</p>}
             {runtime.latestJob?.status === 'failed' && !runtime.activeJob && <button className="mt-1 pl-6 text-left text-[11px] text-destructive hover:underline" onClick={() => watchJob(runtime.latestJob!)}>Last operation failed: {runtime.latestJob.error}</button>}          </>}
           actions={<>
             {runtime.activeJob && <Button variant="outline" size="sm" className="h-8" onClick={() => watchJob(runtime.activeJob!)}><Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />Progress</Button>}
