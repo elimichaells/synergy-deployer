@@ -1,6 +1,6 @@
 # Host and connected-server functionality audit
 
-Audit for Manager 2.32.1 / agent 1.9.0, starting from Manager 2.31.0 / agent 1.8.0.
+Audit for Manager 2.32.2 / agent 1.9.1, starting from Manager 2.31.0 / agent 1.8.0.
 The release fixes the verified gaps below; it does not claim universal functional parity.
 Production applications, databases and shared proxy configuration are outside the destructive test scope.
 
@@ -87,3 +87,18 @@ The release is being prepared; packaged deployment verification remains pending.
 - The browser displays the imported row. Its Export button returned a successful SQL attachment through the relay, but the in-app browser did not expose download or file-picker events. Transport tests validate those bytes; a browser download artifact was not observed.
 - Capability-route tests cover multipart bytes, streamed size limits, download headers, preflight, authorization revocation and root URL normalization. Manager cookies and stored database passwords are not forwarded.
 - Tool discovery tests cover release-series filtering, MariaDB identification, cached results and independent vendor failures. Live official-catalog checks returned Composer, PHP, phpMyAdmin, Caddy, PostgreSQL, MySQL, MariaDB, MongoDB and Redis releases.
+
+
+## Production packaging correction
+
+Manager 2.32.1 installed successfully, preserving all 33 hosted application process IDs,
+statuses and restart counts, database service IDs and the Caddy configuration hash.
+The remote 1.9.0 agent update rolled back under its supervisor. An isolated test under
+the remote Local Service account found a Windows preload with an undefined variable:
+Manager's production compiler had transformed the function serialized by the packager.
+Source-based startup passed; the actual downloaded artifact failed.
+
+Manager 2.32.2 / agent 1.9.1 embeds the original source bytes. Release validation now
+compares the production-compiled packager's output byte-for-byte with the tested source
+bundle. An isolated startup test checks IPC and control-plane heartbeats, clean shutdown
+and preservation of a separate Caddy site. Final 2.32.2 deployment verification is pending.
