@@ -11,6 +11,7 @@ async function serve(request:Request,context:Context){try{
   const reader=request.body?.getReader(),chunks:Uint8Array[]=[];let size=0
   if(reader)try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>LIMIT)throw Object.assign(Error('Database browser uploads are limited to 8 MB'),{status:413});chunks.push(value)}}finally{await reader.cancel()}
   const url=new URL(request.url),prefix='/api/database-browser/'+token+'/'
+  if(url.pathname===prefix.slice(0,-1))return new Response(null,{status:307,headers:{...headers,Location:new URL(prefix+'index.php'+url.search,url.origin).href}})
   if(!url.pathname.startsWith(prefix))throw Object.assign(Error('Invalid database browser path'),{status:400})
   const response=await databaseBrowser.enqueue(token,{method:request.method,path:url.pathname.slice(prefix.length)+url.search,body:Buffer.concat(chunks),contentType:request.headers.get('content-type'),accept:request.headers.get('accept'),requestedWith:request.headers.get('x-requested-with')},request.signal)
   return new Response(request.method==='HEAD'?null:new Uint8Array(response.body),{status:response.status,headers:response.headers})

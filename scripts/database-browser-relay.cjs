@@ -21,7 +21,9 @@ function createRelay({now=Date.now,timeoutMs=45000,pollMs=12000}={}){
     const token=randomBytes(32).toString('base64url'),base=url.origin+'/api/database-browser/'+token+'/';
     const timer=setTimeout(()=>close(token),SESSION_MS);timer.unref?.();
     sessions.set(token,{serverId,userId,connection:{id:connection.id,host:connection.host,port:connection.port,tls:connection.tls===true,caPem:connection.caPem||''},base,expiresAt:now()+SESSION_MS,cookies:new Map(),timer});
-    return{token,url:base,expiresAt:now()+SESSION_MS};
+    // An explicit file survives Next's trailing-slash canonicalization and
+    // keeps all relative asset paths inside this capability directory.
+    return{token,url:base+'index.php',expiresAt:now()+SESSION_MS};
   }
   function headers(token){const value=session(token),origin=new URL(value.base).origin;return{
     'Cache-Control':'no-store','Cross-Origin-Opener-Policy':'same-origin','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff',
@@ -70,7 +72,7 @@ function createRelay({now=Date.now,timeoutMs=45000,pollMs=12000}={}){
         if(/;\s*Max-Age=0(?:;|$)/i.test(value)||expires&&Date.parse(expires[1])<now())item.session.cookies.delete(match[1]);
         else if(item.session.cookies.has(match[1])||item.session.cookies.size<20)item.session.cookies.set(match[1],match[2]);
       }else if(['content-type','content-disposition'].includes(name))forward[name]=value;
-      else if(name==='location'){const location=new URL(value,item.session.base);if(location.origin!==new URL(item.session.base).origin||!location.href.startsWith(item.session.base))throw fail('Database browser redirect left its session');forward.location=location.href;}
+      else if(name==='location'){const location=new URL(value,item.session.base);if(location.origin!==new URL(item.session.base).origin||!location.href.startsWith(item.session.base))throw fail('Database browser redirect left its session');if(location.pathname===new URL(item.session.base).pathname)location.pathname+='index.php';forward.location=location.href;}
     }
     if(/^text\/html(?:;|$)/i.test(forward['content-type']||'')&&!forward['content-disposition'])body=Buffer.from(body.toString('utf8').replace(/<head(?:\s[^>]*)?>/i,head=>head+sandboxScript));
     finish(item.id,null,{status:input.status,body,headers:{...forward,...headers(item.session.base.split('/').at(-2))}});return{ok:true};

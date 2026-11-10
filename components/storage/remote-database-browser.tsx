@@ -16,7 +16,8 @@ export function RemoteDatabaseBrowser(){
     const run=++generation.current;close(current.current);current.current=null;setLease(null);setLoading(true);setError('');setExpired(false)
     try{const response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({connectionId})}),body=await response.json();if(!response.ok)throw Error(body.error||'Could not open the database browser');if(run!==generation.current){close(body);return}current.current=body;setLease(body)}catch(error){if(run===generation.current)setError((error as Error).message)}finally{if(run===generation.current)setLoading(false)}
   },[close,connectionId,endpoint])
-  useEffect(()=>{void open();return()=>{generation.current++;close(current.current);current.current=null}},[open,close])
+  const invalidate=useCallback(()=>{generation.current++;close(current.current);current.current=null},[close])
+  useEffect(()=>{void open();return invalidate},[open,invalidate])
   useEffect(()=>{if(!lease)return;const timer=setTimeout(()=>{setExpired(true);setLease(null);close(current.current);current.current=null},Math.max(0,lease.expiresAt-Date.now()));return()=>clearTimeout(timer)},[lease,close])
   return <AppShell title="phpMyAdmin" subtitle="Database access on the selected server"><div className="space-y-4">
     <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-muted-foreground">Sign in with a database account. This private session lasts 30 minutes. Imports and exports are limited to 8 MB; use Storage or the server’s database tools for larger transfers. Browser preferences and query history are temporary.</p><Button variant="outline" disabled={loading} onClick={()=>void open()}>{loading?'Opening…':'New session'}</Button></div>
