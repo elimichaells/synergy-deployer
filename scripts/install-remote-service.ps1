@@ -73,7 +73,7 @@ try{
     Run 'icacls.exe' @($target,'/grant','*S-1-5-19:(OI)(CI)RX')
     foreach($folder in @('temp','sessions')){Run 'icacls.exe' @((Join-Path $target $folder),'/grant','*S-1-5-19:(OI)(CI)M')}
     # Verify access using the actual service account before publishing its marker.
-    Agent-Check ('& '+(Quote-PS $paths.node)+' '+(Quote-PS (Join-Path $target 'browser-check.cjs'))+' '+(Quote-PS $target)+';if($LASTEXITCODE -ne 0){throw "Browser service account check failed"}')
+    Agent-Check ('$checkOutput=(& '+(Quote-PS $paths.node)+' '+(Quote-PS (Join-Path $target 'browser-check.cjs'))+' '+(Quote-PS $target)+' 2>&1 | Out-String);if($LASTEXITCODE -ne 0){throw ("Browser service account check failed (exit "+$LASTEXITCODE+"): "+$checkOutput.Substring(0,[Math]::Min(1000,$checkOutput.Length)))}')
     Copy-Item -LiteralPath (Join-Path $target 'database-browser.json') -Destination $marker
     $result.path=$target;$result.version=$plan.downloads.phpmyadmin.version;Write-Json $receipt $result
     Write-Output '[service] Private phpMyAdmin ready through the agent. Existing web sites and PHP defaults are preserved.'
