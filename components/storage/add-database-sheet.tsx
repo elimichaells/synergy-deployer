@@ -18,13 +18,17 @@ export function AddDatabaseSheet({ open, onOpenChange, unlinked }: { open: boole
 
   useEffect(() => {
     if (!open || apps) return
-    void fetch('/api/sites', { cache: 'no-store' }).then(async response => {
+    const controller=new AbortController()
+    setError('')
+    void fetch('/api/sites', { cache: 'no-store',signal:controller.signal }).then(async response => {
       const body = await response.json().catch(() => [])
+      if(controller.signal.aborted)return
       if (!response.ok) throw new Error(body.error || 'Could not load your apps')
       const list = (Array.isArray(body) ? body : body.projects || []) as AppOption[]
       setApps(list); setAppId(list[0]?.id || '')
-    }).catch(err => { setError((err as Error).message); setApps([]) })
-  }, [open, apps])
+    }).catch(err => { if(!controller.signal.aborted){setError((err as Error).message); setApps([])} })
+    return()=>controller.abort()
+  }, [open, apps,fetch])
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>

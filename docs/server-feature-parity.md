@@ -81,6 +81,7 @@ The release is being prepared; packaged deployment verification remains pending.
 
 ## Database browser and update-check evidence
 
+- Manager 2.32 regression: 646 tests, 610 passed, 36 opt-in tests skipped, zero failures. Production build passes; a subsequent type check covers the final history/dialog lifetime cleanup.
 - Windows and Ubuntu phpMyAdmin installation jobs pass in run 42730899339. PHP 8.3.36 loads the private INI through PHPRC in CGI mode; command-line checks alone had missed this requirement.
 - A real PHP 8.3.36 / private MySQL test passes HTTPS-cookie login, SQL reads, multipart SQL import and authenticated SQL export. The original fixture row remains unchanged. A separate Windows Local Service probe passes.
 - The browser displays the imported row. Its Export button returned a successful SQL attachment through the relay, but the in-app browser did not expose download or file-picker events. Transport tests validate those bytes; a browser download artifact was not observed.
