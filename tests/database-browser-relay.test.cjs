@@ -14,7 +14,8 @@ test('database browser requests stay scoped to a session, server and one claimed
   relay.report('server-one',{...request,status:200,headers:[['Content-Type','text/html'],['Set-Cookie','phpMyAdmin=private-session; HttpOnly; Secure'],['Set-Cookie','manager_session=untrusted']],body:Buffer.from('<p>Connected</p>').toString('base64')});
   const response=await pending;assert.equal(response.status,200);assert.equal(response.headers['Set-Cookie'],undefined);assert.match(response.headers['Content-Security-Policy'],/sandbox allow-scripts allow-forms allow-downloads;/);assert.doesNotMatch(response.headers['Content-Security-Policy'],/allow-same-origin|allow-top-navigation/);assert.equal(response.headers['Access-Control-Allow-Origin'],'null');
   const next=relay.enqueue(session.token,{method:'GET',path:'index.php'}),second=(await relay.claim('server-one')).request;assert.equal(second.cookie,'phpMyAdmin=private-session');
-  relay.report('server-one',{...second,status:200,headers:[],body:''});await next;relay.close(session.token);
+  relay.report('server-one',{...second,status:200,headers:[['Set-Cookie','__Secure-phpMyAdmin_https=secure-session; Secure; HttpOnly']],body:''});await next;
+  const secure=relay.enqueue(session.token,{method:'GET',path:'index.php'}),third=(await relay.claim('server-one')).request;assert.match(third.cookie,/__Secure-phpMyAdmin_https=secure-session/);relay.report('server-one',{...third,status:200,headers:[],body:''});await secure;relay.close(session.token);
 });
 
 test('database browser rejects path escapes, external redirects and expired sessions',async()=>{

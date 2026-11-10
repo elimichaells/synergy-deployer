@@ -19,7 +19,7 @@ interface Job { id: string; status: 'queued' | 'running' | 'success' | 'failed';
 
 export const ENGINES: { id: Engine; hint: string; port: number; runtime: string }[] = [
   { id: 'postgresql', hint: 'Relational SQL. The usual choice for Next.js, Node and Go.', port: 5433, runtime: 'postgresql' },
-  { id: 'mysql', hint: 'Relational SQL. The Laravel default. Includes phpMyAdmin.', port: 3306, runtime: 'mysql' },
+  { id: 'mysql', hint: 'Relational SQL. The Laravel default. Supports phpMyAdmin.', port: 3306, runtime: 'mysql' },
   { id: 'mariadb', hint: 'MySQL-compatible relational SQL.', port: 3306, runtime: 'mariadb' },
   { id: 'mongodb', hint: 'Document database for JSON-shaped data.', port: 27017, runtime: 'mongodb' },
   { id: 'sqlserver', hint: 'Microsoft SQL Server Express.', port: 1433, runtime: 'sqlserver' },

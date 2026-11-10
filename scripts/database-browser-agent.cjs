@@ -57,3 +57,4 @@ function start(root,config,request){
   return{get active(){return active;},async stop(){controller.abort();await Promise.allSettled(workers)}};
 }
 module.exports={handle,cgi,response,version,start};
+if(require.main===module)handle(process.argv[2],'https://manager.invalid',{publicBase:'https://manager.invalid/api/database-browser/'+'a'.repeat(43)+'/',method:'GET',path:'index.php',body:'',connection:{host:'127.0.0.1',port:1}}).then(result=>{if(result.status!==200||!Buffer.from(result.body,'base64').includes('name="pma_username"'))throw Error('Database browser login page failed its check');}).catch(error=>{console.error(error.message);process.exitCode=1});

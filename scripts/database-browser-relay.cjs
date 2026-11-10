@@ -67,14 +67,14 @@ function createRelay({now=Date.now,timeoutMs=45000,pollMs=12000}={}){
       if(!Array.isArray(pair)||pair.length!==2||pair.some(part=>typeof part!=='string'||/[\r\n\0]/.test(part)))throw fail('Invalid database browser headers');
       const [rawName,value]=pair,name=rawName.toLowerCase();
       if(name==='set-cookie'){
-        const match=value.match(/^((?:phpMyAdmin|pma)[A-Za-z0-9_-]*)=([^;]*)/);if(!match||match[2].length>8192)continue;
+        const match=value.match(/^((?:__Secure-)?(?:phpMyAdmin|pma)[A-Za-z0-9_-]*)=([^;]*)/);if(!match||match[2].length>8192)continue;
         const expires=value.match(/;\s*Expires=([^;]+)/i);
         if(/;\s*Max-Age=0(?:;|$)/i.test(value)||expires&&Date.parse(expires[1])<now())item.session.cookies.delete(match[1]);
         else if(item.session.cookies.has(match[1])||item.session.cookies.size<20)item.session.cookies.set(match[1],match[2]);
       }else if(['content-type','content-disposition'].includes(name))forward[name]=value;
       else if(name==='location'){const location=new URL(value,item.session.base);if(location.origin!==new URL(item.session.base).origin||!location.href.startsWith(item.session.base))throw fail('Database browser redirect left its session');if(location.pathname===new URL(item.session.base).pathname)location.pathname+='index.php';forward.location=location.href;}
     }
-    if(/^text\/html(?:;|$)/i.test(forward['content-type']||'')&&!forward['content-disposition'])body=Buffer.from(body.toString('utf8').replace(/<head(?:\s[^>]*)?>/i,head=>head+sandboxScript));
+    if(/^text\/html(?:;|$)/i.test(forward['content-type']||'')&&!forward['content-disposition'])body=Buffer.from(body.toString('utf8').replace(/<meta\b[^>]*\bname\s*=\s*["']referrer["'][^>]*>/gi,'').replace(/<head(?:\s[^>]*)?>/i,head=>head+'<meta name="referrer" content="no-referrer">'+sandboxScript));
     finish(item.id,null,{status:input.status,body,headers:{...forward,...headers(item.session.base.split('/').at(-2))}});return{ok:true};
   }
   function close(token){const value=sessions.get(token);if(!value)return;clearTimeout(value.timer);sessions.delete(token);value.cookies.clear();for(const[id,item]of requests)if(item.session===value)finish(id,fail('Database browser session closed',410));}

@@ -73,8 +73,7 @@ try{
     Run 'icacls.exe' @($target,'/grant','*S-1-5-19:(OI)(CI)RX')
     foreach($folder in @('temp','sessions')){Run 'icacls.exe' @((Join-Path $target $folder),'/grant','*S-1-5-19:(OI)(CI)M')}
     # Verify access using the actual service account before publishing its marker.
-    $checkCode='require(process.argv[1]).handle(process.argv[2],"https://manager.invalid",{publicBase:"https://manager.invalid/api/database-browser/"+"a".repeat(43)+"/",method:"GET",path:"index.php",body:"",connection:{host:"127.0.0.1",port:1}}).then(r=>{if(r.status!==200)process.exit(1)}).catch(()=>process.exit(1))'
-    Agent-Check ('& '+(Quote-PS $paths.node)+' -e '+(Quote-PS $checkCode)+' '+(Quote-PS (Join-Path $target 'browser-check.cjs'))+' '+(Quote-PS $target)+';if($LASTEXITCODE -ne 0){throw "Browser service account check failed"}')
+    Agent-Check ('& '+(Quote-PS $paths.node)+' '+(Quote-PS (Join-Path $target 'browser-check.cjs'))+' '+(Quote-PS $target)+';if($LASTEXITCODE -ne 0){throw "Browser service account check failed"}')
     Copy-Item -LiteralPath (Join-Path $target 'database-browser.json') -Destination $marker
     $result.path=$target;$result.version=$plan.downloads.phpmyadmin.version;Write-Json $receipt $result
     Write-Output '[service] Private phpMyAdmin ready through the agent. Existing web sites and PHP defaults are preserved.'

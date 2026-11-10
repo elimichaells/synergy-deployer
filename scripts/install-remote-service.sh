@@ -41,7 +41,7 @@ if [ "$service" = phpmyadmin ]; then
   chown -R manager-agent:manager-agent "$target/temp" "$target/sessions"
   chmod 700 "$target/temp" "$target/sessions"
   agent_node="$("$node_exe" -p 'require(process.argv[1]).node' "$root/tool-paths.json")"
-  (cd -- "$root";runuser -u manager-agent -- "$agent_node" -e 'require(process.argv[1]).handle(process.argv[2],"https://manager.invalid",{publicBase:"https://manager.invalid/api/database-browser/"+"a".repeat(43)+"/",method:"GET",path:"index.php",body:"",connection:{host:"127.0.0.1",port:1}}).then(r=>{if(r.status!==200)process.exit(1)}).catch(()=>process.exit(1))' "$target/browser-check.cjs" "$target")
+  (cd -- "$root";runuser -u manager-agent -- "$agent_node" "$target/browser-check.cjs" "$target")
   install -o manager-agent -g manager-agent -m 600 "$target/database-browser.json" "$root/database-browser.json"
   "$node_exe" - "$plan_file" "$receipt" "$target" <<'JS'
 const fs=require('fs');const[pfile,file,target]=process.argv.slice(2),p=JSON.parse(fs.readFileSync(pfile));fs.writeFileSync(file,JSON.stringify({status:'success',operationId:p.operationId,service:p.service,mode:p.mode,version:p.downloads.phpmyadmin.version,path:target,managed:true}),{mode:0o600});

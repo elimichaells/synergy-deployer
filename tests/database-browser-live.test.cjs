@@ -1,0 +1,19 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path');
+const {createRelay}=require('../scripts/database-browser-relay.cjs'),{handle}=require('../scripts/database-browser-agent.cjs');
+test('real private PHP and MySQL preserve login, SQL browsing and an authenticated SQL export',{skip:!process.env.TEST_DATABASE_BROWSER_ROOT,timeout:60000},async()=>{
+  const root=path.resolve(process.env.TEST_DATABASE_BROWSER_ROOT);assert.match(path.basename(root),/^manager-browser-preview-[A-Za-z0-9]+$/);
+  const receipt=JSON.parse(await fs.readFile(path.join(root,'isolated-mysql-process.json'),'utf8'));assert.equal(receipt.data,path.join(root,'isolated-mysql-data'));assert.ok(receipt.port>1024&&receipt.port!==3306);
+  const relay=createRelay({pollMs:1}),origin='https://manager.invalid',lease=relay.open('private-fixture',{id:'fixture',provider:'mysql',host:'127.0.0.1',port:receipt.port},origin,'fixture-admin'),base=lease.url.slice(0,lease.url.lastIndexOf('/')+1);
+  const send=async(name,fields,depth=0)=>{assert.ok(depth<5);const pending=relay.enqueue(lease.token,{method:fields?'POST':'GET',path:name,body:fields?Buffer.from(new URLSearchParams(fields).toString()):undefined,contentType:fields?'application/x-www-form-urlencoded':''}),{request}=await relay.claim('private-fixture');try{relay.report('private-fixture',{...await handle(root,origin,request),id:request.id,claimToken:request.claimToken});}catch(error){relay.close(lease.token);await pending.catch(()=>{});throw error;}const response=await pending;if(response.headers.location)return send(response.headers.location.slice(base.length),undefined,depth+1);return response;};
+  const token=html=>{const match=html.match(/name="token"[^>]*value="([^"]+)"/);assert.ok(match,'PHP must issue a CSRF token');return match[1]};
+  try{
+    const login=await send('index.php'),authenticated=await send('index.php?route=/',{pma_username:'fixture',pma_password:'Disposable_preview_only_42!',server:'1',target:'index.php',set_session:login.body.toString().match(/name="set_session"[^>]*value="([^"]+)"/)[1],token:token(login.body.toString())});if(!authenticated.body.toString().includes('fixture@localhost'))await fs.writeFile(path.join(root,'protocol-login.html'),authenticated.body);assert.ok(authenticated.body.toString().includes('fixture@localhost'),'Private database login must succeed');
+    const browse=await send('index.php?route=/sql&db=fixture&table=preserved&pos=0');assert.match(browse.body.toString(),/preserved fixture record/);
+    const form=await send('index.php?route=/table/export&db=fixture&table=preserved&single_table=true'),exported=await send('index.php?route=/export',{
+      token:token(form.body.toString()),server:'1',db:'fixture',table:'preserved',export_type:'table',export_method:'quick',quick_or_custom:'quick',single_table:'true',what:'sql',allrows:'1',output_format:'sendit',filename_template:'@TABLE@',charset:'utf-8',compression:'none',sql_structure_or_data:'structure_and_data',sql_create_table:'something',sql_auto_increment:'something',sql_backquotes:'something',sql_type:'INSERT',sql_insert_syntax:'both',sql_max_query_size:'50000',sql_hex_for_binary:'something',sql_utc_time:'something'
+    });
+    assert.equal(exported.status,200);assert.match(exported.headers['content-disposition']||'',/attachment/);assert.match(exported.body.toString(),/INSERT INTO.*preserved/);assert.match(exported.body.toString(),/preserved fixture record/);assert.ok(!exported.body.toString().includes('<script>'),'SQL downloads must not receive the sandbox shim');
+    const after=await send('index.php?route=/sql&db=fixture&table=preserved&pos=0');assert.match(after.body.toString(),/preserved fixture record/);
+  }finally{relay.close(lease.token)}
+});
