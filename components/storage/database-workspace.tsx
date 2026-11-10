@@ -123,7 +123,7 @@ function ScopedDatabaseWorkspace({id}:{id:string}) {
 
   const owner = database.apps.find(app => app.serviceId === database.id) || database.apps[0]
   const isPostgres = database.engine === 'postgresql'
-  const browserUrl = serverId?null:isPostgres ? `/postgres/connect/svc-${database.id}` : ['mysql', 'mariadb'].includes(database.engine) ? '/mysql/' : null
+  const browserUrl = serverId?(['mysql','mariadb'].includes(database.engine)?`/infrastructure/servers/${serverId}/database-browser?connection=${encodeURIComponent(database.serverId)}`:null):isPostgres ? `/postgres/connect/svc-${database.id}` : ['mysql', 'mariadb'].includes(database.engine) ? '/mysql/' : null
   const role = serverRoleLabel[database.serverRole]
   const recommendations: { title: string; body: string; action?: React.ReactNode }[] = []
   if (database.serverRole === 'system') recommendations.push(isPostgres

@@ -21,6 +21,9 @@ export function middleware(request: NextRequest) {
     pathname.startsWith('/api/webhooks') ||
     // These routes authenticate a scoped agent credential (enrollment consumes a one-time token).
     pathname.startsWith('/api/server-agent/') ||
+    // Content is authenticated by a short-lived, scoped capability and isolated
+    // from Manager's origin. Session creation still requires an admin login.
+    /^\/api\/database-browser\/[A-Za-z0-9_-]{43}\//.test(pathname) ||
     // A visit to a sleeping staging app is sent here by Caddy to wake it; it needs no session.
     pathname === '/api/wake' ||
     pathname === '/login'

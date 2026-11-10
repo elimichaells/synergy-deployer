@@ -27,6 +27,28 @@ tool="$service"; [ "$service" != postgresql ] || tool=psql
 [ "$service" != mongodb ] || tool=mongod
 [ "$service" != sqlserver ] || tool=sqlcmd
 target="$files/$service"; config=''; data=''; username=''
+if [ "$service" = phpmyadmin ]; then
+  [ "$mode" = install ] && [ ! -e "$target" ] && [ ! -e "$root/database-browser.json" ] || { echo 'The private browser already exists; it will not be overwritten';exit 1; }
+  if ! command -v php-cgi >/dev/null || ! command -v unzip >/dev/null; then
+    command -v apt-get >/dev/null || { echo 'Install PHP CGI 8.1–8.3 with mysqli, mbstring, openssl and unzip, then retry';exit 1; }
+    DEBIAN_FRONTEND=noninteractive apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-upgrade php-cgi php-mysql php-mbstring php-xml php-curl php-zip unzip
+  fi
+  install -d -m 755 "$target"
+  "$node_exe" "$stage/install-database-browser.cjs" "$plan_file" "$target" "$(command -v php-cgi)"
+  cp -- "$stage/database-browser-agent.cjs" "$target/browser-check.cjs"
+  chown -R root:manager-agent "$target";chmod -R g+rX "$target"
+  chown -R manager-agent:manager-agent "$target/temp" "$target/sessions"
+  chmod 700 "$target/temp" "$target/sessions"
+  agent_node="$("$node_exe" -p 'require(process.argv[1]).node' "$root/tool-paths.json")"
+  (cd -- "$root";runuser -u manager-agent -- "$agent_node" -e 'require(process.argv[1]).handle(process.argv[2],"https://manager.invalid",{publicBase:"https://manager.invalid/api/database-browser/"+"a".repeat(43)+"/",method:"GET",path:"index.php",body:"",connection:{host:"127.0.0.1",port:1}}).then(r=>{if(r.status!==200)process.exit(1)}).catch(()=>process.exit(1))' "$target/browser-check.cjs" "$target")
+  install -o manager-agent -g manager-agent -m 600 "$target/database-browser.json" "$root/database-browser.json"
+  "$node_exe" - "$plan_file" "$receipt" "$target" <<'JS'
+const fs=require('fs');const[pfile,file,target]=process.argv.slice(2),p=JSON.parse(fs.readFileSync(pfile));fs.writeFileSync(file,JSON.stringify({status:'success',operationId:p.operationId,service:p.service,mode:p.mode,version:p.downloads.phpmyadmin.version,path:target,managed:true}),{mode:0o600});
+JS
+  echo '[service] Private phpMyAdmin ready through the agent. Existing web sites and PHP defaults are preserved.'
+  exit 0
+fi
 if [ "$mode" = install-version ]; then
   version="$("$node_exe" -p 'require(process.argv[1]).version' "$plan_file")"
   [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && [[ "$service" = node || "$service" = go ]] || exit 1

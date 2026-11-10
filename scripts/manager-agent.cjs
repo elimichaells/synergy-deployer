@@ -27,6 +27,8 @@ const CONSOLE_CAPABILITY = 'remote-console-v1';
 const CONSOLE_DETAILS_CAPABILITY = 'remote-console-details-v1';
 const RUNTIME_CAPABILITY = 'runtime-versions-v1';
 const SERVICE_TOOLS_CAPABILITY = 'service-tools-v2';
+const DATABASE_BROWSER_CAPABILITY = 'database-browser-v1';
+const databaseBrowser = require('./database-browser-agent.cjs');
 const SETUP_CAPABILITY = 'guided-setup-v1';
 const UPDATE_CAPABILITY = 'agent-update-v1';
 const APPLICATION_CONTROL_CAPABILITY = 'application-control-v1';
@@ -193,7 +195,7 @@ function sanitizeMetrics(raw) {
     cpuPercent: number(raw.cpuPercent, 100), memoryTotal: number(raw.memoryTotal), memoryFree: number(raw.memoryFree),
     diskTotal: optional(raw.diskTotal), diskFree: optional(raw.diskFree), uptime: number(raw.uptime),
     addresses: (Array.isArray(raw.addresses) ? raw.addresses : []).filter(x => typeof x === 'string' && net.isIP(x)).slice(0, 30),
-    tools: Object.fromEntries(['node','git','pm2','caddy','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer','sling','ng','mongod','sqlcmd','redis'].filter(key => ['node','git','pm2','caddy'].includes(key) || Object.hasOwn(raw.tools || {},key)).map(key => [key, str(raw.tools?.[key]) || null])),
+    tools: Object.fromEntries(['node','git','pm2','caddy','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer','sling','ng','mongod','sqlcmd','redis','phpmyadmin'].filter(key => ['node','git','pm2','caddy'].includes(key) || Object.hasOwn(raw.tools || {},key)).map(key => [key, str(raw.tools?.[key]) || null])),
     apps: (Array.isArray(raw.apps) ? raw.apps : []).slice(0, 200).filter(x => ID.test(x.id)).map(x => ({ id: x.id,
       status: ['online','stopped','errored','launching','stopping','missing'].includes(x.status) ? x.status : 'unknown', cpu: number(x.cpu, 10000), memory: number(x.memory),
       uptime:optional(x.uptime),restarts:number(x.restarts??0),pid:optional(x.pid),logBytes:number(x.logBytes??0),
@@ -202,7 +204,7 @@ function sanitizeMetrics(raw) {
     caddy:raw.caddy?{mode:raw.caddy.mode==='shared'?'shared':'pm2',status:['running','stopped','unknown'].includes(raw.caddy.status)?raw.caddy.status:'unknown',configPath:str(raw.caddy.configPath,1024),version:str(raw.caddy.version)}:null,
     proxyError: raw.proxyError ? str(raw.proxyError, 500) : null,
     resources:resources.sanitize(raw.resources),
-    capabilities: [STORAGE_CAPABILITY,APPLICATION_CONTROL_CAPABILITY,LAN_CAPABILITY,SETUP_CAPABILITY,UPDATE_CAPABILITY,CONSOLE_CAPABILITY,CONSOLE_DETAILS_CAPABILITY,RUNTIME_CAPABILITY,SERVICE_TOOLS_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY].filter(value => Array.isArray(raw.capabilities) && raw.capabilities.includes(value)) };
+    capabilities: [STORAGE_CAPABILITY,APPLICATION_CONTROL_CAPABILITY,LAN_CAPABILITY,SETUP_CAPABILITY,UPDATE_CAPABILITY,CONSOLE_CAPABILITY,CONSOLE_DETAILS_CAPABILITY,RUNTIME_CAPABILITY,SERVICE_TOOLS_CAPABILITY,DATABASE_BROWSER_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY].filter(value => Array.isArray(raw.capabilities) && raw.capabilities.includes(value)) };
   if (result.memoryFree > result.memoryTotal || (result.diskFree !== null && result.diskTotal !== null && result.diskFree > result.diskTotal)) throw new Error('Invalid capacity');
   return result;
 }
@@ -1042,7 +1044,8 @@ async function runAgent(root) {
   let journal=await readJson(journalFile), prior=cpuSnapshot(), stopped=false;
   const supervised=process.env.MANAGER_AGENT_SUPERVISOR==='1'&&typeof process.send==='function';
   const send=message=>{if(supervised&&process.connected)process.send(message,()=>{});};
-  const onStop=()=>{stopped=true;};process.on('SIGINT',onStop);process.on('SIGTERM',onStop);
+  let browserWorkers;
+  const onStop=()=>{stopped=true;void browserWorkers?.stop();};process.on('SIGINT',onStop);process.on('SIGTERM',onStop);
   const onMessage=message=>{if(message?.type==='stop')onStop();};
   if(supervised){process.on('message',onMessage);process.on('disconnect',onStop);}
   // Persist reports independently of network connectivity. Manager never retries a running deployment.
@@ -1075,10 +1078,11 @@ async function runAgent(root) {
   let heartbeatBusy=false;
   const pulse=async()=>{
     if(heartbeatBusy)return;heartbeatBusy=true;
-    try{const data=await sample(root,tools,prior);prior=data.cpu;data.metrics.capabilities=[STORAGE_CAPABILITY,APPLICATION_CONTROL_CAPABILITY,LAN_CAPABILITY,SETUP_CAPABILITY,CONSOLE_CAPABILITY,CONSOLE_DETAILS_CAPABILITY,RUNTIME_CAPABILITY,SERVICE_TOOLS_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY,...(supervised?[UPDATE_CAPABILITY]:[])];await request(config,'heartbeat',{protocol:PROTOCOL_VERSION,metrics:data.metrics,caPem:data.caPem});send({type:'heartbeat',version:AGENT_VERSION,metrics:data.metrics});}
+    try{const data=await sample(root,tools,prior);prior=data.cpu;data.metrics.tools.phpmyadmin=await databaseBrowser.version(root);data.metrics.capabilities=[STORAGE_CAPABILITY,APPLICATION_CONTROL_CAPABILITY,LAN_CAPABILITY,SETUP_CAPABILITY,CONSOLE_CAPABILITY,CONSOLE_DETAILS_CAPABILITY,RUNTIME_CAPABILITY,SERVICE_TOOLS_CAPABILITY,DATABASE_BROWSER_CAPABILITY,INFRASTRUCTURE_CAPABILITY,resources.CAPABILITY,...(supervised?[UPDATE_CAPABILITY]:[])];await request(config,'heartbeat',{protocol:PROTOCOL_VERSION,metrics:data.metrics,caPem:data.caPem});send({type:'heartbeat',version:AGENT_VERSION,metrics:data.metrics});}
     finally{heartbeatBusy=false;}
   };
   const describe=error=>console.error(`[agent] ${redact(error.message,[config.agentToken])}`);
+  browserWorkers=databaseBrowser.start(root,config,request);
   const timer=setInterval(()=>{void pulse().catch(describe);if(journal?.status==='running')void report().catch(describe);},15000);
   const consoleTimer=setInterval(()=>{if(consoleAbort){if(stopped||Date.now()-lastConsoleReport>45000)consoleAbort.abort();void report().catch(error=>{if(error.status===401)consoleAbort?.abort();describe(error);});}},1000);
   console.log(`Manager agent ${AGENT_VERSION} running. Outbound connection to ${config.manager}`);
@@ -1092,7 +1096,7 @@ async function runAgent(root) {
         if(stopped)break;
         await resources.recover(root,tools,resourceHelpers());
         await resources.setBusy(root,true);
-        send({type:'idle',idle:true});
+        send({type:'idle',idle:browserWorkers.active===0});
         const {job,protocol,paused}=await request(config,'claim',{});
         if(paused){await resources.setBusy(root,false);await wait(5000);continue;}
         const nextTools=createHash('sha256').update(JSON.stringify(await readJson(path.join(root,'tool-paths.json'),{}))).digest('hex');
@@ -1119,6 +1123,7 @@ async function runAgent(root) {
     }
   }finally{
     clearInterval(timer);clearInterval(consoleTimer);while(reportBusy||heartbeatBusy)await wait(100);
+    await browserWorkers.stop();
     await resources.stop(root);
     await fs.unlink(lock).catch(()=>{});process.off('SIGINT',onStop);process.off('SIGTERM',onStop);
     if(supervised){process.off('message',onMessage);process.off('disconnect',onStop);if(process.connected)process.disconnect();}
@@ -1341,5 +1346,5 @@ async function main(){
 
 function resourceHelpers(){return {run,readJson,atomicJson,contained,processList,healthy,baseEnv,proxyConfig,managedCaddyConfig,redact};}
 
-module.exports={CONSOLE_DETAILS_CAPABILITY,SERVICE_TOOLS_CAPABILITY,APPLICATION_CONTROL_CAPABILITY,publicCertificate,LAN_CAPABILITY,validateLanSelection,managedCaddyConfig,sampleApplications,infrastructureJob,INFRASTRUCTURE_CAPABILITY,toolVersion,validateRuntimeSelection,RUNTIME_CAPABILITY,validateRuntimeVersions,runtimeEnvironment,installedRuntimeVersions,CONSOLE_CAPABILITY,consoleJob,PROTOCOL_VERSION,AGENT_VERSION,SETUP_CAPABILITY,UPDATE_CAPABILITY,validateApp,sanitizeMetrics,redact,streamRedactor,caddyConfig,managerAddress,contained,run,request,deploy,restoreActivation,healthy,atomicJson,readJson,enrollCli,detectFramework,inspectRepository,validateDatabase,databaseEnvironment,setupDatabase,validateSetup,jobSecrets,findStaticRoot,serveStatic,loadToolPaths,checkConfiguredTools,privatePm2Environment,findTools,proxyConfig,sharedProxySettings,sharedProxyState,configDigest};
+module.exports={DATABASE_BROWSER_CAPABILITY,CONSOLE_DETAILS_CAPABILITY,SERVICE_TOOLS_CAPABILITY,APPLICATION_CONTROL_CAPABILITY,publicCertificate,LAN_CAPABILITY,validateLanSelection,managedCaddyConfig,sampleApplications,infrastructureJob,INFRASTRUCTURE_CAPABILITY,toolVersion,validateRuntimeSelection,RUNTIME_CAPABILITY,validateRuntimeVersions,runtimeEnvironment,installedRuntimeVersions,CONSOLE_CAPABILITY,consoleJob,PROTOCOL_VERSION,AGENT_VERSION,SETUP_CAPABILITY,UPDATE_CAPABILITY,validateApp,sanitizeMetrics,redact,streamRedactor,caddyConfig,managerAddress,contained,run,request,deploy,restoreActivation,healthy,atomicJson,readJson,enrollCli,detectFramework,inspectRepository,validateDatabase,databaseEnvironment,setupDatabase,validateSetup,jobSecrets,findStaticRoot,serveStatic,loadToolPaths,checkConfiguredTools,privatePm2Environment,findTools,proxyConfig,sharedProxySettings,sharedProxyState,configDigest};
 if(require.main===module)main().catch(error=>{console.error(error.message);process.exitCode=1;});

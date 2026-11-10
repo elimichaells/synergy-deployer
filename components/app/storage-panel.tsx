@@ -24,6 +24,7 @@ interface Service {
   credential_recovery?:boolean
   name: string
   provider: Provider
+  connection_id: string
   connection_name: string
   database_name: string
   username: string | null
@@ -283,7 +284,7 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
                         {serverId&&service.credential_recovery&&<DropdownMenu.Item className={menuItem} disabled={!isAdmin||busy} onSelect={()=>void testConnection(service,true)}><KeyRound className="h-3.5 w-3.5"/>Recover password change</DropdownMenu.Item>}
                         <DropdownMenu.Item className={menuItem} disabled={service.application_primary || !isAdmin || service.options?.ownership === 'adopted'} onSelect={() => void makePrimary(service)}><Star className="h-3.5 w-3.5" />Make main database</DropdownMenu.Item>
                         <DropdownMenu.Item className={menuItem} disabled={!isAdmin || !!service.options?.ownership && service.options.ownership !== 'manager' || service.provider === 'redis'} onSelect={() => { setPasswordFor(service); setPassword({ value: '', confirm: '' }) }}><KeyRound className="h-3.5 w-3.5" />Change password</DropdownMenu.Item>
-                        {!serverId&&['mysql', 'mariadb'].includes(service.provider) && <DropdownMenu.Item asChild className={menuItem}><a href="/mysql/" target="_blank" rel="noreferrer"><ArrowUpRight className="h-3.5 w-3.5" />Open phpMyAdmin</a></DropdownMenu.Item>}
+                        {['mysql', 'mariadb'].includes(service.provider) && <DropdownMenu.Item asChild className={menuItem}><a href={serverId?`/infrastructure/servers/${serverId}/database-browser?connection=${encodeURIComponent(service.connection_id)}`:"/mysql/"} target="_blank" rel="noreferrer"><ArrowUpRight className="h-3.5 w-3.5" />Open phpMyAdmin</a></DropdownMenu.Item>}
                         <DropdownMenu.Item asChild className={menuItem}><Link href={`${databaseHref(service.id)}?tab=backups`}><Database className="h-3.5 w-3.5" />Backups & details</Link></DropdownMenu.Item>
                       </DropdownMenu.Content>
                     </DropdownMenu.Portal>

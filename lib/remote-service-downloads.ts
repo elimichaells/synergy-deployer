@@ -21,6 +21,11 @@ async function officialAsset(url:string){
 }
 export async function serviceDownloads(service:string,platform:string,arch:string,distribution?:{id:string;version:string}){
   if(!['win32','linux'].includes(platform)||!['x64','arm64'].includes(arch)||platform==='win32'&&arch!=='x64')throw new ApiError('Automatic service installation supports Windows x64 and Linux x64/ARM64',400)
+  if(service==='phpmyadmin'){
+    const assets=Object.fromEntries(['phpmyadmin',...(platform==='win32'?['php','vcredist']:[])].map(id=>{const asset=offlineAssets.artifacts.find(a=>a.id===id);if(!asset)throw new ApiError('Database browser package is missing',503);return[id,asset]}))
+    const core=platform==='linux'?await installerDownloads(platform,arch,['node']):{}
+    return {...assets,...core,...(platform==='linux'?{privilegedNode:(core as {node:unknown}).node}:{})}
+  }
   if(service==='redis'){
     if(platform!=='linux')throw new ApiError('Reuse a production-licensed Memurai installation or connect an existing Redis server in Storage. The Windows developer edition is not installed automatically.',400)
     const core=await installerDownloads(platform,arch,['node'])

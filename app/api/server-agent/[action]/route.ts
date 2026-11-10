@@ -3,6 +3,7 @@ import { ApiError, jsonError } from '@/lib/api'
 import { authenticateAgent, claimJob, enroll, heartbeat, reportJob } from '@/lib/managed-servers'
 import { readBody } from '@/lib/request-body'
 import { claimAgentUpdate, reportAgentUpdate } from '@/lib/remote-agent-updates'
+import {databaseBrowser,LIMIT} from '@/lib/database-browser'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -18,6 +19,8 @@ export async function POST(request: Request, context: { params: Promise<{ action
     else if (action === 'report') result = await reportJob(server.id, await readBody(request, 800_000))
     else if (action === 'update-claim') result = await claimAgentUpdate(server.id, await readBody(request,4096))
     else if (action === 'update-report') result = await reportAgentUpdate(server.id, await readBody(request,4096))
+    else if(action==='browser-claim')result=await databaseBrowser.claim(server.id)
+    else if(action==='browser-report')result=databaseBrowser.report(server.id,await readBody(request,Math.ceil(LIMIT/3)*4+70000))
     else throw new ApiError('Unknown agent operation', 404)
     return NextResponse.json(result, { headers: { 'Cache-Control': 'no-store' } })
   } catch (error) { return jsonError(error) }

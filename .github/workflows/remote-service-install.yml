@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'scripts/install-remote-*'
+      - 'scripts/*database-browser*'
       - 'scripts/initialize-remote-database.cjs'
       - 'scripts/inspect-remote-server.*'
       - 'lib/remote-service*.ts'
@@ -17,6 +18,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - os: windows-latest
+            engine: phpmyadmin
+          - os: ubuntu-22.04
+            engine: phpmyadmin
           - os: windows-latest
             engine: mongodb
           - os: ubuntu-22.04
