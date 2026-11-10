@@ -80,6 +80,10 @@ jobs:
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
 
+      - name: Install validation checkout dependencies
+        working-directory: validation-source
+        run: npm ci --no-audit --no-fund
+
       - name: Test source
         timeout-minutes: 5
         working-directory: validation-source
