@@ -5,6 +5,7 @@ import { AlertTriangle, Check, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { heapLimitFor } from '@/lib/server-memory-policy'
 import { cn } from '@/lib/utils'
+import { scopedInfrastructureFetch } from '@/lib/infrastructure-client'
 
 interface AppMemory {
   running: boolean; usageMb: number; processes: number; peakMb: number; limitMb: number | null; serverTotalMb: number; suggestedMb: number
@@ -14,29 +15,30 @@ interface AppMemory {
 const gb = (mb: number) => mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`
 
 /** Shows what the app uses and lets an operator cap it, so a leak cannot starve the server. */
-export function MemorySetting({ projectId, canWrite }: { projectId: string; canWrite: boolean }) {
+export function MemorySetting({ projectId, canWrite, serverId }: { projectId: string; canWrite: boolean; serverId?: string }) {
   const [memory, setMemory] = useState<AppMemory | null>(null)
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState<'save' | 'restart' | 'clear' | null>(null)
   const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
 
   const load = useCallback(() => {
-    void fetch(`/api/sites/${projectId}/memory`, { cache: 'no-store' }).then(async response => {
+    void scopedInfrastructureFetch(serverId, `/api/sites/${projectId}/memory`, { cache: 'no-store' }).then(async response => {
       const body = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(body.error || 'Could not read memory')
       setMemory(body.memory)
       setDraft(body.memory.limitMb ? String(body.memory.limitMb) : '')
     }).catch(err => setMessage({ tone: 'error', text: (err as Error).message }))
-  }, [projectId])
+  }, [projectId, serverId])
   useEffect(load, [load])
 
   const save = async (limitMb: number | null, restart: boolean, kind: 'save' | 'restart' | 'clear') => {
     if (restart && !window.confirm('Restart the app now so the new limit applies? It is offline for a few seconds while it restarts.')) return
     setBusy(kind); setMessage(null)
     try {
-      const response = await fetch(`/api/sites/${projectId}/memory`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limitMb, restart }) })
+      const response = await scopedInfrastructureFetch(serverId, `/api/sites/${projectId}/memory`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limitMb, restart }) })
       const body = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(body.error || 'Could not save the limit')
+      if (body.restored) throw new Error(`The new setting failed and the previous settings were restored: ${body.reason || 'Check runtime logs.'}`)
       if (body.restart && !body.restart.healthy) setMessage({ tone: 'error', text: `Saved, but the app did not come back healthy after restarting: ${body.restart.reason}. Open its logs.` })
       else setMessage({ tone: 'ok', text: limitMb === null ? 'Limit removed. It applies the next time the app starts.' : body.restart ? 'Saved. The app restarted with the new limit and is healthy.' : 'Saved. It applies the next time the app is deployed or restarted.' })
       load()

@@ -47,7 +47,8 @@ export function WorkspaceBar({ title, context, onNew, onHashChange }: { title: s
   const remoteProject = hash === '#applications' && /^[a-f0-9-]{36}$/i.test(params.get('view') || '')
   const detail = remoteProject || hash.startsWith('#app-') || /^\/(sites|projects|storage|deployments)\/[^/]+$/.test(pathname) && !pathname.endsWith('/new')
   const isRemote = !['fleet', 'local'].includes(serverId)
-  const label = hash.startsWith('#app-') ? context?.destinations?.[hash] || 'Application' : isRemote ? context?.page || sectionTitle || 'Overview' : context?.page || pageNames[pathname] || title
+  const isStorage = /\/storage(?:\/|$)/.test(pathname)
+  const label = hash.startsWith('#app-') ? context?.destinations?.[hash] || 'Application' : isRemote ? context?.page || (/\/storage(?:\/|$)/.test(pathname)?title:sectionTitle || 'Overview') : context?.page || pageNames[pathname] || title
   useEffect(() => {
     // Next can publish the query before the hash listener catches up. Never save
     // that intermediate location as another page's remembered tab.
@@ -113,11 +114,11 @@ export function WorkspaceBar({ title, context, onNew, onHashChange }: { title: s
       <div className="mx-auto flex min-h-8 max-w-[1240px] items-center gap-3 px-4 py-1.5 sm:px-6">
         <nav aria-label="Workspace location" className="min-w-0 flex-1"><ol className="flex items-center gap-1.5 overflow-hidden text-[11px] sm:gap-2 sm:text-xs">
           <li className="shrink-0"><Link href="/" className="text-muted-foreground hover:text-primary" aria-label="All servers"><LayoutGrid className="h-3.5 w-3.5" /></Link></li>
-          <li aria-hidden="true" className="shrink-0"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li>
-          <li className="max-w-40 shrink-0 truncate"><Link href={serverId === 'fleet' ? '/' : serverOverview(serverId)} className="font-medium text-primary">{serverTitle}</Link></li>
+          {serverId!=='fleet'&&<><li aria-hidden="true" className="shrink-0"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li>
+          <li className="max-w-40 shrink-0 truncate"><Link href={serverOverview(serverId)} className="font-medium text-primary">{serverTitle}</Link></li></>}
           {context?.project && <><li aria-hidden="true" className="hidden shrink-0 sm:block"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li><li className="hidden min-w-0 truncate sm:block"><Link href={context.project.href} className="text-muted-foreground hover:text-primary">{context.project.name}</Link></li></>}
-          <li aria-hidden="true" className="shrink-0"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li><li className="min-w-0 truncate font-medium" aria-current={(isRemote && !hash.startsWith('#app-') && !remoteProject) || !sectionTitle ? 'page' : undefined}>{label}</li>
-          {sectionTitle && (!isRemote || hash.startsWith('#app-') || remoteProject) && <><li aria-hidden="true" className="shrink-0"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li><li className="shrink-0 text-muted-foreground" aria-current="page">{sectionTitle}</li></>}
+          <li aria-hidden="true" className="shrink-0"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li><li className="min-w-0 truncate font-medium" aria-current={(isRemote && !hash.startsWith('#app-') && !remoteProject && !isStorage) || !sectionTitle ? 'page' : undefined}>{label}</li>
+          {sectionTitle && (!isRemote || hash.startsWith('#app-') || remoteProject || isStorage) && <><li aria-hidden="true" className="shrink-0"><ChevronRight className="h-3 w-3 text-muted-foreground/60" /></li><li className="shrink-0 text-muted-foreground" aria-current="page">{sectionTitle}</li></>}
           {detail && context?.environment && <li className={`environment-chip ml-1 hidden sm:inline-flex ${context.environment}`}>{context.environment}</li>}
         </ol></nav>
         <span className="hidden shrink-0 items-center gap-1.5 text-[10px] text-muted-foreground lg:flex" title={state.saved ? 'Navigation is saved in this browser for your account. Form contents are not saved.' : 'Browser storage is unavailable'}>{server && <><Circle className={`h-1.5 w-1.5 fill-current ${!error && server.status === 'online' ? 'text-status-ready' : 'text-status-building'}`} />{error ? 'Status unavailable' : server.status}<span className="mx-1 text-border">|</span></>}<Cloud className="h-3 w-3" />{state.saved ? 'Workspace remembered' : 'This visit only'}</span>

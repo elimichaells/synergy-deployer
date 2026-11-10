@@ -102,12 +102,12 @@ test('real PostgreSQL infrastructure admission, claims, reports, health retentio
   const pool=new(require('pg').Pool)({connectionString:url.href});t.after(()=>pool.end());const query=(s,p)=>pool.query(s,p);
   await query('create extension if not exists pgcrypto;create table if not exists users(id uuid primary key);create table if not exists github_connections(id uuid primary key)');
   const user=randomUUID();await query('insert into users values($1)',[user]);process.env.MANAGER_ENCRYPTION_KEY='isolated-parity-test-key';
-  const secret=load('lib/secret-crypto.ts',{}),mocks={'@/lib/db':{db:pool,query},'@/lib/api':{ApiError},'@/lib/audit':{audit:async()=>{}},'@/lib/secret-crypto':secret,'@/lib/github-connections':{},'@/lib/git-provider-policy':{},'@/scripts/manager-agent.cjs':agent,'@/lib/remote-setup-policy':require('../lib/remote-setup-policy.ts')};
+  const secret=load('lib/secret-crypto.ts',{}),mocks={'@/lib/db':{db:pool,query},'@/lib/api':{ApiError},'@/lib/audit':{audit:async()=>{}},'@/lib/secret-crypto':secret,'@/lib/github-connections':{},'@/lib/git-provider-policy':{},'@/scripts/manager-agent.cjs':agent,'@/lib/remote-security-gate-policy':load('lib/remote-security-gate-policy.ts',{}),'@/lib/deployment-cache':{loadAuditExceptions:()=>[]},'@/lib/security-gate-policy':load('lib/security-gate-policy.ts',{}),'@/lib/remote-setup-policy':require('../lib/remote-setup-policy.ts')};
   const managed=load('lib/managed-servers.ts',mocks),server=await managed.addServer({name:'Parity fixture',platform:'win32'},user);
   await managed.enroll({protocol:1,platform:'win32',serverId:server.id,enrollmentToken:server.enrollmentToken,agentToken:require('crypto').randomBytes(32).toString('base64url')});
   const app=await managed.saveRemoteApp(server.id,null,{name:'Fixture',repo_url:'https://github.com/example/fixture',branch:'main',port:33001,start_cmd:'node app.cjs',access_mode:'lan',hostname:randomUUID()+'.example.test'},user);
   await query('update remote_apps set live_commit=$2 where id=$1',[app.id,'a'.repeat(40)]);
-  const metrics={hostname:'fixture',platform:'win32',version:agent.AGENT_VERSION,cpuPercent:1,memoryTotal:16*1024**3,memoryFree:12*1024**3,diskTotal:200*1024**3,diskFree:150*1024**3,uptime:10,tools:{node:'24',git:null,pm2:null,caddy:null},addresses:[],apps:[{id:app.id,status:'online',cpu:1,memory:20,restarts:0,check:{ok:false,status:503,ms:10,reason:'fixture'}}],capabilities:[agent.INFRASTRUCTURE_CAPABILITY,agent.CONSOLE_CAPABILITY]};
+  const metrics={hostname:'fixture',platform:'win32',version:agent.AGENT_VERSION,cpuPercent:1,memoryTotal:16*1024**3,memoryFree:12*1024**3,diskTotal:200*1024**3,diskFree:150*1024**3,uptime:10,tools:{node:'24',git:null,pm2:null,caddy:null},addresses:[],apps:[{id:app.id,status:'online',cpu:1,memory:20,restarts:0,check:{ok:false,status:503,ms:10,reason:'fixture'}}],capabilities:[agent.APPLICATION_CONTROL_CAPABILITY,agent.INFRASTRUCTURE_CAPABILITY,agent.CONSOLE_CAPABILITY]};
   await query('update managed_servers set metrics=$2,last_seen_at=now() where id=$1',[server.id,JSON.stringify(metrics)]);
   const infra=load('lib/remote-infrastructure.ts',{'./api':{ApiError},'./audit':{audit:async()=>{}},'./db':{db:pool,query},'./managed-servers':managed,'./secret-crypto':secret,'@/scripts/manager-agent.cjs':agent});
   const queued=await Promise.allSettled([infra.queueInfrastructure(server.id,app.id,'stop',user),infra.queueInfrastructure(server.id,app.id,'restart',user)]);
@@ -130,8 +130,8 @@ test('real PostgreSQL infrastructure admission, claims, reports, health retentio
   await query('create table if not exists projects(id uuid primary key)');
   await query('update managed_servers set last_seen_at=now() where id=$1',[server.id]);
   const cf=load('lib/cloudflare.ts',{'@/lib/managed-servers':managed,'@/lib/api':{ApiError},'@/lib/db':{query},'@/lib/secret-crypto':secret,'@/lib/caddy':{updateCaddyStrict:()=>{throw Error('Host Caddy must never be called')}}});
-  const domains=load('lib/remote-domains.ts',{'./api':{ApiError},'./db':{db:pool,query},'./managed-servers':managed,'./secret-crypto':secret,'./cloudflare':cf,'./remote-infrastructure':infra});
-  const domainServers=[server.id];let running=false;const errors=[];const timer=setInterval(async()=>{if(running)return;running=true;try{for(const id of domainServers){const {job}=await managed.claimJob(id);if(job){assert.equal(job.payload.action,'domain');if(require('../scripts/lan-address.cjs').parseLanAddress(job.payload.domain.hostname))assert.equal(job.payload.requiredCapability,agent.LAN_CAPABILITY);await managed.reportJob(id,{id:job.id,claimToken:job.claimToken,status:'success',sequence:1,log:'fixture route ack',result:{ok:true}})}}}catch(error){errors.push(error)}finally{running=false}},20);
+  const domains=load('lib/remote-domains.ts',{'./api':{ApiError},'./db':{db:pool,query},'./managed-servers':managed,'./secret-crypto':secret,'./cloudflare':cf,'./remote-infrastructure':infra,'./domain-route-policy':require('../lib/domain-route-policy.ts')});
+  const domainServers=[server.id];let running=false;const errors=[];const timer=setInterval(async()=>{if(running)return;running=true;try{for(const id of domainServers){const {job}=await managed.claimJob(id);if(job){assert.equal(job.payload.action,'domain');if(require('../scripts/lan-address.cjs').parseLanAddress(job.payload.domain.hostname))assert.equal(job.payload.requiredCapability,agent.APPLICATION_CONTROL_CAPABILITY);await managed.reportJob(id,{id:job.id,claimToken:job.claimToken,status:'success',sequence:1,log:'fixture route ack',result:{ok:true}})}}}catch(error){errors.push(error)}finally{running=false}},20);
   try{
     const name=randomUUID()+'.example.com';
     await domains.createRemoteDomain(server.id,{projectId:app.id,hostname:name,mode:'manual',recordType:'A',recordContent:'192.0.2.10',isPrimary:true},user);
@@ -154,6 +154,23 @@ test('real PostgreSQL infrastructure admission, claims, reports, health retentio
       await assert.rejects(domains.createRemoteDomain(serverId,{projectId,mode:'lan',lanIp:'8.8.8.8',lanPort:18443},user),e=>e.status===400);
     }
     assert.equal((await query('select count(*)::int n from remote_domains where hostname=$1',['10.24.1.20:18443'])).rows[0].n,2,'Independent campuses may reuse private addresses');
+    await query('create table if not exists audit_logs(id uuid primary key default gen_random_uuid(),user_id uuid references users(id),action text,resource text,details jsonb)');
+    const groups=load('lib/remote-application-groups.ts',{'@/lib/api':{ApiError},'@/lib/db':{db:pool,query},'@/lib/managed-servers':managed,'@/lib/remote-domains':domains});
+    const backend=await managed.saveRemoteApp(server.id,null,{name:'Backend',repo_url:'https://github.com/example/fixture',branch:'main',port:33002,start_cmd:'node app.cjs',access_mode:'lan',hostname:randomUUID()+'.example.test'},user);
+    await query('update remote_apps set live_commit=$2 where id=$1',[backend.id,'c'.repeat(40)]);
+    const staging=(await query("insert into remote_apps(server_id,name,repo_url,start_cmd,port,access_mode,hostname,env_ciphertext,production_id,environment_name) values($1,'Backend staging','https://github.com/example/fixture','node app.cjs',33003,'lan',$2,'fixture',$3,'staging') returning id",[server.id,randomUUID()+'.example.test',backend.id])).rows[0].id;
+    await assert.rejects(groups.changeRemoteApplicationGroup(server.id,backend.id,'POST',{relatedProjectId:campusApp.id,role:'backend'},user),e=>e.status===404);
+    await groups.changeRemoteApplicationGroup(server.id,backend.id,'POST',{relatedProjectId:app.id,role:'backend',relatedRole:'frontend'},user);
+    await groups.changeRemoteApplicationGroup(server.id,backend.id,'PATCH',{name:'Institution portal'},user);
+    const grouped=await groups.relatedRemoteApplications(server.id,app.id);assert.equal(grouped.group_name,'Institution portal');assert.equal(grouped.members.length,3);assert.ok(grouped.members.some(a=>a.id===staging));
+    const lanDomain=(await domains.listRemoteDomains(server.id)).find(d=>d.hostname==='10.24.1.20:18443');
+    await assert.rejects(domains.changeRemoteDomainRoute(server.id,null,{domainId:lanDomain.id,projectId:campusApp.id,pathPrefix:'/api'},user),e=>e.status===404);
+    await domains.changeRemoteDomainRoute(server.id,null,{domainId:lanDomain.id,projectId:backend.id,pathPrefix:'/api',stripPrefix:true},user);
+    const shared=(await domains.listRemoteDomainRoutes(server.id,backend.id))[0];assert.equal(shared.path_prefix,'/api');assert.equal(shared.operation_status,'success');assert.equal(shared.strip_prefix,true);
+    assert.equal((await domains.listRemoteDomainRoutes(campus.id)).length,0);
+    await assert.rejects(groups.changeRemoteApplicationGroup(server.id,backend.id,'DELETE',{},user),e=>e.status===409);
+    await domains.changeRemoteDomainRoute(server.id,shared.id,{},user);assert.equal((await domains.listRemoteDomainRoutes(server.id,backend.id)).length,0);
+    await groups.changeRemoteApplicationGroup(server.id,backend.id,'DELETE',{},user);const moved=await groups.relatedRemoteApplications(server.id,backend.id);assert.equal(moved.members.length,2);assert.ok(moved.members.some(a=>a.id===staging));assert.equal((await groups.relatedRemoteApplications(server.id,app.id)).members.length,1);
     assert.equal(errors.length,0);
   }finally{clearInterval(timer);while(running)await new Promise(resolve=>setTimeout(resolve,10))}
 });

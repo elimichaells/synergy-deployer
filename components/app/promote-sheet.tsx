@@ -9,6 +9,7 @@ interface Commit { sha: string; subject: string; author: string; date: string }
 interface Plan {
   staging: { id: string; name: string; branch: string; commit: string | null }
   production: { id: string; name: string; branch: string; commit: string | null; autoDeploy: boolean }
+  review?:string
   mode: 'merge' | 'commit'
   commits: Commit[]; historyKnown: boolean; databaseFiles: string[]
   blocker: string | null; warnings: string[]
@@ -20,7 +21,8 @@ const short = (sha: string | null) => sha ? sha.slice(0, 7) : 'none'
  * Shows exactly what a promotion would release, then starts it. The commit shown is sent back with
  * the request, so production can only receive what was reviewed here.
  */
-export function PromoteSheet({ stagingId, open, onOpenChange, onStarted }: { stagingId: string; open: boolean; onOpenChange: (open: boolean) => void; onStarted: (deploymentId: string, productionId: string) => void }) {
+export function PromoteSheet({ stagingId, open, onOpenChange, onStarted,serverId }: { serverId?:string;stagingId: string; open: boolean; onOpenChange: (open: boolean) => void; onStarted: (deploymentId: string, productionId: string) => void }) {
+  const endpoint=serverId?`/api/servers/${serverId}/apps/${stagingId}/promote`:`/api/sites/${stagingId}/promote`
   const [plan, setPlan] = useState<Plan | null>(null)
   const [error, setError] = useState('')
   const [starting, setStarting] = useState(false)
@@ -28,18 +30,18 @@ export function PromoteSheet({ stagingId, open, onOpenChange, onStarted }: { sta
   useEffect(() => {
     if (!open) return
     setPlan(null); setError('')
-    void fetch(`/api/sites/${stagingId}/promote`, { cache: 'no-store' }).then(async response => {
+    void fetch(endpoint, { cache: 'no-store' }).then(async response => {
       const body = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(body.error || 'Could not work out what would be released')
       setPlan(body.plan)
     }).catch(err => setError((err as Error).message))
-  }, [open, stagingId])
+  }, [open, endpoint])
 
   const promote = async () => {
     if (!plan?.staging.commit) return
     setStarting(true); setError('')
     try {
-      const response = await fetch(`/api/sites/${stagingId}/promote`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ commit: plan.staging.commit }) })
+      const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ commit: plan.staging.commit,review:plan.review }) })
       const body = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(body.error || 'Promotion could not start')
       onStarted(body.deploymentId, body.productionId)

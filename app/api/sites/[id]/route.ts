@@ -175,24 +175,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   }
 }
 
-export async function DELETE(_: Request, context: { params: Promise<{ id: string }> }) {
-  try {
-    const user = await getSessionFromCookie()
-    requireRole(user, ['admin'])
-
-    // Get URL before deleting to remove from Caddy
-    const { rows } = await query('select url from projects where id = $1', [(await context.params).id])
-    const project = rows[0]
-
-    await query('delete from projects where id = $1', [(await context.params).id])
-
-    if (project?.url) {
-      const { removeFromCaddy } = await import('@/lib/caddy')
-      await removeFromCaddy(project.url)
-    }
-
-    return NextResponse.json({ ok: true })
-  } catch (error) {
-    return jsonError(error)
-  }
+export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
+  const { applicationRemovalRequest } = await import('@/lib/application-removal-route')
+  return applicationRemovalRequest(request, null, (await context.params).id)
 }

@@ -35,7 +35,11 @@ export interface ManagedServer {
 }
 
 export interface RemoteApp {
+  auto_deploy?:boolean
   runtime_versions?: Record<string,string>
+  application_group_id?: string | null
+  group_name?: string | null
+  component_role?: 'application' | 'frontend' | 'backend' | 'service'
   id: string
   server_id: string
   name: string
@@ -44,8 +48,12 @@ export interface RemoteApp {
   install_cmd: string
   build_cmd: string
   start_cmd: string
+  deploy_script?: string
+  pre_deploy_cmd?: string
+  post_deploy_cmd?: string
   port: number
   health_path: string
+  health_profile?: { path: string; statuses: number[]; timeoutMs: number } | null
   access_mode: 'lan' | 'wan'
   hostname: string
   ip_address: string
@@ -75,4 +83,8 @@ export interface RemoteJob {
   finished_at: string | null
   updated_at: string
   kind?: 'deploy' | 'inspect' | 'database' | 'validate'
+  cancel_requested?: boolean
+  trigger?: string
+  branch?: string | null
+  security_status?: string | null
 }

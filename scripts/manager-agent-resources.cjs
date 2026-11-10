@@ -1,4 +1,8 @@
 'use strict';
+const storage = require('./remote-storage-agent.cjs');
+const storageSwitch = require('./remote-storage-switch.cjs');
+const storageMove = require('./remote-storage-move.cjs');
+const storageMigration = require('./remote-storage-migration.cjs');
 // Runs only inside the selected agent. Never imports Manager's database, host
 // process manager or host paths. All application changes use its private PM2.
 const fs = require('node:fs/promises');
@@ -6,6 +10,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { createHash } = require('node:crypto');
 const { readDiagnostics, classifyReadiness } = require('./health-diagnostics.cjs');
+const { probeHttp, validateHealthProfile } = require('./http-health.cjs');
 const ID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 const CAPABILITY = 'remote-resources-v1';
 const MB = 1024 ** 2;
@@ -92,15 +97,18 @@ async function applyLaunchSettings(root,id,ecosystem,h) {
   await fs.writeFile(ecosystem,`module.exports=${JSON.stringify(await definition(root,id,ecosystem,launch,settings,h))};\n`,{mode:0o600});
 }
 async function recover(root,tools,h) {
+  if(await h.readJson(path.join(root,'database-move-active.json')))await storageMove.recover(root,tools,h,{pg:await storage.postgres(root,h),connection:storage.connection,applyLaunchSettings});
+  if(await h.readJson(path.join(root,'database-change-active.json')))await storageSwitch.recover(root,tools,h,{pg:await storage.postgres(root,h),connection:storage.connection,applyLaunchSettings});
   const file=path.join(root,'resource-transaction.json'),tx=await h.readJson(file);
   if(!tx)return;
   if(tx.recoveryFailed)throw Error('The previous app settings rollback needs manual review; restore its recorded launch settings before clearing resource-transaction.json');
   const saved=await h.readJson(path.join(root,'apps.json'),{}),item=saved[tx.id];
   if(!ID.test(tx.id)||!item||item.ecosystem!==tx.ecosystem)throw Error('Resource recovery requires manual review; app state changed');
   const ecosystem=await h.contained(root,path.relative(root,tx.ecosystem));
+  for(const entry of tx.envFiles||[]){const filename=await h.contained(root,path.relative(root,entry.path));if(entry.content===null)await fs.unlink(filename).catch(error=>{if(error.code!=='ENOENT')throw error;});else await fs.writeFile(filename,entry.content,{mode:0o600});}
   await fs.writeFile(ecosystem,tx.definition,{mode:0o600});await h.atomicJson(path.join(path.dirname(ecosystem),'launch.json'),tx.launch);
   await h.atomicJson(path.join(root,'resources.json'),tx.settings);
-  try {await tools.pm(['delete',`manager-remote-${tx.id}`]).catch(()=>{});await tools.pm(['start',ecosystem]);await h.healthy(item.app);await tools.pm(['save','--force']);}
+  try {if(tx.restart!==false){await tools.pm(['delete',`manager-remote-${tx.id}`]).catch(()=>{});await tools.pm(['start',ecosystem]);await h.healthy(item.app);await tools.pm(['save','--force']);}}
   catch(error){await h.atomicJson(file,{...tx,recoveryFailed:true});throw error;}
   await fs.unlink(file);invalidate(root);
 }
@@ -115,19 +123,34 @@ async function appChange(root,input,tools,h) {
     settings.limitMb=n;
   } else if(input.action==='start-method') {
     if(!['direct','runner'].includes(input.method))throw Error('Invalid start method');settings.method=input.method;
+  } else if(input.action==='database-env') {
+    if(!input.environment||typeof input.environment!=='object'||Array.isArray(input.environment)||Object.keys(input.environment).length>200||Object.entries(input.environment).some(([key,value])=>!/^[A-Z][A-Z0-9_]{0,100}$/.test(key)||['PATH','PORT','NODE_OPTIONS','NODE_ENV','PM2_HOME','HOME','USERPROFILE','APPDATA'].includes(key)||typeof value!=='string'||value.includes('\0')||value.length>50000))throw Error('Invalid database environment');
   } else throw Error('Unknown app resource operation');
   const ecosystem=await h.contained(root,path.relative(root,item.ecosystem)),launchFile=path.join(path.dirname(ecosystem),'launch.json'),launch=await h.readJson(launchFile);
+  const restart=input.action==='start-method'||input.restart!==false;
   const before=await h.processList(tools.pm);const own=before.find(p=>p.name===`manager-remote-${input.id}`);
-  if(own?.pm2_env?.status!=='online')throw Error('Start the app and verify it is healthy before changing its launch settings');
-  await h.healthy(item.app,5000);
-  await h.atomicJson(path.join(root,'resource-transaction.json'),{id:input.id,ecosystem,definition:await fs.readFile(ecosystem,'utf8'),launch,settings:previous});
+  if(restart&&own?.pm2_env?.status!=='online')throw Error('Start the app and verify it is healthy before changing its launch settings');
+  if(restart)await h.healthy(item.app,5000);
+  const envFiles=[];
+  if(input.action==='database-env'){
+    const filename=await h.contained(root,path.relative(root,path.join(launch.cwd,'.env'))),info=await fs.lstat(filename).catch(error=>{if(error.code==='ENOENT')return null;throw error;});
+    if(info&&(!info.isFile()||info.isSymbolicLink()||info.size>200000))throw Error('Application .env must be an ordinary file no larger than 200 KB');
+    const content=info?await fs.readFile(filename,'utf8'):null;envFiles.push({path:filename,content});
+    const backup=await h.contained(root,'environment-backups',input.id,require('node:crypto').randomUUID()+'.env');await fs.mkdir(path.dirname(backup),{recursive:true,mode:0o700});await fs.writeFile(backup,content||'',{mode:0o600,flag:'wx'});
+  }
+  await h.atomicJson(path.join(root,'resource-transaction.json'),{id:input.id,ecosystem,definition:await fs.readFile(ecosystem,'utf8'),launch,settings:previous,restart,envFiles});
   cfg.apps[input.id]=settings;
   try{
     if(input.action==='memory')launch.env.NODE_OPTIONS=heapOptions(launch.env.NODE_OPTIONS,input.limitMb);
+    if(input.action==='database-env'){
+      const values=input.environment,keys=new Set(Object.keys(values)),entry=envFiles[0];
+      const kept=(entry.content||'').split(/\r?\n/).filter(line=>!keys.has(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line.trimStart())?.[1]));
+      await fs.writeFile(entry.path,kept.join('\n')+'\n'+Object.entries(values).map(([key,value])=>`${key}=${JSON.stringify(value)}`).join('\n')+'\n',{mode:0o600});Object.assign(launch.env,values);
+    }
     await h.atomicJson(launchFile,launch);await h.atomicJson(path.join(root,'resources.json'),cfg);await applyLaunchSettings(root,input.id,ecosystem,h);
-    await tools.pm(['delete',own.name]);await tools.pm(['start',ecosystem]);await h.healthy(item.app);await tools.pm(['save','--force']);
-    await fs.unlink(path.join(root,'resource-transaction.json'));invalidate(root);return {ok:true,healthy:true,limitMb:settings.limitMb||null,method:settings.method||'runner'};
-  }catch(error){await recover(root,tools,h);return {ok:true,healthy:false,restored:true,reason:error.message};}
+    if(restart){await tools.pm(['delete',own.name]);await tools.pm(['start',ecosystem]);await h.healthy(item.app);await tools.pm(['save','--force']);}
+    await fs.unlink(path.join(root,'resource-transaction.json'));invalidate(root);return {ok:true,healthy:true,...(input.action==='database-env'?{synced:true,keys:Object.keys(input.environment)}:{}),restart:restart?{success:true,healthy:true,reason:null}:null,limitMb:settings.limitMb||null,method:settings.method||'runner'};
+  }catch(error){await recover(root,tools,h);if(input.action==='database-env')throw Error('Database environment change failed; the previous environment and process were restored.');return {ok:true,healthy:false,restored:true,reason:error.message};}
 }
 async function ordinary(root,file) {
   const base=path.resolve(root),target=path.resolve(file),rel=path.relative(base,target);
@@ -151,6 +174,7 @@ async function sizeTree(dir) {
 }
 async function diskPlan(root,input,tools,h) {
   const saved=await h.readJson(path.join(root,'apps.json'),{}),workers=await h.readJson(path.join(root,'workers.json'),{}),list=await h.processList(tools.pm);
+  const detached=await h.readJson(path.join(root,'detached-apps.json'),{});
   const journal=await h.readJson(path.join(root,'current-job.json'));
   const refs=[...list.flatMap(p=>[p.pm2_env?.pm_cwd,p.pm2_env?.pm_exec_path]),...Object.values(workers).map(w=>w.workingDirectory),...Object.values(saved).map(a=>a.ecosystem),journal?.activation?.previous?.ecosystem,...(input.protectedPaths||[])].filter(p=>typeof p==='string');
   for(const item of Object.values(saved)){const launch=await h.readJson(path.join(path.dirname(item.ecosystem),'launch.json'));if(launch?.cwd)refs.push(launch.cwd);}
@@ -158,6 +182,7 @@ async function diskPlan(root,input,tools,h) {
   const records=Array.isArray(input.releases)?input.releases:[];
   for(const app of input.apps||[]) {
     if(!ID.test(app.id))throw Error('Invalid cleanup application');
+    if(detached[app.id]){report.warnings.push('Removed application '+app.name+': all files are preserved');continue;}
     const project={projectId:app.id,projectName:app.name,entries:[],warnings:[]};report.projects.push(project);
     const history=records.filter(r=>r.app_id===app.id&&ID.test(r.id));
     const newest=history.filter(r=>r.status==='success').sort((a,b)=>Date.parse(b.finished_at)-Date.parse(a.finished_at)).slice(0,3).map(r=>r.id);
@@ -212,14 +237,38 @@ async function execute(root,job,tools,h) {
   if(!input||typeof input.action!=='string')throw Error('Missing resource operation');
   await recover(root,tools,h);
   if(input.action==='disk')return disk(root,input,tools,h);
+  if(input.action==='app-logs')return appLogs(root,input,tools,h);
   if(['memory','start-method'].includes(input.action))return appChange(root,input,tools,h);
   if(['sleep','wake'].includes(input.action))return sleepChange(root,input,tools,h);
   if(input.action==='recovery')return recovery(root,input,tools,h);
   if(input.action==='database-review')return databaseReview(root,input,h);
   if(input.action==='database-inspect')return inspectDatabases(root,input,h);
   if(input.action==='database-tune')return tuneDatabase(root,input,h);
+  if(input.action==='storage'){
+    if(['migration-preview','migration-run','migration-reconcile'].includes(input.operation))return storageMigration.execute(root,input,h,name=>name==='pg'?storage.postgres(root,h):storage.driver(root,h,name,input.driverArchive));
+    if(['move-plan','move','move-reconcile'].includes(input.operation))return storageMove.execute(root,input,tools,h,{pg:await storage.postgres(root,h),connection:storage.connection,applyLaunchSettings});
+    if(['dedicated-plan','dedicated-user','dedicated-reconcile'].includes(input.operation))return storageSwitch.execute(root,input,tools,h,{pg:await storage.postgres(root,h),connection:storage.connection,applyLaunchSettings});
+    return input.operation==='sync-env'?appChange(root,{...input,action:'database-env',id:input.serviceId},tools,h):storage.execute(root,input,h);
+  }
   if(input.action.startsWith('worker-')||input.action==='cron-run')return automation(root,input,tools,h);
   throw Error('Unknown resource operation');
+}
+async function appLogs(root,input,tools,h) {
+  if(!ID.test(input.id)||!['out','err'].includes(input.type)||typeof input.clear!=='boolean')throw Error('Invalid application log request');
+  const item=(await h.readJson(path.join(root,'apps.json'),{}))[input.id];
+  if(!item)throw Error('Deploy this managed application first');
+  const launch=await h.readJson(path.join(path.dirname(item.ecosystem),'launch.json'));
+  const process=(await h.processList(tools.pm)).find(p=>p.name===`manager-remote-${input.id}`);
+  const filename=process?.pm2_env?.[input.type==='err'?'pm_err_log_path':'pm_out_log_path'];
+  if(!filename)throw Error('Log path not found for this application');
+  const relative=path.relative(path.join(root,'pm2'),filename);
+  if(relative.startsWith('..')||path.isAbsolute(relative))throw Error('Log path is outside the private process manager');
+  const safe=await h.contained(root,'pm2',relative),file=await fs.open(safe,input.clear?'r+':'r');
+  try {
+    if(input.clear){await file.truncate(0);return{ok:true,cleared:true,logPath:safe,type:input.type};}
+    const stat=await file.stat(),length=Math.min(stat.size,48000),buffer=Buffer.alloc(length);await file.read(buffer,0,length,Math.max(0,stat.size-length));
+    return{ok:true,logPath:safe,type:input.type,log:h.redact(buffer.toString('utf8').split(/\r?\n/).slice(-200).join('\n'),Object.values(launch?.env||{}).filter(v=>typeof v==='string'))};
+  } finally {await file.close();}
 }
 async function databaseSql(root,d,sql,h) {
   if(!['postgresql','mysql','mariadb'].includes(d.provider)||!['127.0.0.1','localhost','::1'].includes(d.host)||!Number.isInteger(d.port)||d.port<1||d.port>65535)throw Error('Only loopback database inspection is allowed');
@@ -271,7 +320,7 @@ async function recovery(root,input,tools,h) {
   const saved=await h.readJson(path.join(root,'apps.json'),{}),app=saved[input.id],before=await h.processList(tools.pm),name=`manager-remote-${input.id}`,p=before.find(p=>p.name===name);
   if(!ID.test(input.id)||!app||app.commit!==input.commit||p?.pid!==input.pid||p?.pm2_env?.restart_time!==input.restarts||!['online','errored'].includes(p?.pm2_env?.status)||app.app.port!==input.port||app.app.health_path!==input.health_path)throw Error('Application state changed after review; prepare a new review');
   let alreadyHealthy=false,databaseFailure=false;
-  try{const response=await fetch(`http://127.0.0.1:${app.app.port}${app.app.health_path||'/'}`,{redirect:'manual',signal:AbortSignal.timeout(5000)});alreadyHealthy=response.ok;const d=!response.ok?await readDiagnostics(response):null;databaseFailure=d?.issueCode?.startsWith('database')===true;await response.body?.cancel().catch(()=>{});}catch{}
+  try{const profile=validateHealthProfile(app.app.health_profile||{path:app.app.health_path||'/'}),response=await probeHttp(`http://127.0.0.1:${app.app.port}${profile.path}`,{statuses:profile.statuses,diagnostics:true,signal:AbortSignal.timeout(5000)});alreadyHealthy=response.ok;databaseFailure=response.diagnostics?.issueCode?.startsWith('database')===true;}catch{}
   if(alreadyHealthy)throw Error('The app is healthy now. No recovery restart was performed.');
   if(databaseFailure)throw Error('Readiness identifies a database dependency problem. No recovery restart was performed.');
   await tools.pm(['restart',name]);await tools.pm(['save','--force']);

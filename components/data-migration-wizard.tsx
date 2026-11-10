@@ -1,4 +1,5 @@
 'use client'
+import {useStorageTransport} from '@/lib/storage-client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
@@ -57,6 +58,7 @@ interface MigrationTable {
 }
 
 interface MigrationPreview {
+  review?: string
   source: { id: string; name: string; provider: string; database: string }
   target: { id: string; name: string; provider: string; database: string }
   tables: MigrationTable[]
@@ -72,6 +74,7 @@ interface MigrationValidation {
 }
 
 interface MigrationJob {
+  recovery?: boolean
   id: string
   source_service_id: string
   source_service_name: string
@@ -115,6 +118,7 @@ function statusClass(status: MigrationJob['status']) {
 }
 
 export function DataMigrationWizard({ projectId, projectName, services, onAddService, onActivated, onChanged, canRemove = false }: DataMigrationWizardProps) {
+  const {fetch}=useStorageTransport()
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState(0)
   const [sourceServiceId, setSourceServiceId] = useState('')
@@ -127,6 +131,7 @@ export function DataMigrationWizard({ projectId, projectName, services, onAddSer
   const [backupConfirmed, setBackupConfirmed] = useState(false)
   const [writesPaused, setWritesPaused] = useState(false)
   const [replacementConfirmed, setReplacementConfirmed] = useState(false)
+  const [confirmTarget,setConfirmTarget]=useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [jobs, setJobs] = useState<MigrationJob[]>([])
@@ -156,7 +161,7 @@ export function DataMigrationWizard({ projectId, projectName, services, onAddSer
     setReplaceTarget(false)
     setBackupConfirmed(false)
     setWritesPaused(false)
-    setReplacementConfirmed(false)
+    setReplacementConfirmed(false);setConfirmTarget('')
     setBusy(null)
     setNotice(null)
     setActiveJob(null)
@@ -169,7 +174,7 @@ export function DataMigrationWizard({ projectId, projectName, services, onAddSer
     if (!response.ok) throw new Error(body.error || 'Migration history could not be loaded')
     setJobs(body.migrations || [])
     return body.migrations as MigrationJob[]
-  }, [projectId])
+  }, [projectId,fetch])
 
   useEffect(() => {
     if (!open) return
@@ -183,7 +188,7 @@ export function DataMigrationWizard({ projectId, projectName, services, onAddSer
     if (!response.ok) throw new Error(body.error || 'Migration progress could not be loaded')
     setActiveJob(body.migration)
     setJobs((current) => [body.migration, ...current.filter((item) => item.id !== body.migration.id)])
-  }, [activeJobId])
+  }, [activeJobId,fetch])
 
   useEffect(() => {
     if (!open || !activeJob || !ACTIVE_STATUSES.includes(activeJob.status)) return
@@ -207,7 +212,7 @@ export function DataMigrationWizard({ projectId, projectName, services, onAddSer
       setPreview(nextPreview)
       setSelectedTables(new Set(nextPreview.tables.filter((table) => !isTransient(table)).map((table) => table.sourceObject)))
       setReplaceTarget(false)
-      setReplacementConfirmed(false)
+      setReplacementConfirmed(false);setConfirmTarget('')
       setStep(1)
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Database inspection failed')
@@ -238,6 +243,8 @@ export function DataMigrationWizard({ projectId, projectName, services, onAddSer
           targetServiceId,
           preserveSchema,
           replaceTarget,
+          review: preview.review,
+          confirmTarget,
           backupConfirmed,
           writesPaused,
           tables: [...selectedTables],
@@ -303,7 +310,7 @@ export function DataMigrationWizard({ projectId, projectName, services, onAddSer
     setNotice(null)
   }
 
-  const canStart = backupConfirmed && writesPaused && selectedTables.size > 0 && (selectedExistingTables === 0 || (replaceTarget && replacementConfirmed))
+  const canStart = backupConfirmed && writesPaused && selectedTables.size > 0 && (selectedExistingTables === 0 || (replaceTarget && replacementConfirmed && confirmTarget===preview?.target.database))
 
   return (
     <>
@@ -391,7 +398,7 @@ export function DataMigrationWizard({ projectId, projectName, services, onAddSer
                   {filteredTables.map((table) => <label key={table.sourceObject} className="grid cursor-pointer grid-cols-[auto_1fr_auto] items-center gap-3 border-b border-border/60 px-2 py-3 text-xs last:border-0 hover:bg-muted/30"><input type="checkbox" className="h-4 w-4 accent-primary" checked={selectedTables.has(table.sourceObject)} onChange={() => toggleTable(table.sourceObject)} /><span className="min-w-0"><span className="block truncate font-mono">{table.sourceObject}</span><span className="mt-1 block truncate text-muted-foreground">to {table.targetObject}</span></span><span className="flex gap-1">{isTransient(table) && <Badge variant="outline">Runtime</Badge>}{table.targetExists && <Badge variant="secondary">Exists</Badge>}</span></label>)}
                 </div>
                 <label className="flex items-center justify-between gap-4 border-y border-border py-3 text-sm"><span><span className="block font-medium">Migrate compatible keys and constraints</span><span className="mt-1 block text-xs text-muted-foreground">Sling translates supported provider schema alongside the selected data.</span></span><Switch checked={preserveSchema} onCheckedChange={setPreserveSchema} /></label>
-                {selectedExistingTables > 0 && <label className="flex items-center justify-between gap-4 border-y border-border py-3 text-sm"><span><span className="block font-medium">Recreate selected target tables</span><span className="mt-1 block text-xs text-muted-foreground">Required because {selectedExistingTables} selected target table{selectedExistingTables === 1 ? '' : 's'} already exist.</span></span><Switch checked={replaceTarget} onCheckedChange={(checked) => { setReplaceTarget(checked); if (!checked) setReplacementConfirmed(false) }} /></label>}
+                {selectedExistingTables > 0 && <label className="flex items-center justify-between gap-4 border-y border-border py-3 text-sm"><span><span className="block font-medium">Recreate selected target tables</span><span className="mt-1 block text-xs text-muted-foreground">Required because {selectedExistingTables} selected target table{selectedExistingTables === 1 ? '' : 's'} already exist.</span></span><Switch checked={replaceTarget} onCheckedChange={(checked) => { setReplaceTarget(checked); if (!checked) setReplacementConfirmed(false);setConfirmTarget('') }} /></label>}
               </div>
             )}
 
@@ -407,7 +414,8 @@ export function DataMigrationWizard({ projectId, projectName, services, onAddSer
                 <div className="space-y-3">
                   <label className="flex cursor-pointer items-start gap-3 text-sm"><input type="checkbox" className="mt-0.5 h-4 w-4 accent-primary" checked={backupConfirmed} onChange={(event) => setBackupConfirmed(event.target.checked)} /><span><span className="block font-medium">Backups are complete</span><span className="mt-1 block text-xs text-muted-foreground">I have a restorable backup of the source and any existing target data.</span></span></label>
                   <label className="flex cursor-pointer items-start gap-3 text-sm"><input type="checkbox" className="mt-0.5 h-4 w-4 accent-primary" checked={writesPaused} onChange={(event) => setWritesPaused(event.target.checked)} /><span><span className="block font-medium">Application writes are paused</span><span className="mt-1 block text-xs text-muted-foreground">Web traffic, scheduled tasks, and workers cannot change either database during the transfer.</span></span></label>
-                  {selectedExistingTables > 0 && <label className="flex cursor-pointer items-start gap-3 text-sm"><input type="checkbox" className="mt-0.5 h-4 w-4 accent-primary" checked={replacementConfirmed} onChange={(event) => setReplacementConfirmed(event.target.checked)} /><span><span className="block font-medium">Target replacement is understood</span><span className="mt-1 block text-xs text-muted-foreground">The selected existing target tables can be dropped and recreated.</span></span></label>}
+                  {selectedExistingTables>0&&<label className="grid gap-2 text-sm">Type {preview?.target.database} to replace existing target rows<input className={inputClass} value={confirmTarget} onChange={e=>setConfirmTarget(e.target.value)} autoComplete="off"/></label>}
+                  {selectedExistingTables > 0 && <label className="flex cursor-pointer items-start gap-3 text-sm"><input type="checkbox" className="mt-0.5 h-4 w-4 accent-primary" checked={replacementConfirmed} onChange={(event) => setReplacementConfirmed(event.target.checked)} /><span><span className="block font-medium">Target replacement is understood</span><span className="mt-1 block text-xs text-muted-foreground">The selected existing target data can be replaced.</span></span></label>}
                 </div>
               </div>
             )}
@@ -430,6 +438,7 @@ export function DataMigrationWizard({ projectId, projectName, services, onAddSer
               {step === 0 && relationalServices.length >= 2 && <Button onClick={() => void inspectDatabases()} disabled={!sourceServiceId || !targetServiceId || busy === 'preview'}>{busy === 'preview' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}Inspect databases</Button>}
               {step === 1 && <Button onClick={() => setStep(2)} disabled={!selectedTables.size || (selectedExistingTables > 0 && !replaceTarget)}>Review safety<ArrowRight className="ml-2 h-4 w-4" /></Button>}
               {step === 2 && <Button onClick={() => void startMigration()} disabled={!canStart || busy === 'start'}>{busy === 'start' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}Start migration</Button>}
+              {step===3&&activeJob?.recovery&&<Button variant="outline" disabled={!!busy} onClick={async()=>{setBusy('verify');try{const response=await fetch(`/api/data/migrations/${activeJob.id}/reconcile`,{method:'POST'}),body=await response.json();if(!response.ok)throw Error(body.error||'Verification failed');await loadJobs();await refreshActiveJob()}catch(error){setNotice((error as Error).message)}finally{setBusy(null)}}}>Verify outcome</Button>}
               {step === 3 && activeJob && ACTIVE_STATUSES.includes(activeJob.status) && <Button variant="outline" onClick={() => void cancelMigration()} disabled={busy === 'cancel'}>{busy === 'cancel' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Square className="mr-2 h-4 w-4" />}Cancel</Button>}
               {step === 3 && activeJob && !ACTIVE_STATUSES.includes(activeJob.status) && <Button variant="outline" onClick={() => { reset(); void loadJobs() }}>New migration</Button>}
             </div>

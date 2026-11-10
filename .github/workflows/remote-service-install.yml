@@ -1,0 +1,56 @@
+name: Isolated remote service installation
+on:
+  pull_request:
+    paths:
+      - 'scripts/install-remote-*'
+      - 'scripts/*database-browser*'
+      - 'scripts/initialize-remote-database.cjs'
+      - 'scripts/inspect-remote-server.*'
+      - 'lib/remote-service*.ts'
+      - 'tests/remote-*-install.test.cjs'
+      - '.github/workflows/remote-service-install.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  database:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            engine: phpmyadmin
+          - os: ubuntu-22.04
+            engine: phpmyadmin
+          - os: windows-latest
+            engine: mongodb
+          - os: ubuntu-22.04
+            engine: mongodb
+          - os: windows-latest
+            engine: sqlserver
+          - os: ubuntu-22.04
+            engine: redis
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node tests/fixtures/prepare-live-agent-lab.cjs
+      - shell: bash
+        run: npm install --prefix "$RUNNER_TEMP/manager-live-tools" --ignore-scripts --no-audit --no-fund pm2@6
+      - if: runner.os == 'Windows'
+        run: node --require ./tests/register.cjs --test tests/remote-database-install.test.cjs
+        env:
+          MANAGER_SERVICE_INSTALL_LAB: '1'
+          MANAGER_SERVICE_INSTALL_ENGINE: ${{ matrix.engine }}
+      - if: runner.os == 'Linux'
+        shell: bash
+        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,TEST_CADDY,TEST_PM2_PACKAGE_ROOT,MANAGER_SERVICE_INSTALL_LAB,MANAGER_SERVICE_INSTALL_ENGINE "$(command -v node)" --require ./tests/register.cjs --test tests/remote-database-install.test.cjs
+        env:
+          MANAGER_SERVICE_INSTALL_LAB: '1'
+          MANAGER_SERVICE_INSTALL_ENGINE: ${{ matrix.engine }}

@@ -40,6 +40,7 @@ export async function queueAgentUpdate(serverId: string, userId: string) {
     await client.query('begin')
     const server = (await client.query('select * from managed_servers where id=$1 for update', [serverId])).rows[0]
     if (!server?.enabled || !server.enrolled_at) throw new ApiError('Connect an active server first', 409)
+    if((await client.query("select 1 from remote_storage_changes where server_id=$1 and status in ('running','needs_review')",[serverId])).rowCount)throw new ApiError('Verify the pending database change in Storage before updating the agent',409)
     if (!server.last_seen_at || Date.now() - new Date(server.last_seen_at).getTime() > 90_000) throw new ApiError('Wait for the server to reconnect before updating', 409)
     if (!server.metrics?.capabilities?.includes(UPDATE_CAPABILITY)) throw new ApiError('Enable the update supervisor on this server first. Enrollment and application data must be kept.', 409)
     if ((await client.query(`select id from remote_agent_updates where server_id=$1 and status in ${active}`, [serverId])).rowCount) throw new ApiError('An agent update is already active on this server', 409)

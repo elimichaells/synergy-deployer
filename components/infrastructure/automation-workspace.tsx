@@ -24,6 +24,7 @@ interface CronJob {
 }
 interface ProjectOption { id: string; name: string; environment: 'production' | 'staging'; project_type: string; root_path: string }
 interface Worker {
+  project_id?: string | null
   id: string; name: string; description: string | null; command: string; working_directory: string; pm2_name: string
   enabled: boolean; status: string; pid: number | null; uptime: number | null; restarts: number; cpu: number; memory: number
 }
@@ -44,12 +45,12 @@ const schedulePresets = [
   { value: '0 8 * * 1-5', label: 'Weekdays at 08:00' },
 ]
 
-function defaultCronCommand(language: CronLanguage) {
+function defaultCronCommand(language: CronLanguage, directory = '') {
   if (language === 'laravel') return 'php artisan schedule:run'
   if (language === 'php') return 'php cron.php'
   if (language === 'node') return 'npm run cron'
   if (language === 'python') return 'python cron.py'
-  if (language === 'go') return '.\\app.exe cron'
+  if (language === 'go') return directory.startsWith('/') ? './app cron' : '.\\app.exe cron'
   return ''
 }
 
@@ -104,7 +105,13 @@ export function AutomationWorkspace({ serverId, onWorkspaceHashChange }: Infrast
   useEffect(() => { setProjectFilter(new URLSearchParams(window.location.search).get('project') || '') }, [])
   const selectedProject = projects.find(project => project.id === projectFilter)
   const visibleCronJobs = cronJobs.filter(job => !projectFilter || job.project_id === projectFilter)
-  const visibleWorkers = workers.filter(worker => !selectedProject || worker.working_directory.replace(/[\\/]+$/, '').toLowerCase() === selectedProject.root_path.replace(/[\\/]+$/, '').toLowerCase())
+  const visibleWorkers = workers.filter(worker => {
+    if(!selectedProject)return true
+    if(worker.project_id)return worker.project_id===selectedProject.id
+    const normalize=(value:string)=>{const clean=value.replace(/\\/g,'/').replace(/\/+$/,'');return /^[a-z]:/i.test(clean)?clean.toLowerCase():clean}
+    const directory=normalize(worker.working_directory),root=normalize(selectedProject.root_path)
+    return !!root&&(directory===root||directory.startsWith(root+'/'))
+  })
 
   const canWrite = user?.role === 'admin' || user?.role === 'operator'
   const canDelete = user?.role === 'admin'
@@ -155,7 +162,7 @@ export function AutomationWorkspace({ serverId, onWorkspaceHashChange }: Infrast
       projectId,
       language,
       workingDirectory: project.root_path,
-      command: defaultCronCommand(language),
+      command: defaultCronCommand(language,project.root_path),
       schedule: language === 'laravel' ? '* * * * *' : current.schedule,
     }))
   }
@@ -164,7 +171,7 @@ export function AutomationWorkspace({ serverId, onWorkspaceHashChange }: Infrast
     setCronForm((current) => ({
       ...current,
       language,
-      command: defaultCronCommand(language),
+      command: defaultCronCommand(language,current.workingDirectory),
       schedule: language === 'laravel' ? '* * * * *' : current.schedule,
     }))
   }
@@ -378,7 +385,7 @@ export function AutomationWorkspace({ serverId, onWorkspaceHashChange }: Infrast
               </div>
             )}
 
-            <ScriptField label="Command" value={cronForm.command} onChange={(command) => setCronForm({ ...cronForm, command })} placeholder={defaultCronCommand(cronForm.language) || 'Enter command'} />
+            <ScriptField label="Command" value={cronForm.command} onChange={(command) => setCronForm({ ...cronForm, command })} placeholder={defaultCronCommand(cronForm.language,cronForm.workingDirectory) || 'Enter command'} />
             <TextField label="Timeout (seconds)" type="number" value={String(cronForm.timeoutSeconds)} onChange={(value) => setCronForm({ ...cronForm, timeoutSeconds: Number(value) })} />
             <ToggleField label="Enabled" description="Calculate the next run and execute this schedule automatically." checked={cronForm.enabled} onChange={(enabled) => setCronForm({ ...cronForm, enabled })} />
             <Button className="w-full" disabled={busy === 'save-cron' || !cronForm.projectId} onClick={() => void saveCron()}>
@@ -389,7 +396,7 @@ export function AutomationWorkspace({ serverId, onWorkspaceHashChange }: Infrast
         </SheetContent>
       </Sheet>
 
-      <Sheet open={workerEditor !== null} onOpenChange={(open) => !open && setWorkerEditor(null)}><SheetContent className="w-full overflow-y-auto sm:max-w-xl"><SheetHeader><SheetTitle>{workerEditor === 'new' ? 'New worker' : 'Edit worker'}</SheetTitle><SheetDescription>PM2 keeps this command running independently from web applications.</SheetDescription></SheetHeader><div className="mt-6 space-y-4"><TextField label="Name" value={workerForm.name} onChange={(name) => setWorkerForm({ ...workerForm, name })} placeholder="Email queue consumer" /><TextField label="Description" value={workerForm.description} onChange={(description) => setWorkerForm({ ...workerForm, description })} placeholder="Optional operator note" /><TextField label="PM2 process name" mono value={workerForm.pm2Name} onChange={(pm2Name) => setWorkerForm({ ...workerForm, pm2Name })} placeholder="worker:email" /><TextField label="Working directory" mono value={workerForm.workingDirectory} onChange={(workingDirectory) => setWorkerForm({ ...workerForm, workingDirectory })} placeholder="C:\web\production\app" /><ScriptField label="Worker command" value={workerForm.command} onChange={(command) => setWorkerForm({ ...workerForm, command })} placeholder="npm run worker:email" /><ToggleField label="Enabled" description="Enabled workers may be started or restarted from Manager." checked={workerForm.enabled} onChange={(enabled) => setWorkerForm({ ...workerForm, enabled })} /><Button className="w-full" disabled={busy === 'save-worker'} onClick={() => void saveWorker()}>{busy === 'save-worker' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Save worker</Button></div></SheetContent></Sheet>
+      <Sheet open={workerEditor !== null} onOpenChange={(open) => !open && setWorkerEditor(null)}><SheetContent className="w-full overflow-y-auto sm:max-w-xl"><SheetHeader><SheetTitle>{workerEditor === 'new' ? 'New worker' : 'Edit worker'}</SheetTitle><SheetDescription>PM2 keeps this command running independently from web applications.</SheetDescription></SheetHeader><div className="mt-6 space-y-4"><TextField label="Name" value={workerForm.name} onChange={(name) => setWorkerForm({ ...workerForm, name })} placeholder="Email queue consumer" /><TextField label="Description" value={workerForm.description} onChange={(description) => setWorkerForm({ ...workerForm, description })} placeholder="Optional operator note" /><TextField label={serverId ? "Process label" : "PM2 process name"} mono value={workerForm.pm2Name} onChange={(pm2Name) => setWorkerForm({ ...workerForm, pm2Name })} placeholder="worker:email" /><TextField label="Working directory" mono value={workerForm.workingDirectory} onChange={(workingDirectory) => setWorkerForm({ ...workerForm, workingDirectory })} placeholder={selectedProject?.root_path || projects[0]?.root_path || (serverId ? "Absolute application directory" : "C:\\web\\production\\app")} /><ScriptField label="Worker command" value={workerForm.command} onChange={(command) => setWorkerForm({ ...workerForm, command })} placeholder="npm run worker:email" /><ToggleField label="Enabled" description="Enabled workers may be started or restarted from Manager." checked={workerForm.enabled} onChange={(enabled) => setWorkerForm({ ...workerForm, enabled })} /><Button className="w-full" disabled={busy === 'save-worker'} onClick={() => void saveWorker()}>{busy === 'save-worker' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Save worker</Button></div></SheetContent></Sheet>
 
       <Sheet open={workerLog !== null} onOpenChange={(open) => !open && setWorkerLog(null)}><SheetContent className="w-full sm:max-w-2xl"><SheetHeader><SheetTitle>{workerLog?.name} logs</SheetTitle><SheetDescription>Recent PM2 output from this worker process.</SheetDescription></SheetHeader><pre className="mt-6 h-[calc(100vh-10rem)] overflow-auto whitespace-pre-wrap rounded-md bg-well p-4 font-mono text-[11px] leading-5 text-foreground/85">{workerLog?.output}</pre></SheetContent></Sheet>
     </AppShell>

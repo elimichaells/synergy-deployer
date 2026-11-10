@@ -1,0 +1,82 @@
+name: Isolated remote storage
+on:
+  pull_request:
+    paths:
+      - 'scripts/remote-storage-*.cjs'
+      - 'scripts/agent-*.cjs'
+      - 'scripts/postgres-*.cjs'
+      - 'scripts/relational-migration.cjs'
+      - 'scripts/install-remote-tool.cjs'
+      - 'lib/remote-service-downloads.ts'
+      - 'tests/fixtures/prepare-sling-lab.cjs'
+      - 'scripts/database-env-rewrite.cjs'
+      - 'lib/remote-storage*.ts'
+      - 'tests/remote-storage*.test.cjs'
+      - 'tests/agent-postgres-runtime.test.cjs'
+      - 'tests/fixtures/postgres-target.cjs'
+      - 'tests/fixtures/storage-change-manager.cjs'
+      - '.github/workflows/remote-storage.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  postgres-moves:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node --require ./tests/register.cjs --test tests/remote-sling-install.test.cjs tests/remote-angular-install.test.cjs
+        env:
+          MANAGER_RUNTIME_INSTALL_LAB: '1'
+      - run: node tests/fixtures/prepare-sling-lab.cjs
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y postgresql
+      - if: runner.os == 'Linux'
+        run: node tests/fixtures/run-remote-db.cjs "$(pg_config --bindir)" remote-storage-move remote-storage-switch remote-storage-migration
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (!$env:PGBIN -or !(Test-Path -LiteralPath (Join-Path $env:PGBIN 'initdb.exe'))) { throw 'PostgreSQL server tools are required for the isolated fixture.' }
+          node tests/fixtures/run-remote-db.cjs "$env:PGBIN" remote-storage-move remote-storage-switch remote-storage-migration
+  providers:
+    # MongoDB 8 refuses affected 6.19+ kernels (SERVER-121912). Keep the lab on
+    # Ubuntu 22.04 (6.8 kernel) until SERVER-136848 is fixed in the 8.0 image.
+    # https://jira.mongodb.org/browse/SERVER-121912
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node tests/fixtures/prepare-sling-lab.cjs
+      - name: Start disposable databases on loopback
+        run: |
+          docker run -d --name storage-postgres --network host -e POSTGRES_USER=fixture_admin -e POSTGRES_PASSWORD=Fixture-Storage-Password-2026 postgres:18 -p 15436 -c listen_addresses=127.0.0.1
+          docker run -d --name storage-mysql --network host -e MYSQL_ROOT_PASSWORD=Fixture-Storage-Password-2026 mysql:8.4 --port=33161 --bind-address=127.0.0.1
+          docker run -d --name storage-mariadb --network host -e MARIADB_ROOT_PASSWORD=Fixture-Storage-Password-2026 mariadb:11.4 --port=33162 --bind-address=127.0.0.1
+          docker run -d --name storage-mongodb --network host -e MONGO_INITDB_ROOT_USERNAME=fixture_admin -e MONGO_INITDB_ROOT_PASSWORD=Fixture-Storage-Password-2026 mongo:8 --port=27027 --bind_ip=127.0.0.1
+          docker run -d --name storage-redis --network host redis:7 redis-server --port 16379 --bind 127.0.0.1 --requirepass Fixture-Storage-Password-2026
+          docker run -d --name storage-sqlserver --network host -e ACCEPT_EULA=Y -e MSSQL_PID=Developer -e MSSQL_SA_PASSWORD=Fixture-Storage-Password-2026 -e MSSQL_TCP_PORT=11433 -e MSSQL_MEMORY_LIMIT_MB=1536 mcr.microsoft.com/mssql/server:2022-latest
+      - name: Verify standalone drivers and real provider operations
+        run: node --require ./tests/register.cjs --test --test-concurrency=1 tests/agent-postgres-runtime.test.cjs tests/remote-storage-providers.test.cjs tests/remote-storage-migration-providers.test.cjs
+        env:
+          MANAGER_STORAGE_PROVIDER_LAB: '1'
+      - name: Stop disposable databases
+        if: always()
+        run: |
+          for container in storage-postgres storage-mysql storage-mariadb storage-mongodb storage-redis storage-sqlserver; do docker logs --tail 35 "$container"; done
+          docker rm -f storage-postgres storage-mysql storage-mariadb storage-mongodb storage-redis storage-sqlserver

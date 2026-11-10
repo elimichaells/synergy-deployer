@@ -1,4 +1,5 @@
 'use client'
+import {useStorageTransport} from '@/lib/storage-client'
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
@@ -11,18 +12,23 @@ interface AppOption { id: string; name: string; environment: string; application
 /** Add a database: pick the app it is for, then create or connect it from that app's Storage tab. */
 export function AddDatabaseSheet({ open, onOpenChange, unlinked }: { open: boolean; onOpenChange: (open: boolean) => void; unlinked: number }) {
   const [apps, setApps] = useState<AppOption[] | null>(null)
+  const {fetch,appHref,serverId}=useStorageTransport()
   const [appId, setAppId] = useState('')
   const [error, setError] = useState('')
 
   useEffect(() => {
     if (!open || apps) return
-    void fetch('/api/sites', { cache: 'no-store' }).then(async response => {
+    const controller=new AbortController()
+    setError('')
+    void fetch('/api/sites', { cache: 'no-store',signal:controller.signal }).then(async response => {
       const body = await response.json().catch(() => [])
+      if(controller.signal.aborted)return
       if (!response.ok) throw new Error(body.error || 'Could not load your apps')
       const list = (Array.isArray(body) ? body : body.projects || []) as AppOption[]
       setApps(list); setAppId(list[0]?.id || '')
-    }).catch(err => { setError((err as Error).message); setApps([]) })
-  }, [open, apps])
+    }).catch(err => { if(!controller.signal.aborted){setError((err as Error).message); setApps([])} })
+    return()=>controller.abort()
+  }, [open, apps,fetch])
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -40,9 +46,9 @@ export function AddDatabaseSheet({ open, onOpenChange, unlinked }: { open: boole
               </select>}
           </label>
           {error && <p role="alert" className="notice-error">{error}</p>}
-          {apps && !apps.length && !error && <p className="text-sm text-muted-foreground">You have no apps yet. <Link href="/sites/new" className="text-foreground underline-offset-4 hover:underline">Create one first</Link>.</p>}
+          {apps && !apps.length && !error && <p className="text-sm text-muted-foreground">You have no apps yet. <Link href={serverId?`/infrastructure/servers/${serverId}#new`:'/sites/new'} className="text-foreground underline-offset-4 hover:underline">Create one first</Link>.</p>}
           <Button asChild className="w-full" disabled={!appId}>
-            <Link href={appId ? `/sites/${appId}?tab=storage` : '#'}><Plus className="mr-2 h-4 w-4" />Continue to the app&apos;s storage<ArrowRight className="ml-2 h-4 w-4" /></Link>
+            <Link href={appId ? appHref(appId) : '#'}><Plus className="mr-2 h-4 w-4" />Continue to the app&apos;s storage<ArrowRight className="ml-2 h-4 w-4" /></Link>
           </Button>
           <p className="text-xs leading-5 text-muted-foreground">There you can create a new database on a Synergy server, connect one that already exists, or share another app&apos;s database in the same project.</p>
         </div>

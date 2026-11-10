@@ -20,6 +20,7 @@ async function connection(id: string | null, repo: string) {
 async function lockServer(client: PoolClient, serverId: string) {
   const server = (await client.query('select * from managed_servers where id=$1 for update',[serverId])).rows[0]
   if (!server?.enabled || !server.enrolled_at) throw new ApiError('Connect this server before importing applications',409)
+  if((await client.query("select 1 from remote_storage_changes where server_id=$1 and status in ('running','needs_review')",[serverId])).rowCount)throw new ApiError('Verify the pending database change in Storage before editing applications',409)
   if (!server.metrics?.capabilities?.includes(REMOTE_SETUP_CAPABILITY)) throw new ApiError('Update this server to Manager agent 1.1.0 or later for guided setup. Download the current agent from Server access.',409)
   return server
 }
@@ -27,7 +28,7 @@ async function lockApp(client: PoolClient, serverId: string, appId: string) {
   await lockServer(client,serverId)
   const app = (await client.query('select * from remote_apps where id=$1 and server_id=$2 for update',[appId,serverId])).rows[0]
   if (!app?.guided_setup) throw new ApiError('Guided application not found on this server',404)
-  if ((await client.query("select id from remote_jobs where app_id=$1 and status in ('queued','running')",[appId])).rowCount) throw new ApiError('Wait for the current operation to finish, or cancel it before it starts',409)
+  if ((await client.query("select id from remote_jobs where (app_id=$1 or server_id=$2 and resource_action='storage') and status in ('queued','running')",[appId,serverId])).rowCount) throw new ApiError('Wait for the current operation to finish, or cancel it before it starts',409)
   return app
 }
 async function enqueue(client: PoolClient, serverId: string, appId: string, userId: string, kind: string, payload: object) {
@@ -49,6 +50,8 @@ export async function importRemoteApp(serverId: string, body: Record<string, unk
   const client=await db.connect(), apps: {id:string;environment:string}[]=[]
   try {
     await client.query('begin'); await lockServer(client,serverId)
+    const groupId=body.applicationGroupId?uuid(body.applicationGroupId):null
+    if(groupId&&!(await client.query('select id from remote_application_groups where id=$1 and server_id=$2',[groupId,serverId])).rowCount)throw new ApiError('Project does not belong to this server',404)
     const ports = new Set<number>((await client.query('select port,ip_port from remote_apps where server_id=$1',[serverId])).rows.flatMap(row=>[row.port,row.ip_port]).filter(Boolean))
     let nextPort=3000
     for (const item of plan) {
@@ -56,9 +59,9 @@ export async function importRemoteApp(serverId: string, body: Record<string, unk
       if (nextPort>65535) throw new ApiError('No application ports are available',409)
       ports.add(nextPort)
       const id=randomUUID(), app={...template,id,branch:item.branch,port:nextPort,hostname:`app-${id}.invalid`}
-      await client.query(`insert into remote_apps(id,server_id,name,repo_url,branch,install_cmd,build_cmd,start_cmd,port,access_mode,hostname,git_connection_id,env_ciphertext,environment_name,production_id,guided_setup)
-        values($1,$2,$3,$4,$5,'','','npm start',$6,'lan',$7,$8,$9,$10,$11,true)`,
-      [id,serverId,app.name,app.repo_url,app.branch,app.port,app.hostname,connectionId,encryptSecret('{}'),item.environment,item.environment==='staging' && apps[0]?.environment==='production' ? apps[0].id : null])
+      await client.query(`insert into remote_apps(id,server_id,name,repo_url,branch,install_cmd,build_cmd,start_cmd,port,access_mode,hostname,git_connection_id,env_ciphertext,environment_name,production_id,guided_setup,application_group_id)
+        values($1,$2,$3,$4,$5,'','','npm start',$6,'lan',$7,$8,$9,$10,$11,true,$12)`,
+      [id,serverId,app.name,app.repo_url,app.branch,app.port,app.hostname,connectionId,encryptSecret('{}'),item.environment,item.environment==='staging' && apps[0]?.environment==='production' ? apps[0].id : null,groupId])
       await enqueue(client,serverId,id,userId,'inspect',{...app,environment:{},git})
       apps.push({id,environment:item.environment})
     }
@@ -70,7 +73,7 @@ export async function importRemoteApp(serverId: string, body: Record<string, unk
 
 export async function remoteSetup(serverId: string, appId: string) {
   await ensureManagedServers(); uuid(serverId); uuid(appId)
-  const app=(await query(`select id,server_id,name,repo_url,branch,install_cmd,build_cmd,start_cmd,port,health_path,access_mode,hostname,ip_address,ip_port,git_connection_id,
+  const app=(await query(`select id,server_id,name,repo_url,branch,install_cmd,build_cmd,start_cmd,deploy_script,pre_deploy_cmd,post_deploy_cmd,port,health_path,access_mode,hostname,ip_address,ip_port,git_connection_id,
     env_names,environment_name,production_id,project_type,guided_setup,setup_step,setup_decisions,inspection,setup_completed_at,database_config,runtime_versions from remote_apps where id=$1 and server_id=$2`,[appId,serverId])).rows[0]
   if (!app?.guided_setup) throw new ApiError('Guided application not found on this server',404)
   const related=(await query('select id,name,environment_name,setup_completed_at from remote_apps where server_id=$1 and (id=$2 or production_id=$2) order by environment_name',[serverId,app.production_id || app.id])).rows
@@ -102,7 +105,7 @@ export async function changeRemoteSetup(serverId: string, appId: string, body: R
       await client.query('update remote_apps set setup_step=$2 where id=$1',[appId,body.step])
     } else if(body.action==='save') {
       if(!SETUP_STEPS.includes(body.step as typeof SETUP_STEPS[number]))throw new ApiError('Invalid setup step',400)
-      const fields=['install_cmd','build_cmd','start_cmd','port','health_path','access_mode','hostname','ip_address','ip_port','runtime_versions']
+      const fields=['install_cmd','build_cmd','start_cmd','deploy_script','pre_deploy_cmd','post_deploy_cmd','port','health_path','access_mode','hostname','ip_address','ip_port','runtime_versions']
       const update=Object.fromEntries(fields.filter(key=>Object.hasOwn(body,key)).map(key=>[key,body[key]]))
       const environment=body.environment === undefined ? JSON.parse(decryptSecret(app.env_ciphertext)) : body.environment
       const config=validateApp({...app,...update,environment})
@@ -115,6 +118,7 @@ export async function changeRemoteSetup(serverId: string, appId: string, body: R
       const collisions=await client.query(`select id from remote_apps where server_id=$1 and id<>$2 and (hostname=$3 or port=$4 or port=$5 or ip_port=$4 or ip_port=$5)`,[serverId,appId,config.hostname,config.port,config.ip_port])
       if(collisions.rowCount)throw new ApiError('Hostname or port is already assigned on this server',409)
       if(body.databaseNone===true) {
+        if(app.storage_catalog_enabled&&(await client.query('select 1 from remote_storage_services where server_id=$1 and app_id=$2',[serverId,appId])).rowCount)throw new ApiError('Disconnect the application databases in Storage before choosing no database',409)
         await client.query('update remote_apps set database_config=null,database_ciphertext=null where id=$1',[appId]); decisions.database='none'
       }
       if(body.environmentReviewed===true) decisions.environment='reviewed'
@@ -123,12 +127,15 @@ export async function changeRemoteSetup(serverId: string, appId: string, body: R
         env_ciphertext=$11,env_names=$12,project_type=$13,setup_step=$14,setup_decisions=$15::jsonb,setup_completed_at=null where id=$1`,
       [appId,config.install_cmd,config.build_cmd,config.start_cmd,config.port,config.health_path,config.access_mode,config.hostname,config.ip_address,config.ip_port,encryptSecret(JSON.stringify(config.environment)),Object.keys(config.environment).sort(),projectType,body.step,JSON.stringify(decisions)])
       await client.query('update remote_apps set runtime_versions=$2::jsonb where id=$1',[appId,JSON.stringify(config.runtime_versions)])
+      await client.query('update remote_apps set deploy_script=$2,pre_deploy_cmd=$3,post_deploy_cmd=$4 where id=$1',[appId,config.deploy_script,config.pre_deploy_cmd,config.post_deploy_cmd])
+      if(body.environment!==undefined)await client.query('update remote_apps set env_files_ciphertext=null where id=$1',[appId])
     } else if(body.action==='inspect') {
       if(app.repo_url!==before.repo_url || app.git_connection_id!==before.git_connection_id)throw new ApiError('Repository changed; retry inspection',409)
       const config=validateApp({...app,branch:body.branch ?? app.branch,start_cmd:app.start_cmd || 'npm start',environment:{}})
       jobId=await enqueue(client,serverId,appId,userId,'inspect',{...config,id:appId,git})
       await client.query("update remote_apps set inspection=null,branch=$2,setup_step='repository' where id=$1",[appId,config.branch])
     } else if(body.action==='database') {
+      if(app.storage_catalog_enabled&&(await client.query('select 1 from remote_storage_services where server_id=$1 and app_id=$2',[serverId,appId])).rowCount)throw new ApiError('Manage this application’s connected databases in Storage',409)
       if(!app.project_type || app.project_type==='angular')throw new ApiError('Choose a backend framework first; browser apps must use a backend API',400)
       let database
       if(body.mode==='retry') {

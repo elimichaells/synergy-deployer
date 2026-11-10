@@ -8,9 +8,11 @@ import type { ManagedServer } from '@/lib/managed-server-types'
 import { REMOTE_SETUP_CAPABILITY } from '@/lib/remote-setup-policy'
 import { ArrowLeft, ArrowRight, GitBranch, Loader2 } from 'lucide-react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { useEffect, useState } from 'react'
 
 export function RemoteAppImport({ server, onCreated, onCancel, onDirtyChange }: { server: ManagedServer; onCreated: (id: string) => void; onCancel: () => void; onDirtyChange: (dirty: boolean) => void }) {
+  const params=useSearchParams()
   const [connections, setConnections] = useState<{id:string;name:string;provider:GitProvider;base_url:string;account_login:string}[]>([])
   const [connectionId, setConnectionId] = useState('')
   const [repos, setRepos] = useState<RepositoryOption[]>([]), [search, setSearch] = useState(''), [urlInput, setUrlInput] = useState('')
@@ -46,7 +48,7 @@ export function RemoteAppImport({ server, onCreated, onCancel, onDirtyChange }: 
     event.preventDefault(); if (!configuring) return
     setBusy(true); setError('')
     try {
-      const response = await fetch(`/api/servers/${server.id}/apps/import`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...form,repo_url:configuring.cloneUrl,git_connection_id:connectionId})})
+      const response = await fetch(`/api/servers/${server.id}/apps/import`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...form,repo_url:configuring.cloneUrl,git_connection_id:connectionId,applicationGroupId:params.get('project')})})
       const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Could not import application')
       onDirtyChange(false); onCreated(result.id)
     } catch (error) { setError((error as Error).message) } finally { setBusy(false) }

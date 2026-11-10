@@ -23,7 +23,32 @@ cleanup(){
 }
 trap cleanup EXIT
 tool="$service"; [ "$service" != postgresql ] || tool=psql
+[ "$service" != angular ] || tool=ng
+[ "$service" != mongodb ] || tool=mongod
+[ "$service" != sqlserver ] || tool=sqlcmd
 target="$files/$service"; config=''; data=''; username=''
+if [ "$service" = phpmyadmin ]; then
+  [ "$mode" = install ] && [ ! -e "$target" ] && [ ! -e "$root/database-browser.json" ] || { echo 'The private browser already exists; it will not be overwritten';exit 1; }
+  if ! command -v php-cgi >/dev/null || ! command -v unzip >/dev/null; then
+    command -v apt-get >/dev/null || { echo 'Install PHP CGI 8.1–8.3 with mysqli, mbstring, openssl and unzip, then retry';exit 1; }
+    DEBIAN_FRONTEND=noninteractive apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-upgrade php-cgi php-mysql php-mbstring php-xml php-curl php-zip unzip
+  fi
+  install -d -m 755 "$target"
+  "$node_exe" "$stage/install-database-browser.cjs" "$plan_file" "$target" "$(command -v php-cgi)"
+  cp -- "$stage/database-browser-agent.cjs" "$target/browser-check.cjs"
+  chown -R root:manager-agent "$target";chmod -R g+rX "$target"
+  chown -R manager-agent:manager-agent "$target/temp" "$target/sessions"
+  chmod 700 "$target/temp" "$target/sessions"
+  agent_node="$("$node_exe" -p 'require(process.argv[1]).node' "$root/tool-paths.json")"
+  (cd -- "$root";runuser -u manager-agent -- "$agent_node" "$target/browser-check.cjs" "$target")
+  install -o manager-agent -g manager-agent -m 600 "$target/database-browser.json" "$root/database-browser.json"
+  "$node_exe" - "$plan_file" "$receipt" "$target" <<'JS'
+const fs=require('fs');const[pfile,file,target]=process.argv.slice(2),p=JSON.parse(fs.readFileSync(pfile));fs.writeFileSync(file,JSON.stringify({status:'success',operationId:p.operationId,service:p.service,mode:p.mode,version:p.downloads.phpmyadmin.version,path:target,managed:true}),{mode:0o600});
+JS
+  echo '[service] Private phpMyAdmin ready through the agent. Existing web sites and PHP defaults are preserved.'
+  exit 0
+fi
 if [ "$mode" = install-version ]; then
   version="$("$node_exe" -p 'require(process.argv[1]).version' "$plan_file")"
   [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && [[ "$service" = node || "$service" = go ]] || exit 1
@@ -31,7 +56,7 @@ if [ "$mode" = install-version ]; then
   install -d -m 755 "$target"
   "$node_exe" "$stage/install-remote-tool.cjs" "$plan_file" "$target"
   selected="$(cat "$target/executable.txt")";arg=--version;[ "$service" != go ] || arg=version
-  detected="$(runuser -u manager-agent -- "$selected" "$arg")";[[ "$detected" = *"$version"* ]] || exit 1
+  detected="$(cd -- "$root"; runuser -u manager-agent -- "$selected" "$arg")";[[ "$detected" = *"$version"* ]] || exit 1
   "$node_exe" - "$root/runtime-versions.json" "$service" "$version" "$selected" <<'JS'
 const fs=require('fs');const [file,service,version,exe]=process.argv.slice(2);const registry=fs.existsSync(file)?JSON.parse(fs.readFileSync(file)):{};(registry[service]||={})[version]=exe;const temp=file+'.'+require('crypto').randomBytes(12).toString('hex')+'.tmp';fs.writeFileSync(temp,JSON.stringify(registry),{flag:'wx',mode:0o600});fs.renameSync(temp,file);
 JS
@@ -48,7 +73,7 @@ else
   test ! -e "$target" || { echo 'Service destination already exists; it will not be overwritten'; exit 1; }
   if [ "$port" != 0 ] && ss -H -ltn | awk '{print $4}' | grep -Eq ":$port$"; then echo 'Port is already occupied'; exit 1; fi
   if [ "$service" = caddy ] && ss -H -ltn | awk '{print $4}' | grep -Eq ':(80|443|2019|2029)$'; then echo 'Existing web services occupy the proxy ports; reuse their configuration'; exit 1; fi
-  case "$service" in postgresql) pattern='postgres';;mysql|mariadb) pattern='mysql|maria';;caddy)pattern='caddy';;*)pattern='^$';;esac
+  case "$service" in postgresql) pattern='postgres';;mysql|mariadb) pattern='mysql|maria';;mongodb)pattern='mongo';;redis)pattern='redis';;caddy)pattern='caddy';;*)pattern='^$';;esac
   if systemctl list-unit-files --type=service --no-legend --no-pager | grep -Ei "$pattern" >/dev/null; then echo 'An existing service was found. Choose Reuse.'; exit 1; fi
   if [ "$service" = postgresql ] || [ "$service" = mysql ] || [ "$service" = mariadb ]; then
     for existing in /var/lib/postgresql /var/lib/pgsql/data /var/lib/mysql /etc/postgresql; do
@@ -66,6 +91,54 @@ else
     else dnf install -y "$@"; fi
   }
   case "$service" in
+    redis)
+      for existing in /var/lib/redis /etc/redis; do
+        if [ -d "$existing" ] && [ -n "$(find "$existing" -mindepth 1 -maxdepth 1 -print -quit)" ]; then echo 'Existing Redis data or configuration was found. Choose Reuse.';exit 1;fi
+      done
+      if id manager-redis >/dev/null 2>&1 || [ -e /etc/systemd/system/ManagerRedis.service ]; then echo 'A Redis account or service already exists. Inspect it before continuing.';exit 1;fi
+      if [ "$manager" = apt ]; then install_package build-essential libssl-dev;else install_package gcc make openssl-devel;fi
+      "$node_exe" "$stage/install-remote-tool.cjs" "$plan_file" "$target"
+      selected="$(cat "$target/executable.txt")"; "$selected" --version
+      useradd --system --no-create-home --shell /usr/sbin/nologin manager-redis
+      data="$target/data";config="$target/manager-redis.conf";install -d -m 700 -o manager-redis -g manager-redis "$data"
+      "$node_exe" - "$plan_file" "$config" "$data" "$target/src/redis-server" <<'JS'
+const fs=require('fs'),[file,config,data,exe]=process.argv.slice(2),p=JSON.parse(fs.readFileSync(file));if(!/^[a-f0-9]{72}$/.test(p.databasePassword))throw Error('Invalid Redis credential');
+const q=s=>'"'+s.replaceAll('\\','\\\\').replaceAll('"','\\"')+'"';
+fs.writeFileSync(config,'bind 127.0.0.1\nprotected-mode yes\nport '+p.port+'\nrequirepass '+p.databasePassword+'\nappendonly yes\nappendfsync everysec\ndir '+q(data)+'\ndaemonize no\n',{flag:'wx',mode:0o640});
+const unit=s=>q(s).replaceAll('%','%%');fs.writeFileSync('/etc/systemd/system/ManagerRedis.service','[Unit]\nDescription=Manager Redis\nAfter=network.target\n[Service]\nUser=manager-redis\nGroup=manager-redis\nExecStart='+unit(exe)+' '+unit(config)+'\nRestart=on-failure\nNoNewPrivileges=true\nTimeoutStopSec=90\n[Install]\nWantedBy=multi-user.target\n',{flag:'wx',mode:0o644});
+JS
+      chown root:manager-redis "$config"
+      created_unit=ManagerRedis.service;systemctl daemon-reload;systemctl enable --now "$created_unit"
+      "$node_exe" "$stage/initialize-remote-database.cjs" "$plan_file" initialize
+      systemctl restart "$created_unit"
+      "$node_exe" "$stage/initialize-remote-database.cjs" "$plan_file" verify
+      username=default
+      ;;
+    mongodb)
+      for existing in /var/lib/mongodb /var/lib/mongo /data/db; do
+        if [ -d "$existing" ] && [ -n "$(find "$existing" -mindepth 1 -maxdepth 1 -print -quit)" ]; then echo 'Existing MongoDB files were found. Choose Reuse.';exit 1;fi
+      done
+      if id manager-mongodb >/dev/null 2>&1 || [ -e /etc/systemd/system/ManagerMongoDB.service ]; then echo 'A MongoDB account or service already exists. Inspect it before continuing.';exit 1;fi
+      test "$manager" = apt || { echo 'Reuse an existing MongoDB installation on this distribution.';exit 1; }
+      install_package libcurl4 libgssapi-krb5-2
+      "$node_exe" "$stage/install-remote-tool.cjs" "$plan_file" "$target"
+      selected="$(cat "$target/executable.txt")"; "$selected" --version
+      useradd --system --no-create-home --shell /usr/sbin/nologin manager-mongodb
+      data="$target/data";config="$target/mongod.json";install -d -m 700 -o manager-mongodb -g manager-mongodb "$data" "$target/logs"
+      "$node_exe" - "$config" "$data" "$target/logs/mongodb.log" "$port" <<'JS'
+const fs=require('fs');const [file,data,log,port]=process.argv.slice(2);fs.writeFileSync(file,JSON.stringify({storage:{dbPath:data},systemLog:{destination:'file',path:log,logAppend:true},net:{bindIp:'127.0.0.1',port:Number(port)},security:{authorization:'enabled'}}),{flag:'wx',mode:0o644});
+JS
+      # Quote systemd paths and escape its percent specifiers. No shell executes
+      # the database command or its path.
+      "$node_exe" - "$selected" "$config" <<'JS'
+const fs=require('fs');const q=s=>'"'+s.replaceAll('\\','\\\\').replaceAll('"','\\"').replaceAll('%','%%')+'"';fs.writeFileSync('/etc/systemd/system/ManagerMongoDB.service','[Unit]\nDescription=Manager MongoDB\nAfter=network.target\n[Service]\nUser=manager-mongodb\nGroup=manager-mongodb\nExecStart='+q(process.argv[2])+' --config '+q(process.argv[3])+'\nRestart=on-failure\nNoNewPrivileges=true\n[Install]\nWantedBy=multi-user.target\n',{flag:'wx',mode:0o644});
+JS
+      created_unit=ManagerMongoDB.service;systemctl daemon-reload;systemctl enable --now "$created_unit"
+      "$node_exe" "$stage/initialize-remote-database.cjs" "$plan_file" initialize
+      systemctl restart "$created_unit"
+      "$node_exe" "$stage/initialize-remote-database.cjs" "$plan_file" verify
+      username=manager_provisioner
+      ;;
     postgresql)
       if [ "$manager" = apt ]; then
         install_package postgresql postgresql-client
@@ -108,7 +181,7 @@ else
       install_package "$package"
       command_name="$service"; [ "$service" != python ] || command_name=python3; selected="$(command -v "$command_name")"
       ;;
-    node|caddy|pm2)
+    node|caddy|pm2|sling|angular)
       "$node_exe" "$stage/install-remote-tool.cjs" "$plan_file" "$target"
       selected="$(cat "$target/executable.txt")"
       ;;
@@ -121,7 +194,9 @@ const fs=require('fs'),path=require('path');const [file,tool,exe]=process.argv.s
 JS
 changed_paths=1; chown -h manager-agent:manager-agent "$root/tool-paths.json"
 agent_node="$("$node_exe" -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).node' "$root/tool-paths.json")"
-runuser -u manager-agent -- "$agent_node" "$root/manager-agent.cjs" check-tools --root "$root"
+# The SSH user's home can be inaccessible to the service account. Node resolves
+# package metadata from cwd even for a read-only version check.
+(cd -- "$root"; runuser -u manager-agent -- "$agent_node" "$root/manager-agent.cjs" check-tools --root "$root")
 "$node_exe" - "$plan_file" "$receipt" "$selected" "$created_unit" "$config" "$data" "$username" <<'JS'
 const fs=require('fs');const [planFile,file,exe,serviceName,configPath,dataPath,username]=process.argv.slice(2),p=JSON.parse(fs.readFileSync(planFile));fs.writeFileSync(file,JSON.stringify({status:'success',operationId:p.operationId,service:p.service,mode:p.mode,path:exe,managed:p.mode==='install',serviceName,configPath,dataPath,host:'127.0.0.1',port:p.port,username,...(username?{password:p.databasePassword}:{})}),{mode:0o600});
 JS

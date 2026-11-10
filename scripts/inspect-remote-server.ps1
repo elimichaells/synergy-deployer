@@ -1,10 +1,11 @@
 $ErrorActionPreference = 'Stop'
+$env:PSModulePath=(Join-Path $PSHOME 'Modules')+';'+$env:PSModulePath
 $paths = '__MANAGER_PATHS__' | ConvertFrom-Json
-$ids = @('node','git','caddy','pm2','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer')
+$ids = @('node','git','caddy','pm2','psql','pg_dump','pg_restore','mysql','mariadb','go','php','python','composer','sling','ng','mongod','sqlcmd','redis')
 $tools = @{}
 $serviceRows = @()
 $processes = @(Get-Process node,caddy,php,python,python3 -ErrorAction SilentlyContinue | Where-Object { $_.Path } | Select-Object ProcessName,Path -Unique)
-$services = @(Get-CimInstance Win32_Service | Where-Object { $_.Name -match 'postgres|mysql|maria|caddy|mongo|redis|memurai' -or $_.DisplayName -match 'postgres|mysql|maria|caddy|mongo|redis|memurai' })
+$services = @(Get-CimInstance Win32_Service | Where-Object { $_.Name -match 'postgres|mysql|maria|caddy|mongo|redis|memurai|mssql' -or $_.DisplayName -match 'postgres|mysql|maria|caddy|mongo|redis|memurai|mssql' })
 foreach ($s in $services) {
   $exe = ''; $config = ''
   if ($s.PathName -match '^\s*"([^"]+)"') { $exe = $Matches[1] } elseif ($s.PathName -match '^\s*(.+?\.exe)(?:\s|$)') { $exe = $Matches[1] }
@@ -19,7 +20,7 @@ foreach ($s in $services) {
 foreach ($id in $ids) {
   $candidates = @()
   if ($paths.$id) { $candidates += [string]$paths.$id }
-  $command = Get-Command $(if($id -eq 'composer'){'composer.bat'}else{$id + '.exe'}) -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  $command = Get-Command $(if($id -eq 'composer'){'composer.bat'}elseif($id -eq 'ng'){'ng.cmd'}elseif($id -eq 'redis'){'memurai-cli.exe'}else{$id + '.exe'}) -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
   if ($command) { $candidates += $command.Source }
   $processNames = if ($id -eq 'python') { @('python','python3') } else { @($id) }
   $candidates += @($processes | Where-Object { $_.ProcessName -in $processNames } | ForEach-Object { $_.Path })
@@ -30,6 +31,9 @@ foreach ($id in $ids) {
     'caddy' { @('C:\Caddy\caddy.exe','C:\web\caddy.exe',"$env:ProgramData\chocolatey\bin\caddy.exe") }
     { $_ -in @('psql','pg_dump','pg_restore') } { @("$env:ProgramFiles\PostgreSQL\*\bin\$id.exe") }
     { $_ -in @('mysql','mariadb') } { @("$env:ProgramFiles\MySQL\*\bin\$id.exe", "$env:ProgramFiles\MariaDB*\bin\$id.exe", "C:\tools\mysql\current\bin\$id.exe") }
+    'mongod' { @("$env:ProgramFiles\MongoDB\Server\*\bin\mongod.exe") }
+    'redis' { @("$env:ProgramFiles\Memurai\memurai-cli.exe","$env:ProgramFiles\Redis\redis-cli.exe") }
+    'sqlcmd' { @("$env:ProgramFiles\Microsoft SQL Server\Client SDK\ODBC\*\Tools\Binn\SQLCMD.EXE","$env:ProgramFiles\sqlcmd\sqlcmd.exe") }
     'go' { @("$env:ProgramFiles\Go\bin\go.exe") }
     'php' { @('C:\tools\php*\php.exe','C:\php\php.exe') }
     'python' { @("$env:LOCALAPPDATA\Programs\Python\Python*\python.exe", "$env:ProgramFiles\Python*\python.exe") }
@@ -37,7 +41,7 @@ foreach ($id in $ids) {
   }
   foreach ($pattern in $patterns) { $candidates += @(Get-Item -Path $pattern -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer } | ForEach-Object { $_.FullName }) }
   foreach ($s in $serviceRows) {
-    if ($s.executable -and ($id -eq 'caddy' -or $id -in @('psql','pg_dump','pg_restore','mysql','mariadb'))) {
+    if ($s.executable -and ($id -eq 'caddy' -or $id -in @('psql','pg_dump','pg_restore','mysql','mariadb','mongod'))) {
       $candidate = Join-Path (Split-Path -Parent $s.executable) ($id + '.exe')
       if (Test-Path -LiteralPath $candidate -PathType Leaf) { $candidates += $candidate }
     }
@@ -52,9 +56,10 @@ foreach ($id in $ids) {
         if ($metadata.name -ne 'pm2') { throw 'Not a PM2 package' }
         $version = [string]$metadata.version
       } else {
-        $arg = if ($id -in @('go','caddy')) { 'version' } else { '--version' }
+        $arg = if($id -eq 'sqlcmd'){'-?'}elseif ($id -in @('go','caddy','ng')) { 'version' } else { '--version' }
         $info = New-Object Diagnostics.ProcessStartInfo
-        $info.FileName = $exe; $info.Arguments = $arg; if($id -eq 'composer' -and $exe -match '\.(bat|cmd)$'){$info.FileName=$env:ComSpec; $info.Arguments='/d /s /c ""'+$exe+'" --version"'}; $info.UseShellExecute = $false; $info.CreateNoWindow = $true
+        $info.EnvironmentVariables['FORCE_COLOR']='0';$info.EnvironmentVariables['NO_COLOR']='1';$info.EnvironmentVariables['NG_CLI_ANALYTICS']='false'
+        $info.FileName = $exe; $info.Arguments = $arg; if($id -in @('composer','ng') -and $exe -match '\.(bat|cmd)$'){$info.FileName=$env:ComSpec; $info.Arguments='/d /s /c ""'+$exe+'" '+$arg+'"'}; $info.UseShellExecute = $false; $info.CreateNoWindow = $true
         $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true
         $proc = New-Object Diagnostics.Process; $proc.StartInfo = $info
         try {
@@ -62,6 +67,8 @@ foreach ($id in $ids) {
           if (-not $proc.WaitForExit(5000)) { $proc.Kill(); throw 'Version check timed out' }
           if ($proc.ExitCode -ne 0) { throw 'Version check failed' }
           $version = (($stdout.Result + $stderr.Result) -split '[\r\n]+' | Where-Object { $_ } | Select-Object -First 1)
+          if($id -eq 'sqlcmd'){$match=[regex]::Match(($stdout.Result+$stderr.Result),'(?i)Version[: ]+v?(\d+\.\d+(?:\.\d+)*)');if(-not $match.Success -or ($stdout.Result+$stderr.Result) -notmatch 'sqlcmd|SQL Server Command Line Tool'){throw 'SQL Server client version check failed'};$version='sqlcmd version '+$match.Groups[1].Value}
+          if($id -eq 'ng'){$match=[regex]::Match(($stdout.Result+$stderr.Result),'Angular CLI\s*:\s*\d+\.\d+\.\d+');if(-not $match.Success){throw 'Angular CLI version check failed'};$version=$match.Value -replace '\s*:\s*',': '}
         } finally { $proc.Dispose() }
       }
     } catch { $problem = 'File missing, inaccessible, or version check failed' }

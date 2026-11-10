@@ -87,7 +87,7 @@ export function ProcessesWorkspace({serverId}:{serverId?:string}) {
   const [searchQuery, setSearchQuery] = useState('')
 
   const canControl = user?.role === 'admin' || user?.role === 'operator'
-  const canControlCaddy=canControl&&(!serverId||user?.role==='admin')
+  const canControlCaddy=canControl&&!!caddy&&caddy.mode!=='unknown'&&(!serverId||user?.role==='admin')
 
   const refresh = useCallback(async () => {
     setError(null)
@@ -102,9 +102,15 @@ export function ProcessesWorkspace({serverId}:{serverId?:string}) {
       setUser(meData.user)
 
       if (!servicesRes.ok) throw new Error('Failed to load services')
-      setServices(await servicesRes.json())
+      const serviceList=await servicesRes.json()
+      if(!Array.isArray(serviceList))throw new Error('The process inventory is unavailable')
+      setServices(serviceList)
 
-      if (caddyRes.ok) setCaddy(await caddyRes.json())
+      if (caddyRes.ok) {
+        const info=await caddyRes.json()
+        if(!['pm2','service','cli','unknown','shared'].includes(info?.mode)||typeof info.status!=='string')throw new Error('The proxy inventory is unavailable')
+        setCaddy(info)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data')
     } finally {
@@ -368,7 +374,7 @@ export function ProcessesWorkspace({serverId}:{serverId?:string}) {
             <div className="flex flex-col">
               <span className="font-bold text-sm">Caddy Server</span>
               <span className="text-[10px] font-mono text-muted-foreground">
-                {caddy?.mode !== 'unknown' ? `Mode: ${caddy?.mode}` : ''}{caddy?.version ? ` · ${caddy.version}` : ''}
+                {caddy && caddy.mode !== 'unknown' ? `Mode: ${caddy.mode}` : ''}{caddy?.version ? ` · ${caddy.version}` : ''}
               </span>
             </div>
 

@@ -1,4 +1,5 @@
 'use client'
+import {useStorageTransport} from '@/lib/storage-client'
 
 import { useEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
@@ -23,6 +24,7 @@ export type ScheduleTarget = { kind: 'service'; serviceId: string } | { kind: 'c
 /** Edit when a database is backed up and how many backups are kept. */
 export function ScheduleSheet({ target, initial, open, onOpenChange, onSaved }: { target: ScheduleTarget; initial: ScheduleValues | null; open: boolean; onOpenChange: (open: boolean) => void; onSaved: () => void }) {
   const [values, setValues] = useState<ScheduleValues>(initial || defaultSchedule)
+  const {fetch}=useStorageTransport()
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => { if (open) { setValues(initial || defaultSchedule); setError('') } }, [open, initial])

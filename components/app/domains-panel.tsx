@@ -9,23 +9,27 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { ChoiceCard, Section, roleLabels } from './section'
 import { cn } from '@/lib/utils'
 import { LanAccessFields } from './lan-access-fields'
+import { remoteAppHref } from '@/lib/remote-workspace'
 
-interface Domain { id: string; hostname: string; dns_status: string; ssl_status: string; record_type: string; record_content: string; is_primary: boolean; cloudflare_connection_id: string | null }
-interface Route { id: string; domain_id: string; hostname: string; domain_project_id: string; domain_project_name: string; project_id: string; project_name: string; component_role: string; path_prefix: string; strip_prefix: boolean }
+interface Domain { application_route?:boolean;last_error?:string;operation_status?:string;id: string; hostname: string; dns_status: string; ssl_status: string; record_type: string; record_content: string; is_primary: boolean; cloudflare_connection_id: string | null }
+interface Route { last_error?:string;operation_status?:string;deleting?:boolean;id: string; domain_id: string; hostname: string; domain_project_id: string; domain_project_name: string; project_id: string; project_name: string; component_role: string; path_prefix: string; strip_prefix: boolean }
 interface StackMember { id: string; name: string; component_role: string; environment: string }
 interface StackDomain { id: string; hostname: string; project_id: string }
 interface Stack { application_group_id: string | null; group_name: string | null; component_role: string; members: StackMember[]; domains: StackDomain[] }
 
 const statusTone = (value: string) => ['active', 'strict', 'manual'].includes(value) ? 'text-status-ready' : value === 'error' ? 'text-status-failed' : 'text-status-building'
 
-export function DomainsPanel({ projectId, projectName, port, environment, role, onChanged }: {
+export function DomainsPanel({ projectId, projectName, port, environment, role, onChanged, serverId }: {
   projectId: string
   projectName: string
   port: number | null
   environment: string
   role: 'admin' | 'operator' | 'viewer'
   onChanged?: () => void
+  serverId?: string
 }) {
+  const endpoint=serverId?`/api/servers/${serverId}/domains`:'/api/domains'
+  const relatedEndpoint=serverId?`/api/servers/${serverId}/apps/${projectId}/related`:`/api/sites/${projectId}/related`
   const [domains, setDomains] = useState<Domain[] | null>(null)
   const [routes, setRoutes] = useState<Route[]>([])
   const [stack, setStack] = useState<Stack | null>(null)
@@ -39,17 +43,19 @@ export function DomainsPanel({ projectId, projectName, port, environment, role, 
 
   const load = useCallback(async () => {
     const [domainRes, routeRes, stackRes, connectionRes] = await Promise.all([
-      fetch(`/api/domains?project=${projectId}`, { cache: 'no-store' }),
-      fetch(`/api/domains/routes?project=${projectId}`, { cache: 'no-store' }),
-      fetch(`/api/sites/${projectId}/related`, { cache: 'no-store' }),
+      fetch(`${endpoint}?project=${projectId}`, { cache: 'no-store' }),
+      fetch(`${endpoint}/routes?project=${projectId}`, { cache: 'no-store' }),
+      fetch(relatedEndpoint, { cache: 'no-store' }),
       fetch('/api/cloudflare/connections'),
     ])
     if (!domainRes.ok) throw new Error('Could not load domains')
     setDomains((await domainRes.json()).domains || [])
-    if (routeRes.ok) setRoutes((await routeRes.json()).routes || [])
-    if (stackRes.ok) setStack(await stackRes.json())
+    if(!routeRes.ok)throw Error((await routeRes.json()).error||'Could not load shared domain paths')
+    setRoutes((await routeRes.json()).routes || [])
+    if(!stackRes.ok)throw Error((await stackRes.json()).error||'Could not load related applications')
+    setStack(await stackRes.json())
     if (connectionRes.ok) setConnections((await connectionRes.json()).connections || [])
-  }, [projectId])
+  }, [projectId,endpoint,relatedEndpoint])
 
   useEffect(() => { void load().catch(err => setError(err.message)) }, [load])
 
@@ -71,25 +77,25 @@ export function DomainsPanel({ projectId, projectName, port, environment, role, 
   }
 
   const addDomain = () => act(async () => {
-    const response = await fetch('/api/domains', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...form, projectId }) })
+    const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...form, projectId }) })
     const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Domain could not be added')
     setAddOpen(false); setForm(current => ({ ...current, hostname: '' }))
   })
 
   const removeDomain = (domain: Domain) => act(async () => {
     if (!window.confirm(`Remove ${domain.hostname}? Traffic to it stops being served${domain.cloudflare_connection_id ? ' and its Cloudflare DNS record is deleted' : ''}.`)) return
-    const response = await fetch(`/api/domains/${domain.id}`, { method: 'DELETE' })
+    const response = await fetch(`${endpoint}/${domain.id}`, { method: 'DELETE' })
     const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.error || 'Domain could not be removed')
   })
 
   const addRoute = () => act(async () => {
-    const response = await fetch('/api/domains/routes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...route, domainId: route.domainId || siblingDomains[0]?.id, projectId }) })
+    const response = await fetch(`${endpoint}/routes`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...route, domainId: route.domainId || siblingDomains[0]?.id, projectId }) })
     const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Route could not be added')
   })
 
   const removeRoute = (item: Route) => act(async () => {
     if (!window.confirm(`Stop serving ${item.project_name} at ${item.hostname}${item.path_prefix}?`)) return
-    const response = await fetch(`/api/domains/routes/${item.id}`, { method: 'DELETE' })
+    const response = await fetch(`${endpoint}/routes/${item.id}`, { method: 'DELETE' })
     const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.error || 'Route could not be removed')
   })
 
@@ -126,16 +132,17 @@ export function DomainsPanel({ projectId, projectName, port, environment, role, 
                       <span>{domain.dns_status==='lan' ? 'Institution LAN · local CA' : domain.cloudflare_connection_id ? 'Cloudflare' : 'Manual DNS'}</span>
                       <span>DNS <span className={statusTone(domain.dns_status)}>{domain.dns_status}</span></span>
                       <span>TLS <span className={statusTone(domain.ssl_status)}>{domain.ssl_status}</span></span>
-                      {isAdmin && <button type="button" onClick={() => void removeDomain(domain)} disabled={busy} className="rounded p-1 hover:bg-white/[0.06] hover:text-red-300" aria-label={`Remove ${domain.hostname}`}><Trash2 className="h-3.5 w-3.5" /></button>}
+                      {isAdmin&&!domain.application_route && <button type="button" onClick={() => void removeDomain(domain)} disabled={busy} className="rounded p-1 hover:bg-white/[0.06] hover:text-red-300" aria-label={`Remove ${domain.hostname}`}><Trash2 className="h-3.5 w-3.5" /></button>}
                     </span>
                   </div>
-                  {domain.dns_status === 'manual' && <p className="mt-2 pl-7 text-xs text-muted-foreground">Point a <span className="font-mono">{domain.record_type}</span> record for <span className="font-mono">{domain.hostname}</span> to <span className="font-mono">{domain.record_content}</span> at your DNS provider.</p>}
+                  {domain.application_route?<p className="mt-2 pl-7 text-xs text-muted-foreground">Primary address configured during setup. Edit its configuration below, or add this address here to manage DNS and shared paths.</p>:domain.dns_status === 'manual' && <p className="mt-2 pl-7 text-xs text-muted-foreground">Point a <span className="font-mono">{domain.record_type}</span> record for <span className="font-mono">{domain.hostname}</span> to <span className="font-mono">{domain.record_content}</span> at your DNS provider.</p>}
+                  {serverId&&domain.last_error&&<div className="mt-2 pl-7 text-xs text-red-300"><p>{domain.last_error}</p><Button variant="outline" size="sm" disabled={busy||!isAdmin} onClick={()=>void act(async()=>{const r=await fetch(`${endpoint}/${domain.id}`,{method:'PATCH'}),body=await r.json();if(!r.ok)throw Error(body.error||'Sync failed')})}>Retry domain sync</Button></div>}
                   {outgoing(domain.id).map(item => (
                     <div key={item.id} className="mt-2 flex items-center gap-2 pl-7 text-xs text-muted-foreground">
                       <CornerDownRight className="h-3.5 w-3.5" />
                       <span className="font-mono text-foreground">{item.path_prefix}</span>
                       <ArrowRight className="h-3 w-3" />
-                      <Link href={`/sites/${item.project_id}?tab=domains`} className="hover:text-foreground hover:underline">{item.project_name}</Link>
+                      <Link href={serverId?remoteAppHref(serverId,item.project_id,'domains'):`/sites/${item.project_id}?tab=domains`} className="hover:text-foreground hover:underline">{item.project_name}</Link>
                       <span>({roleLabels[item.component_role] || item.component_role})</span>
                     </div>
                   ))}
@@ -158,6 +165,8 @@ export function DomainsPanel({ projectId, projectName, port, environment, role, 
                   <Globe2 className="h-4 w-4 text-muted-foreground" />
                   <a href={`https://${item.hostname}${item.path_prefix}`} target="_blank" rel="noreferrer" className="font-mono hover:underline">{item.hostname}<span className="text-syn-cyan">{item.path_prefix}</span></a>
                   <span className="text-xs text-muted-foreground">on {item.domain_project_name}{item.strip_prefix ? ` · ${item.path_prefix} removed before forwarding` : ''}</span>
+                  {serverId&&(item.last_error||item.operation_status!=='success')&&<span className="text-xs text-amber-300">{item.deleting?'Removal pending':item.operation_status==='running'||item.operation_status==='queued'?'Applying…':'Route needs verification'}</span>}
+                  {serverId&&item.last_error&&<Button size="sm" variant="outline" disabled={busy||!isAdmin} onClick={()=>void act(async()=>{const r=await fetch(`${endpoint}/${item.domain_id}`,{method:'PATCH'}),body=await r.json();if(!r.ok)throw Error(body.error||'Sync failed')})}>Retry route sync</Button>}
                   {isAdmin && <button type="button" onClick={() => void removeRoute(item)} disabled={busy} className="ml-auto rounded p-1 text-muted-foreground hover:bg-white/[0.06] hover:text-red-300" aria-label={`Remove route ${item.path_prefix}`}><Trash2 className="h-3.5 w-3.5" /></button>}
                 </div>
               ))}
@@ -195,7 +204,7 @@ export function DomainsPanel({ projectId, projectName, port, environment, role, 
               <ChoiceCard selected={form.mode === 'cloudflare'} onSelect={() => setForm({ ...form, mode: 'cloudflare' })} disabled={!connections.length} icon={<Cloud className="h-4 w-4" />} title="Let Synergy manage it in Cloudflare" description={connections.length ? 'Creates the DNS record for you.' : 'Connect a Cloudflare account in Domains first.'} />
             </div>
             {form.mode === 'cloudflare' && <label className="field-label">Cloudflare account<select required className="control-input" value={form.cloudflareConnectionId} onChange={event => setForm({ ...form, cloudflareConnectionId: event.target.value })}><option value="">Select account</option>{connections.map(connection => <option key={connection.id} value={connection.id}>{connection.name}</option>)}</select></label>}
-            {form.mode==='lan'?<LanAccessFields ip={form.lanIp} port={form.lanPort} onChange={value=>setForm({...form,...value})}/>:<div className="grid gap-4 sm:grid-cols-[110px_minmax(0,1fr)]">
+            {form.mode==='lan'?<LanAccessFields serverId={serverId} ip={form.lanIp} port={form.lanPort} onChange={value=>setForm({...form,...value})}/>:<div className="grid gap-4 sm:grid-cols-[110px_minmax(0,1fr)]">
               <label className="field-label">Record<select className="control-input" value={form.recordType} onChange={event => setForm({ ...form, recordType: event.target.value })}>{['A', 'AAAA', 'CNAME'].map(type => <option key={type}>{type}</option>)}</select></label>
               <label className="field-label">{form.recordType === 'CNAME' ? 'Points to hostname' : "This server's public IP"}<input required className="control-input font-mono" value={form.recordContent} onChange={event => setForm({ ...form, recordContent: event.target.value })} placeholder={form.recordType === 'CNAME' ? 'origin.example.com' : form.recordType === 'AAAA' ? '2001:db8::1' : '203.0.113.10'} /></label>
             </div>}

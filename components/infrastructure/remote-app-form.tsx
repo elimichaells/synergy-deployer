@@ -1,4 +1,5 @@
 'use client'
+import { DeploymentScript } from '@/components/app/deployment-script'
 import { RemoteAddressFields } from './remote-address-fields'
 
 import { RemoteRuntimeSelection } from './remote-runtime-selection'
@@ -18,6 +19,7 @@ export function RemoteAppForm({ serverId, platform, app, onSaved, onDirtyChange,
   const appId = app.id
   const [form, setForm] = useState({ runtime_versions:app.runtime_versions||{} as Record<string,string>,name: app?.name || '', repo_url: app?.repo_url || '', branch: app?.branch || 'main',
     install_cmd: app?.install_cmd ?? 'npm ci --include=dev', build_cmd: app?.build_cmd ?? 'npm run build', start_cmd: app?.start_cmd || 'npm start -- --hostname 127.0.0.1',
+    deploy_script:app?.deploy_script||'', pre_deploy_cmd:app?.pre_deploy_cmd||'',post_deploy_cmd:app?.post_deploy_cmd||'',
     port: String(app?.port || 3000), health_path: app?.health_path || '/', access_mode: app?.access_mode || 'lan', hostname: app?.hostname || '',
     ip_address: app?.ip_address || '', ip_port: String(app?.ip_port || 8443), git_connection_id: app?.git_connection_id || '' })
   const [environment, setEnvironment] = useState('')
@@ -48,7 +50,7 @@ export function RemoteAppForm({ serverId, platform, app, onSaved, onDirtyChange,
     try {
       if (section === 'environment' && !envLoaded) throw new Error('Wait for environment variables to load')
       const env = section === 'environment' ? parseEnvironmentText(environment) : undefined
-      const response = await fetch(`/api/servers/${serverId}/apps${app ? `/${app.id}` : ''}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...form, environment: env }) })
+      const response = await fetch(`/api/servers/${serverId}/apps${app ? `/${app.id}` : ''}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...form, health_path: app ? undefined : form.health_path, environment: env }) })
       const result = await response.json()
       if (!response.ok) throw new Error(result.error || 'Could not save application')
       initial.current = JSON.stringify(form); initialEnv.current = environment
@@ -78,9 +80,10 @@ export function RemoteAppForm({ serverId, platform, app, onSaved, onDirtyChange,
       <label className="text-sm sm:col-span-2">Repository URL<input type="url" required placeholder="https://github.com/organization/app" className={inputClass} value={form.repo_url} onChange={e => field('repo_url', e.target.value)} /></label>
       <label className="text-sm">Branch<input required className={inputClass} value={form.branch} onChange={e => field('branch', e.target.value)} /></label>
       <label className="text-sm">Command preset<select className={inputClass} defaultValue="" onChange={e => preset(e.target.value)}><option value="">Choose a preset…</option><option value="next">Next.js</option><option value="node">Node.js</option><option value="go">Go</option><option value="laravel">Laravel</option></select></label>
+      <div className="sm:col-span-2"><DeploymentScript value={form.deploy_script} onChange={value=>field('deploy_script',value)}/></div>
       {(['install_cmd','build_cmd','start_cmd'] as const).map((key,i) => <label key={key} className="text-sm sm:col-span-2">{['Install command','Build command','Start command'][i]}<input required={key === 'start_cmd'} className={`${inputClass} font-mono`} value={form[key]} onChange={e => field(key, e.target.value)} /></label>)}
       <label className="text-sm">Application port<input type="number" min={1024} max={65535} required className={inputClass} value={form.port} onChange={e => field('port', e.target.value)} /></label>
-      <label className="text-sm">Health check path<input required className={inputClass} value={form.health_path} onChange={e => field('health_path', e.target.value)} /><span className="mt-1 block text-xs text-muted-foreground">Must return HTTP 2xx without login or redirects.</span></label>
+      {!app && <label className="text-sm">Health check path<input required className={inputClass} value={form.health_path} onChange={e => field('health_path', e.target.value)} /><span className="mt-1 block text-xs text-muted-foreground">Uses the application readiness settings. The default accepts HTTP 2xx and local redirects.</span></label>}
     </div>
     </>}
     {section === 'domains' && <RemoteAddressFields value={form} serverId={serverId} onChange={value=>setForm(current=>({...current,...value}))}/>}

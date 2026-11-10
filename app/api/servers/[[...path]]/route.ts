@@ -6,7 +6,7 @@ import { getSessionFromCookie } from '@/lib/auth'
 import { requireRole } from '@/lib/rbac'
 import { ApiError, jsonError } from '@/lib/api'
 import { readBody, requireSameOrigin } from '@/lib/request-body'
-import { addServer, cancelQueuedJob, changeServer, listServers, queueRemoteDeploy, renameServer, saveRemoteApp, serverCertificate, serverDetail } from '@/lib/managed-servers'
+import { addServer, cancelQueuedJob, changeServer, listServers, queueRemoteDeploy, queueRemoteRollback, renameServer, saveRemoteApp, serverCertificate, serverDetail, remoteDeploymentHistory } from '@/lib/managed-servers'
 import { updateProtected } from '@/lib/update-maintenance'
 import { agentBundle } from '@/scripts/agent-bundle.cjs'
 import { importRemoteApp, remoteSetup, remoteSetupEnvironment, changeRemoteSetup } from '@/lib/remote-app-setup'
@@ -21,6 +21,7 @@ export async function GET(_request: Request, context: Context) {
     const user = await getSessionFromCookie()
     requireRole(user, ['admin','operator','viewer'])
     const parts = (await context.params).path || []
+    if (parts.length === 4 && parts[1] === 'apps' && parts[3] === 'removal') return (await import('@/lib/application-removal-route')).applicationRemovalRequest(_request, parts[0], parts[2])
     if (parts.length === 1 && parts[0] === 'agent-update-guide') {
       requireRole(user,['admin'])
       return new NextResponse(await readFile(path.join(process.cwd(),'docs/agent-updates.md'),'utf8'),{headers:{'Content-Type':'text/markdown; charset=utf-8','Content-Disposition':'attachment; filename="agent-updates.md"','Cache-Control':'no-store'}})
@@ -31,6 +32,7 @@ export async function GET(_request: Request, context: Context) {
       requireRole(user,['admin'])
       return NextResponse.json(await remoteSetupEnvironment(parts[0],parts[2]),{headers:{'Cache-Control':'no-store'}})
     }
+    if(parts.length===2&&parts[1]==='deployments'){const params=new URL(_request.url).searchParams;return NextResponse.json(await remoteDeploymentHistory(parts[0],{appId:params.get('app'),before:params.get('before'),groupId:params.get('group')}),{headers:{'Cache-Control':'no-store'}})}
     if (!parts.length) return NextResponse.json({ servers: await listServers(), role: user!.role, userId: user!.id, local: { hostname: os.hostname(), platform: process.platform } }, { headers: { 'Cache-Control': 'no-store' } })
     if (parts.length === 1 && ['agent','agent-supervisor'].includes(parts[0])) {
       requireRole(user, ['admin'])
@@ -43,9 +45,15 @@ export async function GET(_request: Request, context: Context) {
         'Content-Type': 'application/x-pem-file', 'Content-Disposition': `attachment; filename="manager-${parts[0]}-root-ca.crt"`, 'Cache-Control': 'no-store',
       } })
     }
-    if (parts.length === 1) return NextResponse.json({ ...await serverDetail(parts[0]), role: user!.role })
+    if (parts.length === 1) return NextResponse.json({ ...await serverDetail(parts[0],new URL(_request.url).searchParams.get('job')), role: user!.role })
     throw new ApiError('Not found', 404)
   } catch (error) { return jsonError(error) }
+}
+
+export async function DELETE(request: Request, context: Context) {
+  const parts = (await context.params).path || []
+  if (parts.length === 4 && parts[1] === 'apps' && parts[3] === 'removal') return (await import('@/lib/application-removal-route')).applicationRemovalRequest(request, parts[0], parts[2])
+  return NextResponse.json({ error: 'Not found' }, { status: 404 })
 }
 
 export async function PATCH(request: Request, context: Context) {
@@ -66,8 +74,9 @@ export async function POST(request: Request, context: Context) {
     requireSameOrigin(request)
     const parts = (await context.params).path || []
     const body = await readBody(request)
-    if (parts.length === 4 && parts[1] === 'apps' && parts[3] === 'deploy') return NextResponse.json(await queueRemoteDeploy(parts[0], parts[2], user!.id), { status: 202 })
-    if (parts.length === 4 && parts[1] === 'jobs' && parts[3] === 'cancel') return NextResponse.json(await cancelQueuedJob(parts[0],parts[2],user!.id))
+    if (parts.length === 4 && parts[1] === 'apps' && parts[3] === 'deploy') return NextResponse.json(await updateProtected('Remote deployment admission',()=>queueRemoteDeploy(parts[0], parts[2], user!.id)), { status: 202 })
+    if (parts.length === 4 && parts[1] === 'jobs' && parts[3] === 'rollback') return NextResponse.json(await updateProtected('Remote rollback admission',()=>queueRemoteRollback(parts[0],parts[2],user!.id)),{status:202})
+    if (parts.length === 4 && parts[1] === 'jobs' && parts[3] === 'cancel') return NextResponse.json(await updateProtected('Remote deployment cancellation',()=>cancelQueuedJob(parts[0],parts[2],user!.id)))
     requireRole(user, ['admin'])
     if (parts.length === 2 && parts[1] === 'agent-update') return NextResponse.json(body.action === 'cancel' ? await cancelAgentUpdate(parts[0],body.id,user!.id) : body.action === 'update' ? await queueAgentUpdate(parts[0],user!.id) : (() => { throw new ApiError('Unknown update action',400) })(),{status:body.action==='update'?202:200})
     if (parts.length === 3 && parts[1] === 'apps' && parts[2] === 'import') return NextResponse.json(await importRemoteApp(parts[0],body,user!.id),{status:201})

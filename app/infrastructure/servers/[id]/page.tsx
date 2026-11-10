@@ -1,4 +1,5 @@
 'use client'
+import { RemoteDeploymentHistory } from '@/components/infrastructure/remote-deployment-history'
 import { DomainsWorkspace } from '@/components/infrastructure/domains-workspace'
 import { RemoveServerDialog } from '@/components/infrastructure/remove-server-dialog'
 import { RenameServerDialog } from '@/components/infrastructure/rename-server-dialog'
@@ -16,7 +17,7 @@ import { RemoteDeployment } from '@/components/infrastructure/remote-deployment'
 import { RemoteServerHealth, RemoteProcesses } from '@/components/infrastructure/remote-server-health'
 import { RemoteRuntimes } from '@/components/infrastructure/remote-runtimes'
 import { RemoteConsole } from '@/components/infrastructure/remote-console'
-import { RemoteResources } from '@/components/infrastructure/remote-resources'
+import StorageWorkspace from '@/components/storage/storage-workspace'
 import { RemoteProjectWorkspace } from '@/components/infrastructure/remote-project-workspace'
 import { RemoteServerOverview } from '@/components/infrastructure/remote-server-overview'
 import { ServerEnrollment } from '@/components/infrastructure/server-enrollment'
@@ -57,6 +58,7 @@ function ManagedServerWorkspace({ id }: { id: string }) {
   const [formDirty, setFormDirty] = useState(false)
   const root = `/infrastructure/servers/${id}`
   const view = remoteWorkspaceView(hash)
+  const selectedDeploymentId=view==='deployments'?params.get('view'):null
   const [data, setData] = useState<Detail | null>(null)
   const [error, setError] = useState('')
   const [loadError, setLoadError] = useState('')
@@ -69,11 +71,11 @@ function ManagedServerWorkspace({ id }: { id: string }) {
   const load = useCallback(async () => {
     setNow(Date.now())
     try {
-      const response = await fetch(`/api/servers/${id}`, { cache: 'no-store' }); const result = await response.json()
+      const response = await fetch(`/api/servers/${id}${selectedDeploymentId?'?job='+encodeURIComponent(selectedDeploymentId):''}`, { cache: 'no-store' }); const result = await response.json()
       if (!response.ok || !result.server || result.server.id !== id) throw new Error(result.error || 'Could not load server')
       setData(result); setLoadError('')
     } catch (err) { setLoadError((err as Error).message) }
-  }, [id])
+  }, [id,selectedDeploymentId])
   useEffect(() => { void load(); const timer = setInterval(() => void load(), 10000); return () => clearInterval(timer) }, [load])
   useEffect(() => { setFormDirty(false); setRevoke(false) }, [hash])
   async function action(suffix: string, body: object = {}) {
@@ -83,6 +85,7 @@ function ManagedServerWorkspace({ id }: { id: string }) {
       const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Action failed')
       if (result.enrollmentToken) setEnrollment(result.enrollmentToken)
       await load(); setRevoke(false)
+      if(suffix.endsWith('/rollback')&&result.id)router.push(`/infrastructure/servers/${id}?view=${result.id}#deployments`)
       return true
     } catch (err) { setError((err as Error).message); return false } finally { setBusy(false) }
   }
@@ -151,14 +154,14 @@ function ManagedServerWorkspace({ id }: { id: string }) {
       {view === 'applications' && !projectId && <RemoteApplications canCreate={admin && server.enabled} now={now} server={server} apps={summary.apps} jobs={summary.jobs} fresh={summary.fresh} />}
       {project && <TabsContent value={projectTab} className="mt-0"><RemoteProjectWorkspace key={project.id} server={server} projectId={project.id} apps={projectApps} jobs={summary.jobs} tab={projectTab} preferredEnvironment={projectEnvironment} now={now} canWrite={admin} canDeploy={deployer} busy={busy} onDeploy={appId => { void action(`/apps/${appId}/deploy`).then(ok => { if (ok) router.push(remoteAppHref(id, appId, 'deployments')) }) }} /></TabsContent>}
       {projectId && !project && <div role="alert" className="notice-error">This project is no longer available on {server.name}. <Link href={`${root}#applications`} className="underline">View projects</Link></div>}
-      {view === 'storage' && <RemoteResources apps={summary.apps} mode="storage" />}
+      {view === 'storage' && <StorageWorkspace embedded/>}
       {view === 'domains' && <DomainsWorkspace key={server.id} serverId={server.id} />}
       {view === 'domains' && server.has_ca && <div className="rounded-xl border border-border bg-card p-5"><h2 className="text-sm font-semibold">LAN certificate trust</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">Distribute this server’s public root CA through your institution’s device policy or trust store. This enables trusted HTTPS for internal hostnames and IP access. Internal DNS must point each name to this server. The certificate is public; private keys stay on the server.</p><Button asChild variant="outline" size="sm" className="mt-3"><a href={`/api/servers/${id}/ca`}><Download className="mr-2 h-3.5 w-3.5" />Download root CA</a></Button></div>}
       {selected && <TabsContent value={appTab} className="mt-0"><RemoteApplicationWorkspace key={selected.id} server={server} app={selected} apps={summary.apps} jobs={summary.jobs} tab={appTab} now={now} fresh={summary.fresh} admin={admin} deployer={deployer}
         onTab={changeTab} onChanged={() => void load()} onDirtyChange={setFormDirty}
         onDeploy={async () => { if (await action(`/apps/${selected.id}/deploy`)) router.push(remoteAppHref(id, selected.id, 'deployments')) }} /></TabsContent>}
       {view === 'app' && !selected && <div className="notice-error">This application is no longer available on {server.name}. <Link href={`${root}#applications`} className="underline">View projects</Link></div>}
-      {view === 'deployments' && (openedJob ? <RemoteDeployment job={openedJob} apps={summary.apps} now={now} canCancel={deployer && server.enabled} busy={busy} onCancel={() => void action(`/jobs/${openedJob.id}/cancel`)} /> : params.get('view') ? <div className="notice-error">This deployment is not in this server’s recent history. <Link href={`${root}#deployments`} className="underline">View deployments</Link></div> : <><DeploymentHistory deployments={summary.jobs.map(job => remoteDeployment(job, summary.apps))} now={now} projectsHref={`${root}#applications`} /><p className="mt-3 text-xs text-muted-foreground">Latest 30 deployment records from this server.</p></>)}
+      {view === 'deployments' && (openedJob ? <RemoteDeployment role={admin ? "admin" : deployer ? "operator" : "viewer"} job={openedJob} apps={summary.apps} now={now} canCancel={deployer && server.enabled && (openedJob.status==='queued'||metrics?.capabilities?.includes('application-control-v1')===true)} canRollback={deployer && server.enabled && metrics?.capabilities?.includes('application-control-v1')===true} onRollback={() => void action(`/jobs/${openedJob.id}/rollback`)} busy={busy} onCancel={() => void action(`/jobs/${openedJob.id}/cancel`)} /> : params.get('view') ? <div className="notice-error">This deployment is unavailable on this server. <Link href={`${root}#deployments`} className="underline">View deployments</Link></div> : <><RemoteDeploymentHistory serverId={id} apps={summary.apps} initial={summary.jobs} now={now}/></>)}
       {view === 'new' && !admin && <div className="notice-error">An administrator can create applications on this server.</div>}
       {view === 'server-access' && infraSection === 'processes' && <RemoteProcesses server={server} apps={summary.apps} fresh={summary.fresh} />}
       {view === 'server-access' && infraSection === 'agent' && <section id="server-access" className="rounded-xl border border-border bg-card p-5"><h2 className="text-sm font-semibold">Agent access</h2><p className="mt-2 text-sm text-muted-foreground">{server.status === 'pending' ? 'Finish SSH setup above to connect this server.' : server.status === 'revoked' ? 'Agent access has been revoked.' : 'This server connects to Manager using its own agent credential.'}</p>{admin && server.enabled && <><Button asChild variant="outline" size="sm" className="mt-3 mr-2"><a href="/api/servers/agent" download="manager-agent.cjs">Download current agent</a></Button><p className="mt-2 text-xs text-muted-foreground">Use Agent updates above for supervised upgrades. Existing installations can follow the one-time supervisor guide while keeping their server enrollment and applications.</p>{!revoke ? <Button variant="outline" size="sm" className="mt-3" onClick={() => setRevoke(true)}>Revoke agent access…</Button> : <><p className="mt-2 text-sm leading-6 text-muted-foreground">This invalidates the agent credential and cancels its queued jobs. An operation already running may finish locally. Existing apps and Caddy continue running. This server cannot reconnect with its current credential.</p><div className="mt-3 flex gap-2"><Button disabled={busy} variant="destructive" onClick={() => void action('', { action: 'revoke' })}>Revoke access</Button><Button variant="outline" onClick={() => setRevoke(false)}>Keep connected</Button></div></>}</>}</section>}

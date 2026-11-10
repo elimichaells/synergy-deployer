@@ -21,7 +21,8 @@ test('remote pipeline only reports stages actually performed, including optional
   const stages = remotePipeline({ ...job, log: job.log.replace('[stage] build\n', '') });
   assert.equal(stages.find(s => s.key === 'build').state, 'skipped');
   assert.equal(stages.find(s => s.key === 'routing').state, 'done');
-  assert.ok(!stages.some(s => ['security','preflight'].includes(s.key)));
+  assert.equal(stages.find(s => s.key === 'security').state, 'skipped');
+  assert.ok(!stages.some(s => s.key === 'preflight'));
   const failed = remotePipeline({ ...job, status: 'failed', log: '[stage] checkout\n[stage] install\n[error] install failed' });
   assert.equal(failed.find(s => s.key === 'install').state, 'failed');
   assert.equal(failed.find(s => s.key === 'activate').state, 'pending');
@@ -35,6 +36,7 @@ test('overview excludes setup jobs, foreign apps, and stale process health', () 
   assert.deepEqual(summary.jobs.map(item => item.id), [job.id]);
   assert.equal(summary.running,1);
   assert.equal(remoteProcessState(server,app,false).label,'Unknown');
+  assert.equal(remoteProcessState({...server,metrics:{apps:[{id:appId,status:'online',check:{ok:false}}]}},app,true).label,'Unhealthy');
   assert.equal(remoteOverview(server,[app],[job],now+91000).running,null);
 });
 test('workspace restores remote tabs, import and resource pages without secrets', () => {

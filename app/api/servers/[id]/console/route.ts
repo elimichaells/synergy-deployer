@@ -8,8 +8,8 @@ import { updateProtected } from '@/lib/update-maintenance'
 export const dynamic='force-dynamic'
 type Context={params:Promise<{id:string}>}
 export async function GET(request:Request,context:Context){
-  try{requireRole(await getSessionFromCookie(),['admin']);return NextResponse.json(await remoteConsoleHistory((await context.params).id,new URL(request.url).searchParams.get('appId')),{headers:{'Cache-Control':'no-store'}})}catch(error){return jsonError(error)}
+  try{const appId=new URL(request.url).searchParams.get('appId');requireRole(await getSessionFromCookie(),appId?['admin','operator']:['admin']);return NextResponse.json(await remoteConsoleHistory((await context.params).id,appId),{headers:{'Cache-Control':'no-store'}})}catch(error){return jsonError(error)}
 }
 export async function POST(request:Request,context:Context){
-  try{const user=await getSessionFromCookie();requireRole(user,['admin']);requireSameOrigin(request);const body=await readBody(request,16000),id=(await context.params).id;return NextResponse.json(await updateProtected('Remote console admission',async()=>body.action==='cancel'?cancelRemoteConsole(id,body.id,user!.id):queueRemoteConsole(id,typeof body.appId==='string'?body.appId:null,body,user!.id)),{status:202})}catch(error){return jsonError(error)}
+  try{const user=await getSessionFromCookie();requireRole(user,['admin','operator']);requireSameOrigin(request);const body=await readBody(request,16000),id=(await context.params).id,appId=typeof body.appId==='string'?body.appId:null;requireRole(user,appId?['admin','operator']:['admin']);return NextResponse.json(await updateProtected('Remote console admission',async()=>body.action==='cancel'?cancelRemoteConsole(id,body.id,user!.id,appId):queueRemoteConsole(id,appId,body,user!.id)),{status:202})}catch(error){return jsonError(error)}
 }

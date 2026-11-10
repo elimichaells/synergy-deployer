@@ -1,0 +1,51 @@
+'use strict';
+const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),{randomUUID}=require('node:crypto');
+const storage=require('../scripts/remote-storage-agent.cjs'),agent=require('../scripts/manager-agent.cjs');
+test('read-only SQL cannot start a transaction or hide transaction control behind nested comments',()=>{
+  for(const sql of ['BEGIN','COMMIT','/* outer /* inner */ comment */ SET default_transaction_read_only=off','-- hi\nROLLBACK'])assert.throws(()=>storage.readStatement(sql),/read query/);
+  for(const sql of ['select 1','/* outer /* inner */ comment */ WITH x AS (SELECT 1) SELECT * FROM x','-- comment\nshow server_version'])assert.doesNotThrow(()=>storage.readStatement(sql));
+});
+test('the standalone agent browses PostgreSQL with bounded private results and creates only verified backups',{skip:!process.env.MANAGER_REMOTE_TEST_DATABASE_URL},async t=>{
+  const url=new URL(process.env.MANAGER_REMOTE_TEST_DATABASE_URL);assert.equal(url.hostname,'127.0.0.1');assert.match(url.pathname,/^\/manager_remote_test_/);
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'manager-storage-agent-test-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const filename=path.join(root,'agent.cjs');await fs.writeFile(filename,await require('../scripts/agent-bundle.cjs').agentBundle());const bundled=require(filename);
+  const connection={provider:'postgresql',host:url.hostname,port:Number(url.port),username:decodeURIComponent(url.username),password:decodeURIComponent(url.password),database:url.pathname.slice(1),tls:false};
+  const client=new (require('pg').Client)({...storage.connection(connection)});await client.connect();
+  const table='storage_'+randomUUID().replaceAll('-','');await client.query(`create table "${table}"(id int primary key,secret text)`);t.after(async()=>{try{await client.query(`drop table "${table}"`)}finally{await client.end()}});await client.query(`insert into "${table}" select n,'fixture private row' from generate_series(1,1100) n`);
+  const serviceId=randomUUID(),run=operation=>bundled.infrastructureJob(root,{payload:{action:'resource',resource:{action:'storage',serviceId,connection,...operation},expiresAt:Date.now()+60000}},{},()=>{});
+  const inventory=await run({operation:'inventory',connections:[{id:randomUUID(),connection},{id:randomUUID(),connection:{...connection,password:'invalid-isolated-password'}}]});
+  const listen=(await client.query('show listen_addresses')).rows[0].listen_addresses;
+  assert.equal(inventory.connections[0].ok,true);assert.equal(inventory.connections[0].localOnly,listen.split(',').every(value=>['localhost','127.0.0.1','::1',''].includes(value.trim())));assert.ok(inventory.connections[0].databases.some(d=>d.name===connection.database));assert.equal(inventory.connections[1].ok,false);assert.doesNotMatch(JSON.stringify(inventory),/invalid-isolated-password/);
+  const empty='empty_'+randomUUID().replaceAll('-',''),owner={username:'owner_'+randomUUID().replaceAll('-',''),password:randomUUID()+randomUUID()};
+  const created=await run({operation:'server-create',database:empty,owner});assert.equal(created.created,true);assert.ok(Number.isInteger(created.oid));
+  await assert.rejects(run({operation:'server-drop',database:empty,oid:created.oid+1}),/identity changed/);
+  const active=new(require('pg').Client)(storage.connection({...connection,database:empty,username:owner.username,password:owner.password}));await active.connect();
+  await assert.rejects(run({operation:'server-drop',database:empty,oid:created.oid}),/active clients/);await active.end();
+  await assert.rejects(run({operation:'server-drop',database:connection.database,oid:created.oid}),/cannot be removed/);
+  assert.equal((await run({operation:'server-drop',database:empty,oid:created.oid})).dropped,true);await client.query(`drop role "${owner.username}"`);
+  const tables=await run({operation:'tables'});assert.ok(tables.tables.some(item=>item.name===table));const rows=await run({operation:'rows',schema:'public',table,page:2,pageSize:10});assert.equal(rows.rows.length,10);assert.equal(rows.total,1100);
+  const result=await run({operation:'sql',sql:`select * from "${table}" order by id`});assert.equal(result.rows.length,1000);assert.equal(result.truncated,true);assert.equal(result.rowCount,1100);
+  await assert.rejects(run({operation:'sql',sql:`with gone as (delete from "${table}" returning *) select * from gone`}),/25006/);
+  await assert.rejects(run({operation:'sql',sql:`select 1; delete from "${table}"`}),/42601/);assert.equal((await client.query(`select count(*)::int as n from "${table}"`)).rows[0].n,1100);
+  const updated=await run({operation:'sql',allowWrites:true,sql:`update "${table}" set secret='changed' where id=1`});assert.equal(updated.rowCount,1);
+  await assert.rejects(run({operation:'sql',allowWrites:true,sql:`insert into "${table}" values(1,'fixture private row')`}),error=>/23505/.test(error.message)&&!error.message.includes('fixture private row'));
+  const bin=process.env.MANAGER_REMOTE_TEST_PG_BIN;if(bin){const suffix=process.platform==='win32'?'.exe':'';await agent.atomicJson(path.join(root,'tool-paths.json'),{pg_dump:path.join(bin,'pg_dump'+suffix),pg_restore:path.join(bin,'pg_restore'+suffix)});const backed=await run({operation:'backup'});assert.equal(backed.backups.length,1);assert.ok(backed.backups[0].sizeBytes>0);assert.equal((await run({operation:'backups'})).backups[0].file,backed.backups[0].file);
+    const target='restore_'+randomUUID().replaceAll('-','');
+    const restored=await run({operation:'restore',administrator:{...connection,database:'postgres'},file:backed.backups[0].file,targetDatabase:target});assert.equal(restored.sourcePreserved,true);
+    const restoredClient=new (require('pg').Client)(storage.connection({...connection,database:target}));await restoredClient.connect();try{assert.equal((await restoredClient.query(`select count(*)::int as n from "${table}"`)).rows[0].n,1100)}finally{await restoredClient.end()}
+    await assert.rejects(run({operation:'restore',administrator:{...connection,database:'postgres'},file:backed.backups[0].file,targetDatabase:target}),/already exists/);await client.query(`drop database "${target}"`);
+    await run({operation:'backup',retentionCount:1});assert.equal((await run({operation:'backups'})).backups.length,1);
+  }
+  const application={...connection,database:'created_'+randomUUID().replaceAll('-',''),username:'user_'+randomUUID().replaceAll('-',''),password:'Fixture secret '+randomUUID()},administrator={...connection,database:'postgres'};
+  await run({operation:'provision',connection:application,administrator});
+  const role=(await client.query('select rolsuper,rolcreatedb,rolcreaterole from pg_roles where rolname=$1',[application.username])).rows[0];assert.deepEqual(role,{rolsuper:false,rolcreatedb:false,rolcreaterole:false});
+  await assert.rejects(run({operation:'provision',connection:application,administrator}),/already exists/);
+  const newPassword='Replacement secret '+randomUUID();await run({operation:'rotate',connection:application,administrator,password:newPassword});await run({operation:'test',connection:{...application,password:newPassword}});
+  await assert.rejects(run({operation:'test',connection:application}),/28P01/);await assert.rejects(run({operation:'rotate',connection,administrator,password:newPassword}),/dedicated application account/);
+  const renameConnection={...application,password:newPassword},newName='renamed_'+randomUUID().replaceAll('-',''),operationId=randomUUID();
+  const held=new(require('pg').Client)(storage.connection(renameConnection));await held.connect();
+  const blocked=await run({operation:'rename-plan',connection:renameConnection,administrator,serverName:'Fixture',apps:[],review:'review'});assert.ok(blocked.plan.blockers.length);await assert.rejects(run({operation:'rename',connection:renameConnection,administrator,newName,operationId}),/active connections/);await held.end();
+  const renamed=await run({operation:'rename',connection:renameConnection,administrator,newName,operationId});assert.equal(renamed.renamed,true);assert.equal(renamed.database,newName);
+  const recovered=await run({operation:'rename-reconcile',connection:renameConnection,administrator,newName,operationId});assert.equal(recovered.renamed,true);assert.equal((await client.query('select 1 from pg_database where datname=$1',[application.database])).rowCount,0);
+  await client.query(`drop database "${newName}"`);await client.query(`drop role "${application.username}"`);
+});

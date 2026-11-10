@@ -108,7 +108,9 @@ async function harness(t, failure) {
   t.after(()=>fs.rm(root,{recursive:true,force:true}));
   const appId=randomUUID(),jobId=randomUUID(),commit='b'.repeat(40),events=[];
   const oldApp=fixture({id:appId,environment:{},hostname:'old.campus.example.edu'});
+  const priorRoot=path.join(root,'releases',appId,randomUUID());await fs.mkdir(priorRoot,{recursive:true});
   const prior={app:oldApp,ecosystem:path.join(root,'prior.config.js'),commit:'a'.repeat(40)};
+  await agent.atomicJson(path.join(root,'launch.json'),{cwd:priorRoot,env:{}});
   await agent.atomicJson(path.join(root,'apps.json'),{[appId]:prior});
   let processes=[{name:`manager-remote-${appId}`}];
   const tools={tools:{git:'git',caddy:'caddy'},pm:async args=>{
@@ -133,6 +135,92 @@ async function harness(t, failure) {
   return{root,job,journal,tools,dependencies,events,prior,commit,persist,log:text=>journal.log+=text};
 }
 
+async function auditedHarness(t, reports, gate) {
+  const h=await harness(t),run=h.dependencies.run;
+  h.job.payload.securityGate=gate||{off:false};
+  h.dependencies.run=async(file,args,options)=>{
+    if(file.startsWith('npm audit')){h.events.push(['audit']);return reports.length>1?reports.shift():reports[0];}
+    const result=await run(file,args,options);
+    if(file==='git'&&args[0]==='clone'){
+      await fs.writeFile(path.join(args.at(-1),'package.json'),'{}');
+      await fs.writeFile(path.join(args.at(-1),'package-lock.json'),'{}');
+    }
+    return result;
+  };
+  return h;
+}
+const auditReport=(high=0)=>({code:high?1:0,output:JSON.stringify({metadata:{vulnerabilities:{low:0,moderate:0,high,critical:0}},vulnerabilities:high?{unsafe:{severity:'high',via:[{url:'https://github.com/advisories/GHSA-test-test-test',title:'Fixture advisory'}]}}:{}})});
+test('remote security gates block before install and recheck the final build before activation',async t=>{
+  for(const reports of [[auditReport(1)],[auditReport(),auditReport(1)]]){
+    const h=await auditedHarness(t,reports);
+    await assert.rejects(agent.deploy(h.root,h.job,h.journal,h.tools,h.persist,h.log,h.dependencies),/Security gate blocked/);
+    assert.equal(h.journal.securityStatus,'failed');
+    assert.ok(!h.events.some(x=>x[0]==='pm'&&x[1]==='delete'));
+    assert.equal((await agent.readJson(path.join(h.root,'apps.json')))[h.job.payload.id].commit,h.prior.commit);
+    if(h.events.filter(x=>x[0]==='audit').length===1)assert.ok(!h.events.some(x=>x[1]==='npm ci'));
+  }
+});
+test('remote audits fail closed on invalid reports and expired overrides, and record accepted exceptions',async t=>{
+  for(const [report,gate] of [[{code:1,output:'not a report'},null],[auditReport(1),{off:true,until:'2000-01-01',reason:'An expired approval must not work'}]]){
+    const h=await auditedHarness(t,[report],gate);
+    await assert.rejects(agent.deploy(h.root,h.job,h.journal,h.tools,h.persist,h.log,h.dependencies),/Security/);
+  }
+  const h=await auditedHarness(t,[auditReport(1)]);
+  h.job.payload.auditExceptions=[{projectId:h.job.payload.id,package:'unsafe',advisory:'GHSA-test-test-test',expiresAt:'2099-01-01',reason:'Isolated exception test'}];
+  await agent.deploy(h.root,h.job,h.journal,h.tools,h.persist,h.log,h.dependencies);
+  assert.equal(h.journal.securityStatus,'passed');assert.match(h.journal.log,/EXCEPTION: unsafe/);
+});
+test('an explicit current one-deployment security override is visible in the release result',async t=>{
+  const h=await auditedHarness(t,[auditReport(1)],{off:true,once:true,reason:'Approved for isolated override testing'});
+  await agent.deploy(h.root,h.job,h.journal,h.tools,h.persist,h.log,h.dependencies);
+  assert.equal(h.journal.securityStatus,'overridden');assert.match(h.journal.log,/OVERRIDE:.*administrator/);
+});
+test('failed activation restores an intentionally stopped application without starting it',async t=>{
+  const h=await harness(t,'health'),pm=h.tools.pm;
+  h.tools.pm=async args=>args[0]==='jlist'?JSON.stringify([{name:`manager-remote-${h.job.payload.id}`,pm2_env:{status:'stopped'}}]):pm(args);
+  await assert.rejects(agent.deploy(h.root,h.job,h.journal,h.tools,h.persist,h.log,h.dependencies),/Health failed/);
+  assert.ok(!h.events.some(x=>x[0]==='pm'&&x[1]==='start'&&x[2]===h.prior.ecosystem));
+  assert.match(h.journal.log,/remains stopped/);
+});
+test('deployment preserves distinct environment files and comments while supplying managed runtime values',async t=>{
+  const h=await harness(t);h.job.payload.environmentFiles={'.env':'# base configuration\nVALUE=base\n','.env.local':'# local configuration\nVALUE=local\n'};h.job.payload.managedEnvironment={DATABASE_URL:'postgres://fixture:private@localhost/test'};
+  await agent.deploy(h.root,h.job,h.journal,h.tools,h.persist,h.log,h.dependencies);
+  const release=path.join(h.root,'releases',h.job.payload.id,h.job.id),base=await fs.readFile(path.join(release,'.env'),'utf8'),local=await fs.readFile(path.join(release,'.env.local'),'utf8');
+  assert.match(base,/# base configuration\nVALUE=base/);assert.match(local,/# local configuration\nVALUE=local/);assert.ok(!base.includes('VALUE=local'));assert.match(base,/PORT="3100"/);assert.match(local,/DATABASE_URL=/);
+  const saved=await agent.readJson(path.join(h.root,'apps.json'));assert.ok(!JSON.stringify(saved).includes('private@localhost'));
+});
+
+test('custom deployment scripts replace install and build, pass the branch and stop at the first failure',async t=>{
+  for(const failing of [false,true]){
+    const h=await harness(t),run=h.dependencies.run,commands=[];h.job.payload.deploy_script='# comment\necho $BRANCH\ncustom-build\nfinal-command';
+    h.dependencies.run=async(file,args,options)=>{if(file!=='git'){commands.push(file);assert.equal(options.env.BRANCH,'main');if(failing&&file==='custom-build')throw Error('Custom build failed');}return run(file,args,options);};
+    if(failing)await assert.rejects(agent.deploy(h.root,h.job,h.journal,h.tools,h.persist,h.log,h.dependencies),/Custom build failed/);else await agent.deploy(h.root,h.job,h.journal,h.tools,h.persist,h.log,h.dependencies);
+    assert.deepEqual(commands,[process.platform==='win32'?'echo %BRANCH%':'echo $BRANCH','custom-build',...(failing?[]:['final-command'])]);
+    if(failing)assert.ok(!h.events.some(e=>e[0]==='pm'&&e[1]==='delete'));else assert.match(h.journal.log,/\[stage\] security/);
+  }
+});
+
+test('staging promotion merges only its reviewed commit and pushes only after health and activation are committed',async t=>{
+  for(const failure of ['none','merge','push']){
+    const h=await harness(t),run=h.dependencies.run;h.job.payload.promotion={stagingId:randomUUID(),sourceCommit:'c'.repeat(40),branch:'staging',mode:'merge'};
+    h.dependencies.run=async(file,args,options)=>{
+      if(file==='git'&&args.includes('merge')){h.events.push(['merge',args.at(-1)]);if(failure==='merge')throw Error('Merge conflict');}
+      if(file==='git'&&args.includes('push')){assert.equal(h.journal.activation.accepted,true);assert.ok(h.events.some(e=>e[0]==='health'&&e[1]==='library.campus.example.edu'));assert.equal(args.at(-1),'HEAD:refs/heads/main');h.events.push(['push']);if(failure==='push')throw Error('Git rejected push');}
+      return run(file,args,options);
+    };
+    if(failure==='merge'){await assert.rejects(agent.deploy(h.root,h.job,h.journal,h.tools,h.persist,h.log,h.dependencies),/Merge conflict/);assert.ok(!h.events.some(e=>e[0]==='pm'&&e[1]==='delete'));}
+    else{await agent.deploy(h.root,h.job,h.journal,h.tools,h.persist,h.log,h.dependencies);assert.equal(h.journal.commitSha,h.commit);assert.ok(h.events.some(e=>e[0]==='push'));if(failure==='push')assert.match(h.journal.log,/WARNING: production is live/);}
+    assert.ok(h.events.some(e=>e[0]==='merge'&&e[1]==='c'.repeat(40)));
+  }
+});
+test('pre-deploy failure prevents activation and a post-deploy failure leaves the healthy release live',async t=>{
+  const h=await harness(t),run=h.dependencies.run;h.job.payload.pre_deploy_cmd='before-build';h.job.payload.post_deploy_cmd='after-deploy';
+  h.dependencies.run=async(file,args,options)=>{if(file==='before-build')throw Error('Before build failed');return run(file,args,options)};
+  await assert.rejects(agent.deploy(h.root,h.job,h.journal,h.tools,h.persist,h.log,h.dependencies),/Before build failed/);assert.ok(!h.events.some(e=>e[0]==='pm'&&e[1]==='delete'));
+  h.job.id=randomUUID();h.dependencies.run=async(file,args,options)=>{if(file==='after-deploy')throw Error('After deployment failed');return run(file,args,options)};
+  await agent.deploy(h.root,h.job,h.journal,h.tools,h.persist,h.log,h.dependencies);assert.match(h.journal.log,/activated release remains active/);assert.equal(JSON.parse(await fs.readFile(path.join(h.root,'apps.json'),'utf8'))[h.job.payload.id].commit,h.commit);
+});
+
 test('deployment builds separately, journals before activation, health-checks and then routes',async t=>{
   const h=await harness(t);
   assert.equal(await agent.deploy(h.root,h.job,h.journal,h.tools,h.persist,h.log,h.dependencies),h.commit);
@@ -143,6 +231,39 @@ test('deployment builds separately, journals before activation, health-checks an
   assert.ok(h.events.findIndex(x=>x[0]==='journal')<h.events.findIndex(x=>x[0]==='pm'&&x[1]==='delete'));
   assert.ok(h.events.findIndex(x=>x[0]==='health')<h.events.findIndex(x=>x[0]==='proxy'));
   await assert.rejects(agent.deploy(h.root,h.job,h.journal,h.tools,h.persist,h.log,h.dependencies),/refusing to replay/);
+});
+
+for(const failWorker of [false,true])test(`deployment migrates application data and worker release paths${failWorker?' and restores both on worker failure':''}`,async t=>{
+  const h=await harness(t),workerId=randomUUID(),stoppedId=randomUUID(),otherId=randomUUID();
+  const oldRoot=JSON.parse(await fs.readFile(path.join(h.root,'launch.json'),'utf8')).cwd;
+  await fs.mkdir(path.join(oldRoot,'uploads'));await fs.writeFile(path.join(oldRoot,'uploads','user.txt'),'kept');
+  const workers={};const processMap=new Map([[`manager-remote-${h.job.payload.id}`,{name:`manager-remote-${h.job.payload.id}`,pm2_env:{status:'online'}}]]);
+  for(const [id,running] of [[workerId,true],[stoppedId,false],[otherId,true]]){
+    const directory=path.join(h.root,'workers',id);await fs.mkdir(directory,{recursive:true});
+    const cwd=id===otherId?h.root:oldRoot,config={command:'node worker.js',workingDirectory:cwd,projectRoot:cwd,projectId:id===otherId?randomUUID():h.job.payload.id,enabled:true};workers[id]=config;
+    await agent.atomicJson(path.join(directory,'launch.json'),{command:config.command,cwd,env:{WORKER_SETTING:'old'}});
+    await fs.writeFile(path.join(directory,'ecosystem.config.js'),`module.exports=${JSON.stringify({apps:[{name:`manager-worker-${id}`,cwd}]})};`);
+    processMap.set(`manager-worker-${id}`,{name:`manager-worker-${id}`,pm2_env:{status:running?'online':'stopped'}});
+  }
+  await agent.atomicJson(path.join(h.root,'workers.json'),workers);
+  h.tools.pm=async args=>{
+    h.events.push(['pm',...args]);if(args[0]==='jlist')return JSON.stringify([...processMap.values()]);
+    if(args[0]==='delete')processMap.delete(args[1]);
+    if(args[0]==='start'){
+      if(args[1]===h.prior.ecosystem){processMap.set(`manager-remote-${h.job.payload.id}`,{name:`manager-remote-${h.job.payload.id}`,pm2_env:{status:'online'}});return '';}
+      const def=JSON.parse((await fs.readFile(args[1],'utf8')).replace(/^module.exports=/,'').replace(/;\s*$/,''));const p=def.apps[0];
+      if(failWorker&&p.name===`manager-worker-${workerId}`&&p.cwd!==oldRoot)throw Error('New worker failed');
+      processMap.set(p.name,{name:p.name,pm2_env:{status:'online',pm_cwd:p.cwd}});
+    }return '';
+  };
+  const health=h.dependencies.healthy;h.dependencies.healthy=async app=>{await health(app);if(app.hostname!=='old.campus.example.edu'){const candidate=path.join(h.root,'releases',app.id,h.job.id);assert.equal(await fs.readFile(path.join(candidate,'uploads/user.txt'),'utf8'),'kept');await fs.writeFile(path.join(candidate,'uploads/late.txt'),'late write');}};
+  if(failWorker)await assert.rejects(agent.deploy(h.root,h.job,h.journal,h.tools,h.persist,h.log,h.dependencies),/New worker failed/);
+  else await agent.deploy(h.root,h.job,h.journal,h.tools,h.persist,h.log,h.dependencies);
+  const expected=failWorker?oldRoot:path.join(h.root,'releases',h.job.payload.id,h.job.id);
+  assert.equal(await fs.readFile(path.join(expected,'uploads/late.txt'),'utf8'),'late write');
+  assert.equal(await fs.realpath(JSON.parse(await fs.readFile(path.join(h.root,'workers',workerId,'launch.json'),'utf8')).cwd),await fs.realpath(expected));
+  assert.equal(processMap.get(`manager-worker-${workerId}`).pm2_env.status,'online');assert.ok(!processMap.has(`manager-worker-${stoppedId}`));
+  assert.equal(processMap.get(`manager-worker-${otherId}`).pm2_env.status,'online');assert.ok(!h.events.some(e=>e[0]==='pm'&&e[1]==='delete'&&e[2]===`manager-worker-${otherId}`));
 });
 
 for(const stage of ['build','health','proxy'])test(`${stage} failure preserves or restores prior release and routing`,async t=>{
@@ -160,4 +281,37 @@ test('startup recovery restores the journaled release without executing a build'
   await agent.restoreActivation(h.root,h.journal,h.tools,h.log,h.dependencies);
   assert.ok(!h.events.some(x=>x[0]==='command'));
   assert.ok(h.events.some(x=>x[0]==='health'));
+});
+
+for(const phase of ['build','health','routing'])test(`deployment cancellation during ${phase} preserves the prior release`,async t=>{
+  const h=await harness(t),control=new AbortController(),original={...h.dependencies};
+  h.dependencies.signal=control.signal;
+  if(phase==='build')h.dependencies.run=async(...args)=>{const result=await original.run(...args);if(args[0]==='npm run build')control.abort();return result};
+  if(phase==='health')h.dependencies.healthy=async app=>{await original.healthy(app);if(app.hostname!=='old.campus.example.edu')control.abort()};
+  if(phase==='routing')h.dependencies.proxyConfig=async(...args)=>{await original.proxyConfig(...args);if(args[1].includes('https://library.'))control.abort()};
+  await assert.rejects(agent.deploy(h.root,h.job,h.journal,h.tools,h.persist,h.log,h.dependencies),/cancelled/);
+  assert.equal((await agent.readJson(path.join(h.root,'apps.json')))[h.job.payload.id].commit,h.prior.commit);
+  if(phase==='build')assert.ok(!h.events.some(e=>e[0]==='pm'&&e[1]==='delete'));
+  else assert.ok(h.events.some(e=>e[0]==='pm'&&e[1]==='start'&&e[2]===h.prior.ecosystem));
+});
+
+test('cancellation reports recovery failure when the previous release cannot be restored',async t=>{
+  const h=await harness(t),control=new AbortController();h.dependencies.signal=control.signal;
+  h.dependencies.healthy=async app=>{if(app.hostname==='old.campus.example.edu')throw Error('Previous readiness failed');control.abort()};
+  await assert.rejects(agent.deploy(h.root,h.job,h.journal,h.tools,h.persist,h.log,h.dependencies),e=>e.recoveryFailed===true);assert.match(h.journal.log,/rollback failed/);
+});
+
+test('manual rollback fetches and verifies the recorded commit before building',async t=>{
+  const h=await harness(t),commands=[],original=h.dependencies.run;h.job.payload.commitSha=h.commit;
+  h.dependencies.run=async(...args)=>{commands.push(args.slice(0,2));return original(...args)};
+  await agent.deploy(h.root,h.job,h.journal,h.tools,h.persist,h.log,h.dependencies);
+  assert.ok(commands.some(([exe,args])=>exe==='git'&&args.includes('--no-checkout')));
+  assert.ok(commands.some(([exe,args])=>exe==='git'&&args.includes('fetch')&&args.at(-1)===h.commit));
+  assert.ok(commands.some(([exe,args])=>exe==='git'&&args.includes('--detach')&&args.at(-1)===h.commit));
+  assert.match(h.journal.log,/Database contents are not rolled back/);
+});
+test('a mismatched rollback checkout never reaches installation or activation',async t=>{
+  const h=await harness(t);h.job.payload.commitSha='c'.repeat(40);
+  await assert.rejects(agent.deploy(h.root,h.job,h.journal,h.tools,h.persist,h.log,h.dependencies),/does not match/);
+  assert.ok(!h.events.some(e=>e[0]==='pm'||e[0]==='command'&&e[1]!=='git'));
 });

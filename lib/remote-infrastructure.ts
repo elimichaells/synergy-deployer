@@ -3,7 +3,7 @@ import { parseLanAddress } from '../scripts/lan-address.cjs'
 import { audit } from './audit'
 import { db,query } from './db'
 import { ensureManagedServers,serverDetail,uuid } from './managed-servers'
-import { encryptSecret } from './secret-crypto'
+import { encryptSecret,decryptSecret } from './secret-crypto'
 import { INFRASTRUCTURE_CAPABILITY, LAN_CAPABILITY, validateLanSelection } from '@/scripts/manager-agent.cjs'
 
 export async function remoteProcesses(serverId:string) {
@@ -12,12 +12,14 @@ export async function remoteProcesses(serverId:string) {
 }
 export async function remoteInfrastructureJob(serverId:string,jobId:string,admin:boolean) {
   await ensureManagedServers();uuid(serverId);uuid(jobId)
-  const job=(await query("select id,app_id,status,log,result,resource_action from remote_jobs where server_id=$1 and id=$2 and operation_type='infrastructure'",[serverId,jobId])).rows[0]
+  const job=(await query("select id,app_id,status,log,result,result_private_ciphertext,resource_action from remote_jobs where server_id=$1 and id=$2 and operation_type='infrastructure'",[serverId,jobId])).rows[0]
   if(!job||!admin&&!job.app_id&&!['worker-save','worker-start','worker-stop','worker-restart','worker-delete','worker-logs','cron-run','database-inspect'].includes(job.resource_action))throw new ApiError('Operation not found',404)
   if(job.resource_action==='database-inspect'&&job.result)job.result=(await import('./remote-databases')).decorateDatabaseResult(job.result,admin)
+  if(job.result_private_ciphertext){if(!admin)throw new ApiError('Operation not found',404);job.result=JSON.parse(decryptSecret(job.result_private_ciphertext))}
+  delete job.result_private_ciphertext
   return {job}
 }
-export async function queueInfrastructure(serverId:string,appId:string|null,action:unknown,userId:string,domain?:{id:string;hostname:string;remove:boolean;restoreHostname?:string;restoreAccessMode?:string}) {
+export async function queueInfrastructure(serverId:string,appId:string|null,action:unknown,userId:string,domain?:{id:string;hostname:string;remove:boolean;restoreHostname?:string;restoreAccessMode?:string;routes?:{id:string;appId:string;prefix:string;stripPrefix:boolean}[]}) {
   await ensureManagedServers();uuid(serverId);if(appId)uuid(appId)
   if(typeof action!=='string'||!(appId?['start','stop','restart','domain']:['start','stop','restart','reload','validate','read-config']).includes(action))throw new ApiError('Unknown operation',400)
   const client=await db.connect();let id:string
@@ -26,11 +28,13 @@ export async function queueInfrastructure(serverId:string,appId:string|null,acti
     const server=(await client.query('select * from managed_servers where id=$1 for update',[serverId])).rows[0]
     if(!server?.enabled||!server.last_seen_at||Date.now()-Date.parse(server.last_seen_at)>90000)throw new ApiError('Connect this server before controlling processes',409)
     if(!server.metrics?.capabilities?.includes(INFRASTRUCTURE_CAPABILITY))throw new ApiError('Update this server’s agent to enable infrastructure controls',409)
+    if((await client.query("select 1 from remote_storage_changes where server_id=$1 and status in ('running','needs_review')",[serverId])).rowCount)throw new ApiError('Verify the pending database change in Storage before controlling processes',409)
     if(appId&&!(await client.query('select 1 from remote_apps where server_id=$1 and id=$2 and live_commit is not null',[serverId,appId])).rowCount)throw new ApiError('Deploy this application before controlling its process',409)
     if(!appId&&server.metrics.caddy?.mode==='shared'&&['start','stop','restart'].includes(action))throw new ApiError('Shared Caddy serves existing sites. Use Reload Config to update only managed routes.',409)
     if((await client.query("select 1 from remote_jobs where server_id=$1 and status in ('queued','running') union all select 1 from remote_service_operations where server_id=$1 and status in ('running','interrupted') union all select 1 from remote_agent_updates where server_id=$1 and status in ('queued','installing','recovery_required')",[serverId])).rowCount)throw new ApiError('Wait for the current server operation to finish',409)
     if(domain)try{validateLanSelection(domain.hostname,server.metrics)}catch(error){throw new ApiError((error as Error).message,409)}
-    const payload={id:appId,action,domain,expiresAt:Date.now()+60000,requiredCapability:parseLanAddress(domain?.hostname)?LAN_CAPABILITY:INFRASTRUCTURE_CAPABILITY}
+    if(domain?.routes!==undefined&&!server.metrics?.capabilities?.includes('application-control-v1'))throw new ApiError('Update the agent to enable shared domain controls',409)
+    const payload={id:appId,action,domain,expiresAt:Date.now()+60000,requiredCapability:domain?.routes!==undefined?'application-control-v1':parseLanAddress(domain?.hostname)?LAN_CAPABILITY:INFRASTRUCTURE_CAPABILITY}
     id=(await client.query("insert into remote_jobs(server_id,app_id,user_id,kind,operation_type,payload_ciphertext) values($1,$2,$3,'console','infrastructure',$4) returning id",[serverId,appId,userId,encryptSecret(JSON.stringify(payload))])).rows[0].id
     await client.query('commit')
   }catch(error){await client.query('rollback');throw error}finally{client.release()}

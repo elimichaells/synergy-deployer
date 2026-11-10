@@ -58,20 +58,22 @@ export function WakeButton({ projectId, disabled, onWoken, serverId }: { project
   )
 }
 
-function useSleepState(projectId: string) {
+function useSleepState(projectId: string, serverId?: string) {
   const [sleep, setSleep] = useState<SleepState | null>(null)
+  const [error,setError]=useState('')
   const load = useCallback(() => {
-    void fetch(`/api/sites/${projectId}/sleep`, { cache: 'no-store' }).then(response => response.ok ? response.json() : null)
-      .then(body => { if (body) setSleep(body.sleep) }).catch(() => {})
-  }, [projectId])
+    void scopedInfrastructureFetch(serverId, `/api/sites/${projectId}/sleep`, { cache: 'no-store' }).then(async response => {const body=await response.json();if(!response.ok)throw Error(body.error||'Could not read staging sleep');return body})
+      .then(body => { setSleep(body.sleep);setError('') }).catch(e => setError((e as Error).message))
+  }, [projectId, serverId])
   useEffect(load, [load])
-  return { sleep, load, setSleep }
+  return { sleep, load, setSleep, error }
 }
 
 /** Settings control for a staging app. */
-export function StagingSleepSetting({ projectId, canWrite }: { projectId: string; canWrite: boolean }) {
-  const { sleep, load } = useSleepState(projectId)
+export function StagingSleepSetting({ projectId, canWrite, serverId }: { projectId: string; canWrite: boolean; serverId?: string }) {
+  const { sleep, load, error } = useSleepState(projectId, serverId)
   const [warning, setWarning] = useState<string | null>(null)
+  if (error) return <p role="alert" className="notice-error">{error}</p>
   if (!sleep) return <div className="h-16 animate-pulse rounded-lg border border-border" />
   return (
     <div className="space-y-3">
@@ -84,8 +86,8 @@ export function StagingSleepSetting({ projectId, canWrite }: { projectId: string
           </span>
         </span>
         <span className="flex items-center gap-2">
-          {sleep.sleeping_since && canWrite && <WakeButton projectId={projectId} onWoken={load} />}
-          <SleepSelect projectId={projectId} minutes={sleep.sleep_after_minutes} disabled={!canWrite} onChanged={(_, caddyWarning) => { setWarning(caddyWarning); load() }} />
+          {sleep.sleeping_since && canWrite && <WakeButton projectId={projectId} serverId={serverId} onWoken={load} />}
+          <SleepSelect projectId={projectId} serverId={serverId} minutes={sleep.sleep_after_minutes} disabled={!canWrite} onChanged={(_, caddyWarning) => { setWarning(caddyWarning); load() }} />
         </span>
       </div>
       {warning && <p role="alert" className="text-xs text-amber-200">{warning}</p>}

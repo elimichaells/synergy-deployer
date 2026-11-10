@@ -6,7 +6,7 @@ import { ServerHealthBanner } from '@/components/server-health'
 import { SynergyMark } from '@/components/synergy/brand'
 import { CommandMenu } from '@/components/synergy/command-menu'
 import { isNavActive, workspaceInfrastructureItems, workspaceNavItems } from '@/components/synergy/nav'
-import { serverScope } from '@/lib/server-navigation'
+import { serverScope,serverOverview } from '@/lib/server-navigation'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { ChevronLeft, LogOut, Plus, Search, Server } from 'lucide-react'
 import Link from 'next/link'
@@ -47,8 +47,8 @@ export function AppShell(props: AppShellProps) {
 function WorkspaceShell({ children, title, subtitle, user, actions, back, headerExtra, tabs, area, infrastructureSection, workspace, unsavedChanges = false, onWorkspaceHashChange }: AppShellProps) {
   const pathname = usePathname()
   const infrastructureItems = workspaceInfrastructureItems(pathname)
-  const infrastructureOverview = serverScope(pathname).kind === 'remote' ? `${pathname}#server-access` : '/infrastructure'
   const scope = serverScope(pathname)
+  const infrastructureOverview = scope.kind === 'remote' ? `${serverOverview(scope.id)}#server-access` : '/infrastructure'
   const router = useRouter()
   const { clear, setUnsaved } = useWorkspace()
   useEffect(() => { setUnsaved(unsavedChanges); return () => setUnsaved(false) }, [unsavedChanges, setUnsaved])
@@ -138,8 +138,8 @@ function WorkspaceShell({ children, title, subtitle, user, actions, back, header
           <div className="scrollbar-none flex overflow-x-auto">
             {workspaceNavItems(pathname).map(item => {
               const section = item.href.includes('#') ? '#' + item.href.split('#')[1] : ''
-              const activeSection = hash.startsWith('#app-') || hash === '#new' ? '#applications' : hash === '#domains' ? '#server-access' : hash
-              const active = section ? activeSection === section : isNavActive(pathname, item.matches) && !(scope.kind === 'remote' && ['#applications', '#deployments', '#server-access', '#storage'].includes(activeSection))
+              const activeSection = scope.kind==='remote'&&pathname.startsWith(`${serverOverview(scope.id)}/storage`)?'#storage':hash.startsWith('#app-') || hash === '#new' ? '#applications' : hash === '#domains' ? '#server-access' : hash
+              const active = section ? activeSection === section : isNavActive(pathname, item.matches) && !(scope.kind === 'remote'&&item.href===serverOverview(scope.id) && ['#applications', '#deployments', '#server-access', '#storage'].includes(activeSection))
               return (
                 <Link key={item.href} href={item.href} aria-current={active ? 'page' : undefined}
                   className={`group relative shrink-0 px-1 pb-2.5 pt-1 text-[13px] transition-colors ${active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>

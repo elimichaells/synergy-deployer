@@ -1,3 +1,4 @@
+import {readBody,requireSameOrigin} from '@/lib/request-body'
 import { NextResponse } from 'next/server'
 import { ApiError, jsonError } from '@/lib/api'
 import { getSessionFromCookie } from '@/lib/auth'
@@ -16,10 +17,10 @@ export async function GET(_: Request, context: { params: Promise<{ id: string }>
   } catch (error) { return jsonError(error) }
 }
 
-export async function DELETE(_: Request, context: { params: Promise<{ id: string }> }) {
+export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const user = await getSessionFromCookie()
-    requireRole(user, ['admin'])
+    requireRole(user, ['admin']); requireSameOrigin(request)
     const id = (await context.params).id
     const job = await deleteDataMigration(id)
     await audit(user?.id, 'data.migration.delete', job.project_id, { migrationId: id, sourceServiceId: job.source_service_id, targetServiceId: job.target_service_id, status: job.status })

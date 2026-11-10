@@ -1,3 +1,4 @@
+import {readBody,requireSameOrigin} from '@/lib/request-body'
 import { NextResponse } from 'next/server'
 import { audit } from '@/lib/audit'
 import { jsonError } from '@/lib/api'
@@ -17,8 +18,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const user = await getSessionFromCookie()
-    requireRole(user, ['admin'])
-    const migration = await startDataMigration(await request.json(), user?.id)
+    requireRole(user, ['admin']); requireSameOrigin(request)
+    const migration = await startDataMigration(await readBody(request,100000), user?.id)
     await audit(user?.id, 'data.migration.start', migration?.id || '', { source: migration?.source_service_id, target: migration?.target_service_id })
     return NextResponse.json({ migration }, { status: 202 })
   } catch (error) { return jsonError(error) }

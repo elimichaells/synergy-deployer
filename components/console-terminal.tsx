@@ -12,7 +12,7 @@ export function ConsoleTerminal({title,cwd,command,onCommand,output,outputText,r
         if(e.ctrlKey&&e.key.toLowerCase()==='c'&&running){e.preventDefault();onStop()}
         else if(e.ctrlKey&&e.key.toLowerCase()==='l'){e.preventDefault();onClear()}
         else if(e.ctrlKey&&e.key.toLowerCase()==='u'||e.key==='Escape'){e.preventDefault();onCommand('')}
-        else if(e.key==='Tab'&&!running&&onComplete){e.preventDefault();onComplete()}
+        else if(e.key==='Tab'&&!running&&!disabled&&onComplete){e.preventDefault();onComplete()}
         else if((e.key==='ArrowUp'||e.key==='ArrowDown')&&onHistory){e.preventDefault();onHistory(e.key==='ArrowUp'?'up':'down')}
         else if(e.key==='Enter'&&!running&&!disabled&&command.trim()){e.preventDefault();onRun()}
       }}/>{running&&<button onClick={e=>{e.stopPropagation();onStop()}} className="mt-0.5 flex shrink-0 items-center gap-1.5 rounded-md bg-red-500/15 px-2.5 py-1 text-xs leading-5 text-red-300"><Square className="h-3 w-3"/>Stop</button>}</div>

@@ -1,3 +1,4 @@
+import {requireSameOrigin,readBody} from '@/lib/request-body'
 import { NextResponse } from 'next/server'
 import { readFile, readdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
@@ -44,10 +45,11 @@ export async function POST(request: Request, context: Context) {
   try {
     const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator'])
-    const body = await request.json()
+    requireSameOrigin(request)
+    const body = await readBody(request,16000)
     const invalid = validateConsoleCommand(body?.command)
     if (invalid) throw new ApiError(invalid, 400)
-    const command = body.command.trim() as string
+    const command = (body.command as string).trim()
     const id = (await context.params).id
     const app = await project(id)
     if (!existsSync(app.root_path)) throw new ApiError('Prepare the repository in Setup first', 409)

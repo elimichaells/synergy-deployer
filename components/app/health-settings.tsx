@@ -1,8 +1,9 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { scopedInfrastructureFetch } from '@/lib/infrastructure-client'
 
-export function ApplicationHealth({ id, canWrite }: { id: string; canWrite: boolean }) {
+export function ApplicationHealth({ id, canWrite, serverId }: { id: string; canWrite: boolean; serverId?: string }) {
   const [path, setPath] = useState('/')
   const [statuses, setStatuses] = useState('')
   const [timeout, setTimeoutSeconds] = useState(60)
@@ -13,7 +14,7 @@ export function ApplicationHealth({ id, canWrite }: { id: string; canWrite: bool
   const [loaded, setLoaded] = useState(false)
   useEffect(() => {
     let stopped = false
-    void fetch('/api/sites/' + id + '/health', { cache: 'no-store' }).then(async r => {
+    void scopedInfrastructureFetch(serverId, '/api/sites/' + id + '/health', { cache: 'no-store' }).then(async r => {
       if (!r.ok) throw new Error('Health settings could not be loaded')
       const data = await r.json()
       if (stopped) return
@@ -22,11 +23,11 @@ export function ApplicationHealth({ id, canWrite }: { id: string; canWrite: bool
       setChecked(data.checkedAt); setLoaded(true)
     }).catch(error => { if (!stopped) { setState('Unknown'); setMessage(error.message) } })
     return () => { stopped = true }
-  }, [id])
+  }, [id, serverId])
   async function save() {
     setBusy(true); setMessage('')
     try {
-      const response = await fetch('/api/sites/' + id + '/health', { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      const response = await scopedInfrastructureFetch(serverId, '/api/sites/' + id + '/health', { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path, statuses: statuses.trim() ? statuses.split(',').map(x => Number(x.trim())) : [], timeoutMs: timeout * 1000 }) })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Could not save health settings')

@@ -41,6 +41,7 @@ async function snapshot(client: PoolClient, id: string): Promise<ServerRemovalRe
   const domains = tables.domains ? (await client.query('select id,hostname from remote_domains where server_id=$1 order by id', [id])).rows : []
   const domainBusy = tables.leases && (await client.query('select 1 from remote_domain_operations where server_id=$1 and expires_at>now()', [id])).rowCount
   const blockers: string[] = []
+  if((await client.query("select 1 from remote_storage_changes where server_id=$1 and status in ('running','needs_review')",[id])).rowCount)blockers.push('Verify the pending database change in Storage before removing its records and recovery credentials.')
   if (jobs.some(job => job.status === 'running')) blockers.push('A deployment, console command or infrastructure operation is running. Wait for its result. If the agent is unreachable, inspect the server before revoking its access.')
   if (updates.some(update => ['installing', 'recovery_required'].includes(update.status))) blockers.push('An agent update is installing or needs recovery. Resolve it in Agent access & updates first.')
   if (services.some(service => ['running', 'interrupted'].includes(service.status))) blockers.push('A service installation is running or needs recovery. Recover its status in Runtimes & tools before removing its records and credentials.')

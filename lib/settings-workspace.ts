@@ -3,8 +3,8 @@ export const SETTINGS_SECTIONS = [
   { id: 'access', group: 'Workspace', label: 'Team & access', description: 'Everyone who can sign in to Synergy, and their roles.' },
   { id: 'integrations', group: 'Workspace', label: 'Connections', description: 'Everything Synergy is connected to: GitHub, Cloudflare and database servers.' },
   { id: 'notifications', group: 'Workspace', label: 'Notifications', description: 'Where Synergy sends a message after each deployment.' },
-  { id: 'general', group: 'Server', label: 'App folders', description: 'Where Synergy puts the code of apps you add from now on.' },
-  { id: 'backups', group: 'Server', label: 'Backups', description: 'Where PostgreSQL backups are stored and how long they are kept.' },
+  { id: 'general', group: 'Server', label: 'App folders', description: 'Where Synergy puts new application code on the Manager host. Connected servers use their own agent directories.' },
+  { id: 'backups', group: 'Server', label: 'Backups', description: 'PostgreSQL backup storage and retention on the Manager host. Manage connected-server backups in that server’s Storage page.' },
   { id: 'updates', group: 'Server', label: 'Manager updates', description: 'Install verified releases, import offline packages and recover a previous version.' },
 ] as const
 

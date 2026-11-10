@@ -17,7 +17,8 @@ test('remote workspace navigation cannot invoke manager-host tools', () => {
   const root = policy.serverOverview(id);
   const items = navigation.workspaceNavItems(root);
   assert.deepEqual(items.map(item => item.label), navigation.workspaceNavItems('/overview').map(item => item.label));
-  for (const item of items) assert.ok(item.href === '/' || item.href === '/settings' || item.href === root || item.href.startsWith(root + '#'), item.href);
+  for (const item of items) assert.ok(item.href === '/' || item.href === '/settings' || item.href === root || item.href.startsWith(root + '#') || item.href.startsWith(root + '/'), item.href);
+  assert.equal(items.find(item=>item.label==='Storage').href,root+'/storage');
   assert.ok(navigation.workspaceNavItems('/overview').some(item => item.href === '/projects'));
   assert.deepEqual(navigation.workspaceNavItems('/').map(item => item.href), ['/', '/settings']);
 });

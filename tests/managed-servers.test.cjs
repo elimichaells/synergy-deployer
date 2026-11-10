@@ -10,7 +10,7 @@ test('agent APIs reject cookie-only access, malformed credentials and invalid id
   let calls=0;
   const client={query:async()=>({rows:[]}),release(){}};
   const m=load('lib/managed-servers.ts',{'@/lib/db':{db:{connect:async()=>client},query:async()=>{calls++;return{rows:[]};}},
-    '@/lib/api':{ApiError},'@/lib/audit':{audit:async()=>{}},'@/lib/secret-crypto':{},'@/lib/github-connections':{},'@/lib/git-provider-policy':{},'@/scripts/manager-agent.cjs':policy,'@/lib/remote-setup-policy':require('../lib/remote-setup-policy.ts')});
+    '@/lib/api':{ApiError},'@/lib/audit':{audit:async()=>{}},'@/lib/secret-crypto':{},'@/lib/github-connections':{},'@/lib/git-provider-policy':{},'@/scripts/manager-agent.cjs':policy,'@/lib/remote-security-gate-policy':load('lib/remote-security-gate-policy.ts',{}),'@/lib/deployment-cache':{loadAuditExceptions:()=>[]},'@/lib/security-gate-policy':load('lib/security-gate-policy.ts',{}),'@/lib/remote-setup-policy':require('../lib/remote-setup-policy.ts')});
   await assert.rejects(m.authenticateAgent(new Request('https://manager/api/server-agent/claim',{headers:{Cookie:'manager_session=anything'}})),e=>e.status===401);
   assert.equal(calls,0);
   for(const value of ['x','../../file','00000000-0000-0000-0000-000000000000;drop table users'])assert.throws(()=>m.uuid(value));
@@ -30,7 +30,7 @@ test('real PostgreSQL enrollment, concurrent claims, multi-app isolation and dur
   const key=process.env.MANAGER_ENCRYPTION_KEY;process.env.MANAGER_ENCRYPTION_KEY='isolated-integration-fixture-key';
   t.after(()=>{if(key===undefined)delete process.env.MANAGER_ENCRYPTION_KEY;else process.env.MANAGER_ENCRYPTION_KEY=key;});
   const m=load('lib/managed-servers.ts',{'@/lib/db':{db:pool,query},'@/lib/api':{ApiError},'@/lib/audit':{audit:async()=>{}},
-    '@/lib/secret-crypto':crypto,'@/lib/github-connections':{},'@/lib/git-provider-policy':{},'@/scripts/manager-agent.cjs':policy,'@/lib/remote-setup-policy':require('../lib/remote-setup-policy.ts')});
+    '@/lib/secret-crypto':crypto,'@/lib/github-connections':{},'@/lib/git-provider-policy':{},'@/scripts/manager-agent.cjs':policy,'@/lib/remote-security-gate-policy':load('lib/remote-security-gate-policy.ts',{}),'@/lib/deployment-cache':{loadAuditExceptions:()=>[]},'@/lib/security-gate-policy':load('lib/security-gate-policy.ts',{}),'@/lib/remote-setup-policy':require('../lib/remote-setup-policy.ts')});
   const server=await m.addServer({name:'Campus',platform:'linux',location:'LAN'},userId);
   const agentToken=randomBytes(32).toString('base64url');
   const enrollment={serverId:server.id,enrollmentToken:server.enrollmentToken,agentToken,platform:'linux',protocol:1};
@@ -49,27 +49,43 @@ test('real PostgreSQL enrollment, concurrent claims, multi-app isolation and dur
   await assert.rejects(m.saveRemoteApp(server.id,null,fixture({hostname:'collision.campus.example.edu',port:8443}),userId),/already assigned/);
   const twin=await m.addServer({name:'Another campus',platform:'linux'},userId);
   await m.saveRemoteApp(twin.id,null,fixture(),userId); // Reusing backend ports on a different host is valid.
+  await assert.rejects(m.queueRemoteDeploy(server.id,a.id,userId),/security gate/);
+  await query("update managed_servers set metrics=jsonb_build_object('capabilities',jsonb_build_array('application-control-v1')) where id=$1",[server.id]);
   const concurrent=await Promise.allSettled([m.queueRemoteDeploy(server.id,a.id,userId),m.queueRemoteDeploy(server.id,a.id,userId)]);
   assert.equal(concurrent.filter(x=>x.status==='fulfilled').length,1);
   await m.queueRemoteDeploy(server.id,b.id,userId);
-  await assert.rejects(m.saveRemoteApp(server.id,a.id,fixture(),userId),/active deployment/);
+  await assert.rejects(m.saveRemoteApp(server.id,a.id,fixture(),userId),error=>error.status===409&&/active application or storage operation/.test(error.message));
   const [claim1,claim2]=await Promise.all([m.claimJob(server.id),m.claimJob(server.id)]);
   assert.equal(claim1.job.id,claim2.job.id);assert.equal(claim1.job.claimToken,claim2.job.claimToken);
   assert.equal(claim1.job.payload.environment.TOKEN,'application-secret');
   const first=claim1.job;
-  await assert.rejects(m.reportJob(twin.id,{id:first.id,claimToken:first.claimToken,status:'success',sequence:1,log:'',commitSha:'a'.repeat(40)}));
+  await assert.rejects(m.reportJob(twin.id,{id:first.id,claimToken:first.claimToken,status:'success',securityStatus:'passed',sequence:1,log:'',commitSha:'a'.repeat(40)}));
   await m.reportJob(server.id,{id:first.id,claimToken:first.claimToken,status:'running',sequence:2,log:'Build application-secret'});
   await m.reportJob(server.id,{id:first.id,claimToken:first.claimToken,status:'running',sequence:1,log:'stale'});
   let detail=await m.serverDetail(server.id);
   assert.equal(detail.jobs.find(x=>x.id===first.id).log,'Build [redacted]');
   assert.ok(!JSON.stringify(detail).includes('application-secret'));
-  await m.reportJob(server.id,{id:first.id,claimToken:first.claimToken,status:'success',sequence:3,log:'Done',commitSha:'a'.repeat(40)});
+  await m.reportJob(server.id,{id:first.id,claimToken:first.claimToken,status:'success',securityStatus:'passed',sequence:3,log:'Done',commitSha:'a'.repeat(40)});
   await m.reportJob(server.id,{id:first.id,claimToken:first.claimToken,status:'failed',sequence:4,log:'late duplicate'});
   assert.equal((await query('select payload_ciphertext from remote_jobs where id=$1',[first.id])).rows[0].payload_ciphertext,null);
   detail=await m.serverDetail(server.id);
   assert.equal(detail.apps.find(x=>x.id===a.id).live_commit,'a'.repeat(40));
   const next=await m.claimJob(server.id);assert.equal(next.job.payload.id,b.id);
   assert.notEqual(next.job.id,first.id);
+  await query("update managed_servers set metrics='{}' where id=$1",[server.id]);
+  await assert.rejects(m.cancelQueuedJob(server.id,next.job.id,userId),e=>e.status===409);
+  await query("update managed_servers set metrics=jsonb_build_object('capabilities',jsonb_build_array('application-control-v1')) where id=$1",[server.id]);
+  await m.cancelQueuedJob(server.id,next.job.id,userId);
+  assert.equal((await m.reportJob(server.id,{id:next.job.id,claimToken:next.job.claimToken,status:'running',sequence:1,log:'Stopping'})).cancelRequested,true);
+  await m.reportJob(server.id,{id:next.job.id,claimToken:next.job.claimToken,status:'failed',sequence:2,log:'Cancelled; previous release preserved',result:{cancelled:true}});
+  assert.equal((await query('select status from remote_jobs where id=$1',[next.job.id])).rows[0].status,'cancelled');
+  await assert.rejects(m.queueRemoteRollback(twin.id,first.id,userId),e=>e.status===404);
+  await assert.rejects(m.queueRemoteRollback(server.id,next.job.id,userId),e=>e.status===400);
+  const rollback=await m.queueRemoteRollback(server.id,first.id,userId),rollbackJob=(await m.claimJob(server.id)).job;
+  assert.equal(rollback.id,rollbackJob.id);assert.equal(rollbackJob.payload.commitSha,'a'.repeat(40));
+  assert.equal((await m.serverDetail(server.id)).jobs.find(j=>j.id===rollback.id).trigger,'rollback');
+  await assert.rejects(m.reportJob(server.id,{id:rollback.id,claimToken:rollbackJob.claimToken,status:'success',securityStatus:'passed',sequence:1,log:'wrong commit',commitSha:'b'.repeat(40)}),e=>e.status===400);
+  await m.reportJob(server.id,{id:rollback.id,claimToken:rollbackJob.claimToken,status:'success',securityStatus:'passed',sequence:1,log:'Rollback complete',commitSha:'a'.repeat(40)});
   await m.changeServer(server.id,'revoke',userId);
   await assert.rejects(auth());await assert.rejects(m.claimJob(server.id));
   assert.equal((await m.serverDetail(server.id)).server.status,'revoked');

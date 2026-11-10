@@ -1,6 +1,7 @@
 'use client'
+import {useStorageTransport} from '@/lib/storage-client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef,useState } from 'react'
 import { ChevronLeft, ChevronRight, Loader2, Table2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { formatBytes } from '@/lib/format'
@@ -12,29 +13,36 @@ interface Rows { columns: GridColumn[]; rows: Record<string, unknown>[]; total: 
 /** Browse a database's tables and their rows. Read-only. */
 export function DataTab({ serviceId }: { serviceId: string }) {
   const [tables, setTables] = useState<TableInfo[] | null>(null)
+  const {fetch}=useStorageTransport()
   const [selected, setSelected] = useState<{ schema: string; name: string } | null>(null)
   const [rows, setRows] = useState<Rows | null>(null)
   const [loading, setLoading] = useState(false)
   const [filter, setFilter] = useState('')
   const [error, setError] = useState('')
+  const pendingRows=useRef<AbortController|null>(null)
 
   useEffect(() => {
-    void fetch(`/api/storage/${encodeURIComponent(serviceId)}/data`, { cache: 'no-store' }).then(async response => {
+    const controller=new AbortController();setTables(null);setRows(null);setSelected(null);setError('');setLoading(false);setFilter('')
+    void fetch(`/api/storage/${encodeURIComponent(serviceId)}/data`, { cache: 'no-store',signal:controller.signal }).then(async response => {
       const body = await response.json().catch(() => ({}))
+      if(controller.signal.aborted)return
       if (!response.ok) throw new Error(body.error || 'Could not read the tables')
       setTables(body.tables)
-    }).catch(err => { setError((err as Error).message); setTables([]) })
-  }, [serviceId])
+    }).catch(err => { if(!controller.signal.aborted){setError((err as Error).message); setTables([])} })
+    return()=>{controller.abort();pendingRows.current?.abort()}
+  }, [serviceId,fetch])
 
   const open = useCallback(async (schema: string, name: string, page = 1) => {
-    setSelected({ schema, name }); setLoading(true); setError('')
+    pendingRows.current?.abort();const controller=new AbortController();pendingRows.current=controller
+    setSelected({ schema, name }); setLoading(true); setError('');setRows(null)
     try {
-      const response = await fetch(`/api/storage/${encodeURIComponent(serviceId)}/data/rows?schema=${encodeURIComponent(schema)}&table=${encodeURIComponent(name)}&page=${page}&pageSize=50`, { cache: 'no-store' })
+      const response = await fetch(`/api/storage/${encodeURIComponent(serviceId)}/data/rows?schema=${encodeURIComponent(schema)}&table=${encodeURIComponent(name)}&page=${page}&pageSize=50`, { cache: 'no-store',signal:controller.signal })
       const body = await response.json().catch(() => ({}))
+      if(controller.signal.aborted)return
       if (!response.ok) throw new Error(body.error || 'Could not read the rows')
       setRows(body)
-    } catch (err) { setError((err as Error).message) } finally { setLoading(false) }
-  }, [serviceId])
+    } catch (err) { if(!controller.signal.aborted)setError((err as Error).message) } finally { if(!controller.signal.aborted)setLoading(false) }
+  }, [serviceId,fetch])
 
   if (!tables) return <div className="flex items-center gap-2 py-12 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Reading tables…</div>
   const shown = tables.filter(table => `${table.schema}.${table.name}`.toLowerCase().includes(filter.toLowerCase()))

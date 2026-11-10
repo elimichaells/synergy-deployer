@@ -16,7 +16,7 @@ export function RemoteServerOverview({ server, apps, jobs, now, loadError, canCr
       statusLabel: remoteProcessState(server, app, summary.fresh).label }))}
     deployments={summary.jobs.map(job => remoteDeployment(job, summary.apps))}
     healthHint={summary.running === null ? 'Health unknown' : `${summary.running} ${summary.running === 1 ? 'process' : 'processes'} running`}
-    historyNote="Statistics use the latest 30 deployment records on this server. Process status comes from its agent; HTTP readiness is checked during deployment."
+    historyNote="Statistics use the latest 30 deployment records on this server. Current process status and HTTP readiness come from the selected server’s agent."
     shortcuts={[
       ...(canCreate ? [{ href: `${root}#new`, icon: Plus, title: 'Import a repository', hint: 'Build, verify and serve a new app' }] : []),
       { href: `${root}#domains`, icon: Globe2, title: 'Connect a domain', hint: 'Readable addresses and automatic TLS' },

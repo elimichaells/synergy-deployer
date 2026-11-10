@@ -20,7 +20,7 @@ export function workspaceNavItems(pathname: string) {
   return [navItems[0],
     { href, label: 'Overview', icon: Gauge, description: 'This server’s health and activity', matches: [href] },
     { href: `${href}#applications`, label: 'Projects', icon: Boxes, description: 'Applications on this server', matches: [] },
-    { href: `${href}#storage`, label: 'Storage', icon: Database, description: 'Application databases on this server', matches: [] },
+    { href: `${href}/storage`, label: 'Storage', icon: Database, description: 'Application databases on this server', matches: [`${href}/storage`] },
     { href: `${href}#deployments`, label: 'Deployments', icon: Rocket, description: 'Deployments on this server', matches: [] },
     { href: `${href}#server-access`, label: 'Infrastructure', icon: Server, description: 'Agent access and connection', matches: [] },
     navItems[navItems.length - 1],

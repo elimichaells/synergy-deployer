@@ -1,4 +1,5 @@
 'use client'
+import {useStorageTransport} from '@/lib/storage-client'
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { AlertTriangle, Loader2, Lock, Network } from 'lucide-react'
@@ -23,6 +24,7 @@ const roleHelp: Record<string, string> = {
 /** Each database server: what it's for, how exposed it is, and what lives on it. */
 export function EnginesPanel({ renderActions }: { renderActions?: (engine: Engine) => ReactNode }) {
   const [engines, setEngines] = useState<Engine[] | null>(null)
+  const {fetch}=useStorageTransport()
   const [isAdmin, setIsAdmin] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
@@ -32,7 +34,7 @@ export function EnginesPanel({ renderActions }: { renderActions?: (engine: Engin
     if (!response.ok) { setEngines([]); return }
     const body = await response.json()
     setEngines(body.engines); setIsAdmin(body.isAdmin)
-  }, [])
+  }, [fetch])
   useEffect(() => { void load() }, [load])
 
   const restrict = async (engine: Engine) => {
@@ -42,7 +44,7 @@ export function EnginesPanel({ renderActions }: { renderActions?: (engine: Engin
       const response = await fetch(`/api/storage/engines/${engine.id}/restrict`, { method: 'POST' })
       const body = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(body.error || 'The setting could not be changed')
-      setMessage({ tone: 'ok', text: `Saved. Restart the PostgreSQL Windows service at a quiet moment to apply it: every app on ${engine.name} (and Synergy, if it's the system server) disconnects for a few seconds and reconnects.` })
+      setMessage({ tone: 'ok', text: `Saved. Restart the PostgreSQL service at a quiet moment to apply it: every app on ${engine.name} disconnects briefly and reconnects.` })
       await load()
     } catch (error) { setMessage({ tone: 'error', text: (error as Error).message }) } finally { setBusy(null) }
   }

@@ -1,3 +1,5 @@
+import { requireSameOrigin } from '@/lib/request-body'
+import { tailRuntimeLog,runtimeLogSecrets,redactRuntimeLog } from '@/lib/runtime-log-reader'
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { getSessionFromCookie } from '@/lib/auth'
@@ -9,20 +11,15 @@ import { readFile, writeFile } from 'fs/promises'
 
 const execAsync = promisify(exec)
 
-async function tailLines(filePath: string, lines: number) {
-  const content = await readFile(filePath, 'utf8')
-  const parts = content.split(/\r?\n/)
-  if (parts.length <= lines) return parts.join('\n')
-  return parts.slice(-lines).join('\n')
-}
+const tailLines=tailRuntimeLog
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator', 'viewer'])
 
-    const { rows: projectRows } = await query<{ pm2_name: string }>(
-      'select pm2_name from projects where id = $1',
+    const { rows: projectRows } = await query<{ pm2_name: string;root_path:string }>(
+      'select pm2_name,root_path from projects where id = $1',
       [(await context.params).id]
     )
 
@@ -42,7 +39,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
 
     const list = JSON.parse(stdout) as Array<{
       name: string
-      pm2_env?: { pm_out_log_path?: string; pm_err_log_path?: string }
+      pm2_env?: { pm_out_log_path?: string; pm_err_log_path?: string;env?:Record<string,unknown> }
     }>
 
     const match = list.find((item) => item.name === project.pm2_name)
@@ -52,7 +49,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       return NextResponse.json({ error: 'Log path not found for PM2 process' }, { status: 404 })
     }
 
-    const log = await tailLines(logPath, lines)
+    const log = redactRuntimeLog(await tailLines(logPath, lines),await runtimeLogSecrets(project.root_path,match?.pm2_env?.env))
 
     return NextResponse.json({ logPath, type, lines, log })
   } catch (error) {
@@ -64,9 +61,10 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
   try {
     const user = await getSessionFromCookie()
     requireRole(user, ['admin', 'operator'])
+    requireSameOrigin(request)
 
-    const { rows: projectRows } = await query<{ pm2_name: string }>(
-      'select pm2_name from projects where id = $1',
+    const { rows: projectRows } = await query<{ pm2_name: string;root_path:string }>(
+      'select pm2_name,root_path from projects where id = $1',
       [(await context.params).id]
     )
 
@@ -85,7 +83,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
 
     const list = JSON.parse(stdout) as Array<{
       name: string
-      pm2_env?: { pm_out_log_path?: string; pm_err_log_path?: string }
+      pm2_env?: { pm_out_log_path?: string; pm_err_log_path?: string;env?:Record<string,unknown> }
     }>
 
     const match = list.find((item) => item.name === project.pm2_name)

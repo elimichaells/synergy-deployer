@@ -5,21 +5,23 @@ __MANAGER_PATHS__
 emit() { printf '%s' "$1"; shift; for value in "$@"; do printf '\t%s' "$(printf '%s' "$value" | base64 | tr -d '\r\n')"; done; printf '\n'; }
 arch="$(uname -m)"; case "$arch" in x86_64) arch=x64;; aarch64) arch=arm64;; esac
 emit meta "$(uname -s)" "$arch" "$(id -u)"
+if [ -r /etc/os-release ]; then . /etc/os-release; emit distribution "${ID:-unknown}" "${VERSION_ID:-unknown}"; fi
 if command -v ss >/dev/null 2>&1; then
   if listeners="$(ss -H -ltn)"; then
     emit ports known
     while read -r port; do [ -z "$port" ] || emit port "$port"; done < <(printf '%s\n' "$listeners" | awk '{print $4}' | sed 's/.*://' | sort -un)
   else emit ports unknown; fi
 else emit ports unknown; fi
-for id in node git caddy pm2 psql pg_dump pg_restore mysql mariadb go php python composer; do
+for id in node git caddy pm2 psql pg_dump pg_restore mysql mariadb go php python composer sling ng mongod sqlcmd redis; do
   var="TOOL_$id"; custom="${!var:-}"
   candidates=(); [ -z "$custom" ] || candidates+=("$custom")
-  cmd="$id"; [ "$id" != python ] || cmd=python3
+  cmd="$id"; [ "$id" != python ] || cmd=python3; [ "$id" != redis ] || cmd=redis-cli
   found="$(command -v "$cmd" || true)"; [ -z "$found" ] || candidates+=("$found")
   shopt -s nullglob
   case "$id" in
     psql|pg_dump|pg_restore) candidates+=(/usr/lib/postgresql/*/bin/"$id" /usr/pgsql-*/bin/"$id" /opt/postgresql/*/bin/"$id");;
     mysql|mariadb) candidates+=(/usr/bin/"$id" /usr/local/mysql/bin/"$id" /opt/mysql/bin/"$id");;
+    sqlcmd) candidates+=(/opt/mssql-tools*/bin/sqlcmd);;
     pm2) candidates+=(/usr/local/lib/node_modules/pm2/bin/pm2 /usr/lib/node_modules/pm2/bin/pm2);;
     *) candidates+=(/usr/local/bin/"$cmd" /usr/bin/"$cmd" /opt/"$id"/bin/"$cmd");;
   esac
@@ -36,15 +38,17 @@ for id in node git caddy pm2 psql pg_dump pg_restore mysql mariadb go php python
         # Persist the actual script, not a shell wrapper or PATH alias.
       else problem='Not a PM2 package'; fi
     elif [ -x "$exe" ]; then
-      arg=--version; case "$id" in go|caddy) arg=version;; esac
-      if output="$(timeout 5 "$exe" "$arg" 2>&1)"; then version="$(printf '%s\n' "$output" | head -1 | cut -c1-200)"; else problem='Version check failed'; fi
+      arg=--version; case "$id" in go|caddy|ng) arg=version;; sqlcmd) arg=-?;; esac
+      if output="$(NG_CLI_ANALYTICS=false timeout 10 "$exe" "$arg" 2>&1)"; then
+        if [ "$id" = sqlcmd ]; then version="$(printf '%s\n' "$output" | sed -nE 's/.*[Vv]ersion[: ]+v?([0-9.]+).*/sqlcmd version \1/p' | head -1)"; elif [ "$id" = ng ]; then version="$(printf '%s\n' "$output" | grep -Eo 'Angular CLI[[:space:]]*:[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+' | head -1)"; else version="$(printf '%s\n' "$output" | head -1 | cut -c1-200)"; fi
+      else problem='Version check failed'; fi
     else problem='Not executable'; fi
     emit tool "$id" "$exe" "$version" "$problem"
   done
 done
 if command -v systemctl >/dev/null 2>&1; then
   while read -r unit _; do
-    case "$unit" in *postgres*|*mysql*|*maria*|*caddy*|*mongo*|*redis*)
+    case "$unit" in *postgres*|*mysql*|*maria*|*caddy*|*mongo*|*redis*|*mssql*)
       state="$(systemctl is-active "$unit" 2>/dev/null || true)"
       # Unit name/state only: ExecStart can contain database passwords.
       emit service "$unit" "$state" '' '';;

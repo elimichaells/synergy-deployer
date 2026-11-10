@@ -1,4 +1,5 @@
 'use client'
+import {useStorageTransport} from '@/lib/storage-client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
@@ -19,8 +20,11 @@ export { ProviderLogo, providerMeta }
 
 interface Service {
   id: string
+  status?:string
+  credential_recovery?:boolean
   name: string
   provider: Provider
+  connection_id: string
   connection_name: string
   database_name: string
   username: string | null
@@ -60,6 +64,7 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
   intro?: React.ReactNode
 }) {
   const [services, setServices] = useState<Service[] | null>(null)
+  const {fetch,databaseHref,serverId}=useStorageTransport()
   const [connections, setConnections] = useState<Connection[]>([])
   const [shareable, setShareable] = useState<Shareable[]>([])
   const [legacy, setLegacy] = useState<LegacyDatabase | null>(null)
@@ -68,7 +73,7 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
   const [busy, setBusy] = useState(false)
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<AddMode>('new')
-  const [form, setForm] = useState({ connectionId: '', name: 'primary', envPrefix: 'PRIMARY', databaseName: '', customCredentials: false, username: '', password: '', confirm: '', applicationPrimary: true, backup: true, syncEnv: false, sourceServiceId: '' })
+  const [form, setForm] = useState({ connectionId: '', name: 'primary', envPrefix: 'PRIMARY', databaseName: '', authSource:'',customCredentials: false, username: '', password: '', confirm: '', applicationPrimary: true, backup: true, syncEnv: false, sourceServiceId: '' })
   const [passwordFor, setPasswordFor] = useState<Service | null>(null)
   const [password, setPassword] = useState({ value: '', confirm: '' })
   const isAdmin = role === 'admin'
@@ -88,7 +93,7 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
     if (legacyRes.ok) setLegacy((await legacyRes.json()).database || null)
     const discoverRes = await fetch(`/api/storage/discover?project=${projectId}`, { cache: 'no-store' }).catch(() => null)
     setFound(discoverRes?.ok ? (await discoverRes.json()).discovered || [] : [])
-  }, [projectId])
+  }, [projectId,fetch])
 
   useEffect(() => { void load().catch(error => setNotice({ tone: 'error', text: error.message })) }, [load])
 
@@ -103,7 +108,7 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
     const recommended = usableConnections.find(connection => connection.is_default) || usableConnections[0]
     setMode(next)
     setForm(current => ({ ...current, connectionId: next === 'new' ? recommended?.id || '' : next === 'existing' ? connections[0]?.id || '' : '',
-      name: 'primary', envPrefix: 'PRIMARY', databaseName: '', customCredentials: false, username: '', password: '', confirm: '',
+      name: 'primary', envPrefix: 'PRIMARY', databaseName: '', authSource:'',customCredentials: false, username: '', password: '', confirm: '',
       applicationPrimary: !hasPrimary, backup: true, syncEnv: false, sourceServiceId: available[0]?.id || '' }))
     setNotice(null)
     setOpen(true)
@@ -156,7 +161,7 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
       ? { mode: 'shared', sourceServiceId: form.sourceServiceId, applicationPrimary: form.applicationPrimary, envPrefix: form.envPrefix || undefined }
       : {
         mode: mode === 'existing' ? 'existing' : 'provision', connectionId: form.connectionId, name: form.name, envPrefix: form.envPrefix,
-        databaseName: form.databaseName, username: mode === 'existing' || form.customCredentials ? form.username : '',
+        databaseName: form.databaseName,options:mode==='existing'&&selectedConnection?.provider==='mongodb'&&form.authSource?{authSource:form.authSource}:{}, username: mode === 'existing' || form.customCredentials ? form.username : '',
         password: mode === 'existing' || form.customCredentials ? form.password : '', applicationPrimary: form.applicationPrimary,
         backupEnabled: selectedConnection?.provider === 'postgresql' && form.backup,
       }
@@ -192,6 +197,11 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
     const synced = await sync().catch(() => null)
     await refresh()
     return `Password changed and verified${passwordFor.shared_with?.length ? `, including for ${passwordFor.shared_with.join(', ')}` : ''}.${synced ? ' .env was updated and the app restarted.' : ' Redeploy to pick it up.'}`
+  })
+  const testConnection=(service:Service,recover=false)=>run(async()=>{
+    const response=await fetch(`/api/storage/${service.id}/${recover?'test-proposed':'test'}`,{method:'POST'}),body=await response.json().catch(()=>({}))
+    if(!response.ok){await refresh();throw Error(body.error||'Connection test failed')}
+    await refresh();return recover?'The proposed password works and is now saved. Redeploy or sync .env to apply it.':'Application database connection verified.'
   })
 
   const legacyAction = (action: 'rotate_password') => run(async () => {
@@ -256,6 +266,7 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="truncate font-mono text-sm font-medium">{service.provider === 'redis' ? `${service.name} · db ${service.database_name}` : service.database_name}</p>
                     {service.application_primary && <span className="flex items-center gap-1 rounded-full border border-white/15 bg-white/[0.06] px-2 py-px text-[11px] font-medium"><Star className="h-3 w-3" />Main database</span>}
+                    {service.status&&service.status!=='ready'&&<span className="text-xs text-amber-300">{service.status==='pending'?'Operation pending':service.status==='needs_review'?'Password change needs review':'Connection test needed'}</span>}
                     {service.options?.ownership === 'shared' && <span className="flex items-center gap-1 rounded-full border border-syn-violet/30 bg-syn-violet/10 px-2 py-px text-[11px] text-violet-200"><Layers className="h-3 w-3" />From {service.shared_from_project_name || 'project'}</span>}
                     {!!service.shared_with?.length && <span className="flex items-center gap-1 rounded-full border border-syn-cyan/30 bg-syn-cyan/10 px-2 py-px text-[11px] text-cyan-200"><Layers className="h-3 w-3" />Shared with {service.shared_with.join(', ')}</span>}
                     {service.options?.ownership === 'external' && <span className="rounded-full border border-border px-2 py-px text-[11px] text-muted-foreground">External</span>}
@@ -269,10 +280,12 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
                     <DropdownMenu.Trigger asChild><button type="button" className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-white/[0.07] hover:text-foreground" aria-label={`Actions for ${service.database_name}`}><MoreHorizontal className="h-4 w-4" /></button></DropdownMenu.Trigger>
                     <DropdownMenu.Portal>
                       <DropdownMenu.Content align="end" sideOffset={6} className="z-50 w-56 rounded-lg border border-white/10 bg-popover p-1 shadow-2xl shadow-black/60">
-                        <DropdownMenu.Item className={menuItem} disabled={service.application_primary || role === 'viewer' || service.options?.ownership === 'adopted'} onSelect={() => void makePrimary(service)}><Star className="h-3.5 w-3.5" />Make main database</DropdownMenu.Item>
+                        {serverId&&<DropdownMenu.Item className={menuItem} disabled={!isAdmin||busy} onSelect={()=>void testConnection(service)}><RefreshCw className="h-3.5 w-3.5"/>Test saved connection</DropdownMenu.Item>}
+                        {serverId&&service.credential_recovery&&<DropdownMenu.Item className={menuItem} disabled={!isAdmin||busy} onSelect={()=>void testConnection(service,true)}><KeyRound className="h-3.5 w-3.5"/>Recover password change</DropdownMenu.Item>}
+                        <DropdownMenu.Item className={menuItem} disabled={service.application_primary || !isAdmin || service.options?.ownership === 'adopted'} onSelect={() => void makePrimary(service)}><Star className="h-3.5 w-3.5" />Make main database</DropdownMenu.Item>
                         <DropdownMenu.Item className={menuItem} disabled={!isAdmin || !!service.options?.ownership && service.options.ownership !== 'manager' || service.provider === 'redis'} onSelect={() => { setPasswordFor(service); setPassword({ value: '', confirm: '' }) }}><KeyRound className="h-3.5 w-3.5" />Change password</DropdownMenu.Item>
-                        {['mysql', 'mariadb'].includes(service.provider) && <DropdownMenu.Item asChild className={menuItem}><a href="/mysql/" target="_blank" rel="noreferrer"><ArrowUpRight className="h-3.5 w-3.5" />Open phpMyAdmin</a></DropdownMenu.Item>}
-                        <DropdownMenu.Item asChild className={menuItem}><Link href={`/storage/${service.id}?tab=backups`}><Database className="h-3.5 w-3.5" />Backups & details</Link></DropdownMenu.Item>
+                        {['mysql', 'mariadb'].includes(service.provider) && <DropdownMenu.Item asChild className={menuItem}><a href={serverId?`/infrastructure/servers/${serverId}/database-browser?connection=${encodeURIComponent(service.connection_id)}`:"/mysql/"} target="_blank" rel="noreferrer"><ArrowUpRight className="h-3.5 w-3.5" />Open phpMyAdmin</a></DropdownMenu.Item>}
+                        <DropdownMenu.Item asChild className={menuItem}><Link href={`${databaseHref(service.id)}?tab=backups`}><Database className="h-3.5 w-3.5" />Backups & details</Link></DropdownMenu.Item>
                       </DropdownMenu.Content>
                     </DropdownMenu.Portal>
                   </DropdownMenu.Root>
@@ -344,6 +357,7 @@ export function StoragePanel({ projectId, projectName, projectType, role, onChan
                 <div className="grid gap-4 sm:grid-cols-2">
                   <label className="field-label">Name<input className="control-input" value={form.name} onChange={event => setForm({ ...form, name: event.target.value, envPrefix: envName(event.target.value) })} /></label>
                   <label className="field-label">{mode === 'existing' ? 'Database name' : <span>Database name <span className="font-normal text-muted-foreground">optional</span></span>}<input className="control-input font-mono" value={form.databaseName} onChange={event => setForm({ ...form, databaseName: event.target.value })} placeholder={mode === 'existing' ? 'existing_database' : 'Generated'} /></label>
+                  {mode==='existing'&&selectedConnection?.provider==='mongodb'&&<label className="field-label">Authentication database<input className="control-input" value={form.authSource} onChange={event=>setForm({...form,authSource:event.target.value})} placeholder="Use saved connection setting" /><span className="text-xs text-muted-foreground">Where this application’s existing MongoDB account was created.</span></label>}
                 </div>
                 {mode === 'new' && selectedConnection?.provider !== 'redis' && <label className="flex items-center justify-between gap-4 text-sm"><span>Choose my own username and password</span><Switch checked={form.customCredentials} onCheckedChange={customCredentials => setForm({ ...form, customCredentials })} /></label>}
                 {(mode === 'existing' || form.customCredentials) && (

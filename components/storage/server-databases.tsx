@@ -1,4 +1,5 @@
 'use client'
+import {useStorageTransport} from '@/lib/storage-client'
 
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
@@ -12,23 +13,24 @@ import { DataTab } from './data-tab'
 import { SqlTab } from './sql-tab'
 import { RenameDatabaseSheet } from './rename-database-sheet'
 
-interface Server { id: string; name: string; provider: string; username: string | null }
+interface Server { id: string; name: string; provider: string; username: string | null;provisioning_enabled?:boolean }
 interface Entry {
   id: string; tracked: boolean; name: string; sizeBytes: number | null; owner: string | null
   apps: { name: string; environment: string }[]; configuredFor: string[]
   backup: { frequency: string; enabled: boolean; lastStatus: string; legacy?: boolean } | null; dropBlocker: string | null
 }
-interface Listing { server: { id: string; name: string; system: boolean }; databases: Entry[] }
+interface Listing { server: { id: string; name: string; system: boolean }; databases: Entry[];warning?:string|null }
 
 /** Every database on each PostgreSQL server Synergy can sign in to, including ones no app uses. */
 export function ServerDatabases({ servers, isAdmin }: { servers: Server[]; isAdmin: boolean }) {
-  const eligible = servers.filter(server => server.provider === 'postgresql' && server.username)
+  const {serverId}=useStorageTransport()
+  const eligible = servers.filter(server => server.provider === 'postgresql' && server.username&&(!serverId||server.provisioning_enabled))
   if (!isAdmin || !eligible.length) return null
   return (
     <section className="space-y-4">
       <div>
         <h2 className="text-sm font-semibold">Databases on each server</h2>
-        <p className="text-xs text-muted-foreground">Everything a server holds, including databases no app uses. Browse, back up or remove the ones that are not in use.</p>
+        <p className="text-xs text-muted-foreground">Everything the saved account can inspect, including databases without Manager links. Review application use before making changes.</p>
       </div>
       {eligible.map(server => <ServerBlock key={server.id} server={server} />)}
     </section>
@@ -36,6 +38,7 @@ export function ServerDatabases({ servers, isAdmin }: { servers: Server[]; isAdm
 }
 
 function ServerBlock({ server }: { server: Server }) {
+  const {fetch,databaseHref}=useStorageTransport()
   const [listing, setListing] = useState<Listing | null>(null)
   const [error, setError] = useState('')
   const [open, setOpen] = useState<Entry | null>(null)
@@ -49,7 +52,7 @@ function ServerBlock({ server }: { server: Server }) {
     const body = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(body.error || 'Could not list the databases')
     setListing(body)
-  }, [server.id])
+  }, [server.id,fetch])
   useEffect(() => { void load().catch(err => setError((err as Error).message)) }, [load])
 
   const total = (listing?.databases || []).reduce((sum, database) => sum + (database.sizeBytes || 0), 0)
@@ -63,6 +66,7 @@ function ServerBlock({ server }: { server: Server }) {
         {listing && !listing.server.system && <Button size="sm" variant="outline" onClick={() => setCreating(true)}><Plus className="mr-1.5 h-3.5 w-3.5" />Create database</Button>}
       </div>
       {error && <p role="alert" className="px-5 py-4 text-sm text-red-300">{error}</p>}
+      {listing?.warning&&<p role="status" className="px-5 py-4 text-sm text-muted-foreground">{listing.warning}</p>}
       {!listing && !error && <div className="flex items-center gap-2 px-5 py-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Reading the server…</div>}
       {listing && (
         <div className="divide-y divide-border">
@@ -77,14 +81,14 @@ function ServerBlock({ server }: { server: Server }) {
                   ? <span>Used by <span className="text-foreground">{[...new Set(database.apps.map(app => app.name))].join(', ')}</span></span>
                   : database.configuredFor.length
                     ? <span className="text-amber-300">Set in {database.configuredFor.join(', ')} but not linked</span>
-                    : <span className="flex items-center gap-1.5"><AlertTriangle className="h-3.5 w-3.5 text-status-building" />Not used by any app</span>}
+                    : <span className="flex items-center gap-1.5"><AlertTriangle className="h-3.5 w-3.5 text-status-building" />No Manager application links</span>}
                 {database.backup && <span className="mt-0.5 block">Backed up {database.backup.frequency}{database.backup.enabled ? '' : ' (paused)'}</span>}
               </div>
               <span className="text-xs text-muted-foreground md:text-right">{formatBytes(database.sizeBytes)}</span>
               <div className="flex items-center justify-end gap-1">
                 <Button size="sm" variant="ghost" onClick={() => setRenaming(database)}>Rename</Button>
                 {database.tracked
-                  ? <Button asChild size="sm" variant="outline"><Link href={`/storage/${database.id}`}>Open<ArrowUpRight className="ml-1 h-3.5 w-3.5" /></Link></Button>
+                  ? <Button asChild size="sm" variant="outline"><Link href={databaseHref(database.id)}>Open<ArrowUpRight className="ml-1 h-3.5 w-3.5" /></Link></Button>
                   : <Button size="sm" variant="outline" onClick={() => setOpen(database)}><Eye className="mr-1.5 h-3.5 w-3.5" />Browse</Button>}
                 {!database.tracked && <Button size="sm" variant="ghost" aria-label={`Drop ${database.name}`} title={database.dropBlocker || 'Drop this database'} disabled={!!database.dropBlocker} onClick={() => setDropping(database)}><Trash2 className="h-3.5 w-3.5" /></Button>}
               </div>
@@ -108,7 +112,7 @@ function UntrackedSheet({ entry, system, onOpenChange }: { entry: Entry | null; 
         {entry && <>
           <SheetHeader>
             <SheetTitle className="flex items-center gap-2"><Database className="h-4 w-4" /><span className="font-mono">{entry.name}</span></SheetTitle>
-            <SheetDescription>No app uses this database. You can look at its data, run SQL, and manage its backups here.</SheetDescription>
+            <SheetDescription>No Manager app is linked to this database. External applications may still use it. Inspect its data and connection usage before making changes.</SheetDescription>
           </SheetHeader>
           <Tabs defaultValue="data" className="mt-6">
             <TabsList><TabsTrigger value="data">Data</TabsTrigger><TabsTrigger value="sql">SQL</TabsTrigger><TabsTrigger value="backups">Backups</TabsTrigger></TabsList>
@@ -127,6 +131,7 @@ function UntrackedSheet({ entry, system, onOpenChange }: { entry: Entry | null; 
 }
 
 function DropSheet({ serverId, entry, onClose, onDropped }: { serverId: string; entry: Entry | null; onClose: () => void; onDropped: () => void }) {
+  const {fetch}=useStorageTransport()
   const [typed, setTyped] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -165,6 +170,7 @@ function DropSheet({ serverId, entry, onClose, onDropped }: { serverId: string; 
 }
 
 function CreateSheet({ serverId, open, onOpenChange, onCreated }: { serverId: string; open: boolean; onOpenChange: (open: boolean) => void; onCreated: () => void }) {
+  const {fetch}=useStorageTransport()
   const [name, setName] = useState('')
   const [withOwner, setWithOwner] = useState(true)
   const [busy, setBusy] = useState(false)
