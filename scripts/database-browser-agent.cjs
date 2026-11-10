@@ -39,7 +39,9 @@ async function handle(root,manager,input,signal,execute=cgi){
   const body=Buffer.from(input.body,'base64');if(body.length>LIMIT)throw Error('Database browser upload is too large');
   const safe=value=>typeof value==='string'&&!/[\x00-\x1f]/.test(value)?value:'';
   const env={SystemRoot:process.env.SystemRoot||'',WINDIR:process.env.WINDIR||'',Path:process.env.Path||process.env.PATH||'',PATH:process.env.PATH||process.env.Path||'',TEMP:config.tempRoot,TMP:config.tempRoot,
-    PHP_INI_SCAN_DIR:path.join(config.clientRoot,'.ini-scan'),PHPMYADMIN_BLOWFISH_SECRET:config.secret,PHPMYADMIN_PUBLIC_URL:base.href,PHPMYADMIN_DB_HOST:connection.host,PHPMYADMIN_DB_PORT:String(connection.port),PHPMYADMIN_DB_TLS:connection.tls?'1':'0',PHPMYADMIN_DB_CA:caFile,PHPMYADMIN_TEMP_DIR:config.tempRoot,PHPMYADMIN_SESSION_DIR:config.sessionRoot,
+    // CGI mode can ignore command-line options. Pin the same private INI through
+    // PHPRC as well; otherwise a new PHP binary can silently lose its extensions.
+    PHPRC:config.phpIni,PHP_INI_SCAN_DIR:path.join(config.clientRoot,'.ini-scan'),PHPMYADMIN_BLOWFISH_SECRET:config.secret,PHPMYADMIN_PUBLIC_URL:base.href,PHPMYADMIN_DB_HOST:connection.host,PHPMYADMIN_DB_PORT:String(connection.port),PHPMYADMIN_DB_TLS:connection.tls?'1':'0',PHPMYADMIN_DB_CA:caFile,PHPMYADMIN_TEMP_DIR:config.tempRoot,PHPMYADMIN_SESSION_DIR:config.sessionRoot,
     GATEWAY_INTERFACE:'CGI/1.1',REDIRECT_STATUS:'200',SERVER_PROTOCOL:'HTTP/1.1',SERVER_NAME:base.hostname,SERVER_PORT:base.port||(base.protocol==='https:'?'443':'80'),HTTP_HOST:base.host,HTTPS:base.protocol==='https:'?'on':'off',REMOTE_ADDR:'127.0.0.1',
     REQUEST_METHOD:input.method,QUERY_STRING:query,SCRIPT_FILENAME:filename,SCRIPT_NAME:base.pathname+name,DOCUMENT_ROOT:clientRoot,REQUEST_URI:base.pathname+input.path,
     CONTENT_TYPE:safe(input.contentType),CONTENT_LENGTH:String(body.length),HTTP_COOKIE:safe(input.cookie),HTTP_ACCEPT:safe(input.accept),HTTP_X_REQUESTED_WITH:input.requestedWith==='XMLHttpRequest'?'XMLHttpRequest':'',HTTP_ORIGIN:base.origin,HTTP_REFERER:base.href};

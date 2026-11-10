@@ -9,6 +9,7 @@ test('database browser CGI receives only its selected database and private PHP e
   await fs.writeFile(path.join(root,'database-browser.json'),JSON.stringify({clientRoot,tempRoot,sessionRoot,phpCgi:process.execPath,phpIni:path.join(root,'private.ini'),secret:'ab'.repeat(32)}));
   const request={method:'POST',path:'index.php?route=/sql',body:Buffer.from('sql=select+1').toString('base64'),publicBase:'https://manager.test/api/database-browser/'+'a'.repeat(43)+'/',connection:{host:'127.0.0.1',port:3307,tls:false},cookie:'phpMyAdmin=fixture-session',contentType:'application/x-www-form-urlencoded',authorization:'Manager credentials must not be forwarded'};
   const result=await handle(root,'https://manager.test',request,null,async(config,env,body)=>{
+    assert.equal(env.PHPRC,config.phpIni,'CGI must load the private INI even when command-line options are ignored');
     assert.equal(env.PHPMYADMIN_DB_PORT,'3307');assert.equal(env.SCRIPT_FILENAME,await fs.realpath(path.join(clientRoot,'index.php')));assert.equal(env.HTTP_COOKIE,'phpMyAdmin=fixture-session');assert.equal(env.HTTP_AUTHORIZATION,undefined);assert.equal(env.MANAGER_ENCRYPTION_KEY,undefined);assert.equal(body.toString(),'sql=select+1');
     return Buffer.from('Status: 200 OK\r\nContent-Type: text/html\r\nSet-Cookie: phpMyAdmin=next; HttpOnly\r\n\r\n<p>Database client</p>');
   });
