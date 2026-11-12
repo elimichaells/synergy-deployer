@@ -19,7 +19,7 @@ The Manager host's phpMyAdmin updater uses the same complete-release transaction
 | Composer / Sling / sqlcmd | Supported | Supported | Selected CLI only; sqlcmd updates do not update or restart the SQL Server engine |
 | Angular CLI | Supported | Supported | New private installation and tool selection; project dependencies remain unchanged |
 | PM2 | Supported | Supported | This agent's private daemon and application definitions only |
-| Git | Portable Git installation supported | OS package maintenance required | Selected installation; existing configuration retained |
+| Git | Separate portable copy selected for this agent | OS package maintenance required | Existing full/portable Git installation and other software are untouched |
 | Node.js / Go / Windows PHP | Existing separate-version installer | Node.js / Go separate-version installer | Existing project version pins remain available |
 
 Linux package-owned databases, Git, PHP and Python, Windows Python, SQL Server

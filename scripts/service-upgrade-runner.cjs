@@ -32,6 +32,20 @@ async function npmUpdate(plan,target){
   }else{paths.ng=selected;const next=JSON.stringify(paths);await upgrade.atomic(path.join(target,'upgrade.json'),{kind:'tool-selection',phase:'activating',pathsFile,previous,next,selected});await upgrade.atomic(pathsFile,next);await upgrade.atomic(path.join(target,'upgrade.json'),{kind:'tool-selection',phase:'complete',pathsFile,previous,next,selected});}
   return {status:'success',operationId:plan.operationId,service:plan.service,mode:'update',version:plan.version,path:selected,backup:target,message:'Updated CLI verified. Existing installation and project-local dependencies preserved.'};
 }
+async function gitUpdate(plan,target,candidate){
+  const pathsFile=path.join(plan.agentRoot,'tool-paths.json'),previous=await fs.readFile(pathsFile,'utf8'),paths=JSON.parse(previous);
+  if(!paths.git||path.resolve(paths.git).toLowerCase()!==path.resolve(plan.path).toLowerCase())throw Error('Select this agent’s current Git executable for maintenance');
+  const originalConfig=path.join(path.dirname(path.dirname(plan.path)),'etc','gitconfig'),nextConfig=path.join(path.dirname(path.dirname(candidate)),'etc','gitconfig');
+  try{await upgrade.regular(originalConfig);await fs.mkdir(path.dirname(nextConfig),{recursive:true});await fs.copyFile(originalConfig,nextConfig)}catch(error){if(error.code!=='ENOENT')throw error}
+  await upgrade.run('icacls.exe',[target,'/grant','*S-1-5-19:(OI)(CI)RX']);
+  const helper=path.join(plan.agentRoot,'maintenance','verify-git.cjs');await fs.mkdir(path.dirname(helper),{recursive:true});
+  await fs.writeFile(helper,"process.stdout.write(require('node:child_process').execFileSync(process.argv[2],['--version'],{windowsHide:true,encoding:'utf8'}));\n");
+  if(policy.version(await platform.asAgent(plan.agentRoot,helper,[candidate]))!==plan.version)throw Error('The updated Git executable is unavailable to the agent account');
+  if(await fs.readFile(pathsFile,'utf8')!==previous)throw Error('Tool selection changed during maintenance');
+  paths.git=candidate;const next=JSON.stringify(paths),journal={kind:'tool-selection',phase:'activating',pathsFile,previous,next,selected:candidate};
+  await upgrade.atomic(path.join(target,'upgrade.json'),journal);await upgrade.atomic(pathsFile,next);journal.phase='complete';await upgrade.atomic(path.join(target,'upgrade.json'),journal);
+  return {status:'success',operationId:plan.operationId,service:plan.service,mode:'update',version:plan.version,path:candidate,backup:target,message:'Verified portable Git selected for this agent. The original Git installation, configuration and other applications are unchanged.'};
+}
 async function execute(plan,stage){
   policy.validate(plan.service,plan.currentVersion,plan.version,process.platform);if(plan.mode!=='update'||!/^[a-f0-9-]{36}$/.test(plan.operationId))throw Error('Invalid upgrade plan');
   const target=path.join(plan.dataRoot,'updates',plan.service,plan.operationId);await fs.mkdir(path.dirname(target),{recursive:true,mode:0o700});await upgrade.regular(path.dirname(target),true);
@@ -42,9 +56,9 @@ async function execute(plan,stage){
   const current=await binaryVersion(plan.service,executable,context);if(current!==plan.currentVersion)throw Error('The installed version changed after review');
   if(['pm2','angular'].includes(plan.service))return npmUpdate(plan,target);
   const source=await upgrade.unpack(asset,target),candidate=path.join(source,asset.executable);await upgrade.regular(candidate);if(await binaryVersion(plan.service,candidate,context)!==plan.version)throw Error('The staged binary did not report the selected version');
+  if(plan.service==='git')return gitUpdate(plan,target,candidate);
   const database=policy.services[plan.service].kind==='database';let installRoot=path.dirname(plan.path),replacements;
   if(database){installRoot=path.dirname(path.dirname(plan.path));replacements=[];for(const directory of asset.directories){const candidateRoot=path.join(source,directory);try{await fs.access(candidateRoot)}catch{continue}for(const file of await upgrade.files(candidateRoot))replacements.push({source:path.join(candidateRoot,file),destination:path.join(installRoot,directory,file)})}if(!replacements.length)throw Error('Empty database binary release');}
-  else if(plan.service==='git'){installRoot=path.dirname(path.dirname(plan.path));replacements=(await upgrade.files(source)).map(file=>({source:path.join(source,file),destination:path.join(installRoot,file)}));}
   else replacements=[{source:candidate,destination:executable}];
   if(database&&!plan.serviceName)throw Error('A database upgrade must identify its existing service');
   if(plan.service==='caddy'){
