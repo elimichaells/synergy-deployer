@@ -229,7 +229,7 @@ try{
   $result.path=$paths[$tool];Write-Json $receipt $result
   Write-Output '[service] Configuration complete; authenticated checks passed where a database was installed.'
 }catch{
-  if($savedPaths){Write-ToolPaths $savedPaths}
+  if($savedPaths -and $plan.mode -ne 'update'){Write-ToolPaths $savedPaths}
   # Never remove initialized data or an existing installation during recovery.
   if($createdService -and $target){
     $registered=Get-CimInstance Win32_Service -Filter ("Name='"+$createdService+"'") -ErrorAction SilentlyContinue
@@ -237,7 +237,12 @@ try{
     if($ownedExecutable -and [IO.Path]::GetFullPath($ownedExecutable).StartsWith([IO.Path]::GetFullPath($target).TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase)){Stop-Service -Name $createdService -ErrorAction SilentlyContinue}
   }
   $message=$_.Exception.Message+"`n"+$_.ScriptStackTrace; if($plan.databasePassword){$message=$message.Replace([string]$plan.databasePassword,'[redacted]')}
-  Write-Json $receipt @{status='failed';operationId=$plan.operationId;service=$plan.service;serviceName=$createdService;message=$message;preservedData=$true}
+  $status='failed'
+  if($plan.mode -eq 'update'){
+    $journal=Join-Path $plan.dataRoot ('updates\'+$plan.service+'\'+$plan.operationId+'\upgrade.json')
+    if(Test-Path -LiteralPath $journal){try{$phase=(Get-Content -LiteralPath $journal -Raw|ConvertFrom-Json).phase;if($phase -notin @('prepared','rolled_back')){$status='interrupted'}}catch{$status='interrupted'}}
+  }
+  Write-Json $receipt @{status=$status;operationId=$plan.operationId;service=$plan.service;serviceName=$createdService;message=$message;preservedData=$true}
   Write-Error $message
   exit 1
 }

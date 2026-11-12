@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The privileged installer must not execute a Node binary writable by application accounts.
 set -euo pipefail
-stage="$1"; operation_id="$2"; service="$3"
+stage="$1"; operation_id="$2"; service="$3"; recovery="${4:-}"
 [[ "$operation_id" =~ ^[a-f0-9-]{36}$ ]] && [[ "$service" =~ ^[a-z]+$ ]] || exit 1
 [[ "$stage" = /tmp/manager-service-"$operation_id" ]] && [ ! -L "$stage" ] || exit 1
 umask 077
@@ -9,7 +9,8 @@ printf '{"status":"running","operationId":"%s","service":"%s","pid":%s,"processS
 cleanup(){
   code=$?
   if [ "$code" != 0 ] && grep -q '"status":"running"' "$stage/result.json"; then
-    printf '{"status":"failed","operationId":"%s","service":"%s","message":"Installer runtime preparation failed. Existing services were preserved."}' "$operation_id" "$service" > "$stage/result.json"
+    status=failed;[ -z "$recovery" ] || status=interrupted
+    printf '{"status":"%s","operationId":"%s","service":"%s","message":"Installer runtime preparation failed. Existing services and recovery files were preserved."}' "$status" "$operation_id" "$service" > "$stage/result.json"
   fi
   chown --reference="$stage/plan.json" "$stage/result.json"
   rm -rf -- "$stage/installer-node"

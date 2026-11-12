@@ -20,6 +20,32 @@ test('database readiness failure preserves changed data and requires reviewed re
 test('failed cold backup restarts the old service before replacing any binaries',async t=>{
   const root=await fixture(t),exe=path.join(root,'engine'),candidate=path.join(root,'candidate');await fs.writeFile(exe,'old');await fs.writeFile(candidate,'new');let starts=0;await assert.rejects(upgrade.replaceFiles(path.join(root,'upgrade'),[{source:candidate,destination:exe}],async()=>{}, {database:true,stop:async()=>{},start:async()=>starts++,backup:async()=>{throw Error('backup failed')}}),/backup failed/);assert.equal(starts,1);assert.equal(await fs.readFile(exe,'utf8'),'old');
 });
+
+test('an unconfirmed service stop keeps the operation locked for recovery',async t=>{
+  const root=await fixture(t),exe=path.join(root,'engine'),source=path.join(root,'candidate'),target=path.join(root,'update');await fs.writeFile(exe,'old');await fs.writeFile(source,'new');let starts=0;
+  await assert.rejects(upgrade.replaceFiles(target,[{source,destination:exe}],async()=>{}, {stop:async()=>{throw Error('stop timeout')},start:async()=>starts++}),/did not confirm a clean stop/);
+  assert.equal(starts,0);assert.equal(await fs.readFile(exe,'utf8'),'old');assert.equal(JSON.parse(await fs.readFile(path.join(target,'upgrade.json'))).phase,'needs_review');
+});
+
+test('systemd identity excludes changing run metadata but keeps arguments',()=>{
+  const {systemdCommand}=require('../scripts/service-upgrade-platform.cjs'),prefix='{ path=/opt/service/bin/server ; argv[]=/opt/service/bin/server --config /etc/server.conf ; ignore_errors=no';
+  assert.equal(systemdCommand(prefix+' ; start_time=[yesterday] ; pid=100 ; status=0 }'),systemdCommand(prefix+' ; start_time=[today] ; pid=200 ; status=0 }'));
+  assert.notEqual(systemdCommand(prefix+' ; start_time=[] }'),systemdCommand(prefix.replace('server.conf','different.conf')+' ; start_time=[] }'));
+});
+
+test('database restoration resumes after the original data rename and retains post-upgrade writes',async t=>{
+  const root=await fixture(t),data=path.join(root,'data'),target=path.join(root,'update'),backup=path.join(target,'database-backup'),prepared=path.join(root,'data.manager-restore-'+randomUUID()),operationId=randomUUID(),retained=data+'.manager-recovery-'+operationId;
+  await fs.mkdir(backup,{recursive:true});await fs.mkdir(data);await fs.mkdir(prepared);await fs.writeFile(path.join(backup,'record'),'before');await fs.writeFile(path.join(data,'record'),'writes after update');await fs.copyFile(path.join(backup,'record'),path.join(prepared,'record'));
+  const manifest={verified:true,data,files:{record:createHash('sha256').update('before').digest('hex')}};await upgrade.atomic(path.join(target,'database-backup.json'),manifest);
+  const journal={kind:'files',phase:'needs_review',started:true,files:[],dataRestore:{phase:'moving',prepared,retained}};await upgrade.atomic(path.join(target,'upgrade.json'),journal);await fs.rename(data,retained);
+  const platform=require('../scripts/service-upgrade-platform.cjs');await platform.restoreDatabase({databaseDataPath:data,operationId},target,journal);assert.equal(await fs.readFile(path.join(data,'record'),'utf8'),'before');assert.equal(await fs.readFile(path.join(retained,'record'),'utf8'),'writes after update');
+  await platform.restoreDatabase({databaseDataPath:data,operationId},target,journal);assert.equal(journal.dataRestore.phase,'restored');await fs.writeFile(path.join(backup,'extra'),'unexpected');await assert.rejects(platform.verifyBackup(backup,manifest),/inventory changed/);
+});
+
+test('binary restoration refuses third-party changes and can be retried after a completed restore',async t=>{
+  const root=await fixture(t),exe=path.join(root,'engine'),source=path.join(root,'candidate'),target=path.join(root,'update');await fs.writeFile(exe,'old');await fs.writeFile(source,'new');await upgrade.replaceFiles(target,[{source,destination:exe}],async()=>{});
+  await fs.writeFile(exe,'external edit');await assert.rejects(upgrade.restoreFiles(path.join(target,'upgrade.json')),/changed installation file/);assert.equal(await fs.readFile(exe,'utf8'),'external edit');await fs.writeFile(exe,'new');await upgrade.restoreFiles(path.join(target,'upgrade.json'));await upgrade.restoreFiles(path.join(target,'upgrade.json'));assert.equal(await fs.readFile(exe,'utf8'),'old');
+});
 test('private browser switches complete releases, retains sessions and rolls back failed activation',async t=>{
   const root=await fixture(t),agent=path.join(root,'agent'),old=path.join(root,'old'),source=path.join(root,'source');await fs.mkdir(agent);await fs.mkdir(old);await fs.mkdir(source);await fs.mkdir(path.join(source,'phpMyAdmin-5.2.3-all-languages/libraries/classes'),{recursive:true});await fs.writeFile(path.join(source,'phpMyAdmin-5.2.3-all-languages/libraries/classes/Version.php'),"<?php const VERSION = '5.2.3';");await fs.writeFile(path.join(source,'phpMyAdmin-5.2.3-all-languages/index.php'),'new');await fs.writeFile(path.join(old,'index.php'),'old');await fs.writeFile(path.join(old,'config.inc.php'),'existing config');await fs.writeFile(path.join(root,'php.ini'),'private ini');await fs.mkdir(path.join(root,'sessions'));await fs.writeFile(path.join(root,'sessions','existing'),'existing session');
   const config={version:'5.2.2',clientRoot:old,phpCgi:process.execPath,phpIni:path.join(root,'php.ini'),secret:'a'.repeat(64),sessionRoot:path.join(root,'sessions'),tempRoot:root};await fs.writeFile(path.join(agent,'database-browser.json'),JSON.stringify(config));

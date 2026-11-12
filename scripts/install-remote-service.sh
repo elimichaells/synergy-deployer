@@ -17,7 +17,7 @@ cleanup(){
   if [ "$code" != 0 ]; then
     if [ "$changed_paths" = 1 ]; then cp -- "$stage/previous-paths.json" "$root/tool-paths.json"; chown manager-agent:manager-agent "$root/tool-paths.json"; fi
     if [ -n "$created_unit" ]; then systemctl stop "$created_unit" || true; fi
-    "$node_exe" -e 'const fs=require("fs"),p=require(process.argv[1]);fs.writeFileSync(process.argv[2],JSON.stringify({status:"failed",operationId:p.operationId,service:p.service,message:"Service operation failed; existing paths restored. Initialized data and encrypted recovery credentials are retained."}))' "$plan_file" "$receipt"
+    "$node_exe" -e 'const fs=require("fs"),path=require("path"),p=require(process.argv[1]);let status="failed";if(p.mode==="update"){const file=path.join(p.dataRoot,"updates",p.service,p.operationId,"upgrade.json");if(fs.existsSync(file)){try{if(!["prepared","rolled_back"].includes(JSON.parse(fs.readFileSync(file)).phase))status="interrupted"}catch{status="interrupted"}}}fs.writeFileSync(process.argv[2],JSON.stringify({status,operationId:p.operationId,service:p.service,message:"Service operation failed. Existing data and recovery files are retained; review the operation before continuing."}))' "$plan_file" "$receipt"
     chown --reference="$plan_file" "$receipt"
   fi
 }

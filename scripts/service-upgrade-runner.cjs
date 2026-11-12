@@ -54,7 +54,12 @@ async function execute(plan,stage){
 }
 async function recover(plan,stage,action){
   const target=path.join(plan.dataRoot,'updates',plan.service,plan.operationId),journalFile=path.join(target,'upgrade.json');await upgrade.regular(target,true);
-  if(plan.service==='phpmyadmin')return {...await upgrade.browserRecover(plan,target,root=>upgrade.run(process.execPath,[path.join(__dirname,'database-browser-agent.cjs'),root])),operationId:plan.operationId,service:plan.service};
+  if(plan.service==='phpmyadmin'){
+    const check=async root=>{const script=path.join(target,'browser-check.cjs');await upgrade.regular(script);await platform.asAgent(plan.agentRoot,script,[root]);};
+    if(action==='restore')return {...await upgrade.browserRecover(plan,target,check),operationId:plan.operationId,service:plan.service};
+    if(action!=='verify')throw Error('Choose verification or restoration');
+    const state=JSON.parse(await fs.readFile(journalFile,'utf8'));if(state.operationId!==plan.operationId||state.kind!=='browser'||await fs.readFile(state.marker,'utf8')!==JSON.stringify(state.config))throw Error('The selected browser release is not active');await check(plan.agentRoot);state.phase='complete';await upgrade.atomic(journalFile,state);return {status:'success',operationId:plan.operationId,service:plan.service,version:plan.version,message:'Updated private browser verified using its service account.'};
+  }
   const journal=JSON.parse(await fs.readFile(journalFile,'utf8')),database=policy.services[plan.service].kind==='database';
   if(journal.kind==='pm2-selection'){
     await platform.asAgent(plan.agentRoot,path.join(target,'activate-pm2.cjs'),[plan.agentRoot,target,action]);return {status:action==='verify'?'success':'failed',operationId:plan.operationId,service:plan.service,message:action==='verify'?'Updated private PM2 daemon verified.':'Previous private PM2 daemon restored; applications and external process managers preserved.'};
@@ -65,19 +70,18 @@ async function recover(plan,stage,action){
     else if(action==='restore'){await upgrade.atomic(journal.pathsFile,journal.previous);journal.phase='rolled_back';}else throw Error('Choose verification or restoration');
     await upgrade.atomic(journalFile,journal);return {status:action==='verify'?'success':'failed',operationId:plan.operationId,service:plan.service,message:action==='verify'?'Updated tool verified.':'Previous tool selection restored; both installations retained.'};
   }
-  if(plan.serviceName){const before=JSON.parse(await fs.readFile(path.join(target,'service-before.json'),'utf8')),actual=await platform.inspectService(plan.serviceName);for(const key of ['command','account','startMode'])if(before[key]!==actual[key])throw Error('Service registration changed; recovery is blocked');if(!(await fs.readFile(plan.configPath)).equals(await fs.readFile(path.join(target,'configuration-before'))))throw Error('Service configuration changed; recovery is blocked');}
-  if(action==='verify'){
-    if(plan.serviceName)await platform.transition(plan.serviceName,'start');try{if(database){const info=await platform.databaseInfo(plan,stage);if(policy.version(info.version)!==plan.version)throw Error('The running version is not the selected release');}else if(await binaryVersion(plan.service,plan.path)!==plan.version)throw Error('The installed version is not the selected release');journal.phase='complete';await upgrade.atomic(journalFile,journal);return{status:'success',operationId:plan.operationId,service:plan.service,version:plan.version,message:'Updated service verified; recovery files retained.'};}catch(error){if(plan.serviceName)await platform.transition(plan.serviceName,'stop');throw error;}
+  if(plan.serviceName){const before=JSON.parse(await fs.readFile(path.join(target,'service-before.json'),'utf8')),actual=await platform.inspectSelected(plan);for(const key of ['command','account','startMode'])if(before[key]!==actual[key])throw Error('Service registration changed; recovery is blocked');if(!(await fs.readFile(plan.configPath)).equals(await fs.readFile(path.join(target,'configuration-before'))))throw Error('Service configuration changed; recovery is blocked');}
+  const restored=journal.phase==='rolled_back',expected=restored?plan.currentVersion:plan.version;
+  if(journal.dataRestore&&!restored&&action!=='restore')throw Error('Continue the interrupted backup restoration before starting this database');
+  let executable=plan.path,context={};if(plan.service==='composer'){const paths=JSON.parse(await fs.readFile(path.join(plan.agentRoot,'tool-paths.json'),'utf8'));context.php=paths.php;if(/\.(bat|cmd)$/i.test(executable))executable=path.join(path.dirname(executable),'composer.phar');}
+  const verify=async version=>{if(database)await platform.waitForDatabase(plan,stage,version);else if(await binaryVersion(plan.service,executable,context)!==version)throw Error('The installed version is not the selected release')};
+  if(action==='verify'||restored){
+    if(plan.serviceName)await platform.transitionSelected(plan,'start');try{await verify(expected);journal.phase=restored?'rolled_back':'complete';await upgrade.atomic(journalFile,journal);return{status:restored?'failed':'success',operationId:plan.operationId,service:plan.service,version:expected,message:restored?'Previous installation restored and verified; recovery files retained.':'Updated service verified; recovery files retained.'};}catch(error){if(plan.serviceName)await platform.transitionSelected(plan,'stop');throw error;}
   }
   if(action!=='restore')throw Error('Choose verification or reviewed backup restoration');
-  if(plan.serviceName)await platform.transition(plan.serviceName,'stop');
-  if(database&&journal.started){
-    const manifest=JSON.parse(await fs.readFile(path.join(target,'database-backup.json'),'utf8')),backup=path.join(target,'database-backup');if(!manifest.verified||manifest.data!==plan.databaseDataPath)throw Error('The cold backup does not match this database');
-    for(const [file,hash]of Object.entries(manifest.files)){const candidate=path.resolve(backup,file);if(!upgrade.inside(backup,candidate)||await platform.digest(candidate)!==hash)throw Error('Cold backup verification failed');}
-    await upgrade.regular(plan.databaseDataPath,true);const retained=plan.databaseDataPath+'.manager-recovery-'+plan.operationId;if(await fs.lstat(retained).catch(()=>null))throw Error('A retained post-upgrade data directory already exists; inspect recovery before retrying');
-    await fs.rename(plan.databaseDataPath,retained);try{await platform.copyTree(backup,plan.databaseDataPath)}catch(error){journal.phase='needs_review';journal.retainedData=retained;await upgrade.atomic(journalFile,journal);throw error;}journal.retainedData=retained;await upgrade.atomic(journalFile,journal);
-  }
-  await upgrade.restoreFiles(journalFile);if(plan.serviceName)await platform.transition(plan.serviceName,'start');if(database){const info=await platform.databaseInfo(plan,stage);if(policy.version(info.version)!==plan.currentVersion)throw Error('Restored database verification failed');}
+  if(plan.serviceName)await platform.transitionSelected(plan,'stop');
+  if(database&&journal.started)await platform.restoreDatabase(plan,target,journal);
+  await upgrade.restoreFiles(journalFile);if(plan.serviceName)await platform.transitionSelected(plan,'start');await verify(plan.currentVersion);
   return{status:'failed',operationId:plan.operationId,service:plan.service,message:'Previous installation restored and verified. Recovery files and post-upgrade data were retained.'};
 }
 module.exports={execute,recover,binaryVersion};

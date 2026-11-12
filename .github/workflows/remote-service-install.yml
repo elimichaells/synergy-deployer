@@ -17,11 +17,40 @@ on:
 permissions:
   contents: read
 jobs:
+  native-tools:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - if: runner.os == 'Windows'
+        run: node --require ./tests/register.cjs --test tests/service-upgrade-native.test.cjs
+        env:
+          MANAGER_SERVICE_UPGRADE_NATIVE: '1'
+      - if: runner.os == 'Linux'
+        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,MANAGER_SERVICE_UPGRADE_NATIVE "$(command -v node)" --require ./tests/register.cjs --test tests/service-upgrade-native.test.cjs
+        env:
+          MANAGER_SERVICE_UPGRADE_NATIVE: '1'
   database:
     strategy:
       fail-fast: false
       matrix:
         include:
+          - os: windows-latest
+            engine: postgresql
+          - os: windows-latest
+            engine: mysql
+          - os: windows-latest
+            engine: mariadb
           - os: windows-latest
             engine: phpmyadmin
           - os: ubuntu-22.04

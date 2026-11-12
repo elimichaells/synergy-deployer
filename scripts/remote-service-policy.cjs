@@ -17,7 +17,7 @@ function servicePlan(raw,platform){
   const spec=SERVICES[raw.service],port=spec.port?Number(raw.port||spec.port):0;
   if(spec.port&&(!Number.isInteger(port)||port<1024||port>65535||[2019,2029].includes(port)))throw Error('Choose an unused database port between 1024 and 65535');
   return {service:raw.service,mode:raw.mode,version,path:raw.mode==='reuse'||raw.mode==='update'&&raw.path?absolute(raw.path,platform,'executable'):'',port,
-    ...(raw.mode==='update'?{currentVersion:String(raw.currentVersion||''),serviceName:String(raw.serviceName||''),configPath:raw.configPath?absolute(raw.configPath,platform,'service configuration'):'',databaseDataPath:raw.databaseDataPath?absolute(raw.databaseDataPath,platform,'database data'):''}:{}),
+    ...(raw.mode==='update'?{currentVersion:String(raw.currentVersion||''),serviceManager:raw.service==='caddy'&&raw.serviceManager==='pm2'?'pm2':'native',serviceName:String(raw.serviceName||''),configPath:raw.configPath?absolute(raw.configPath,platform,'service configuration'):'',databaseDataPath:raw.databaseDataPath?absolute(raw.databaseDataPath,platform,'database data'):''}:{}),
     agentRoot:absolute(raw.agentRoot||(platform==='win32'?'C:\\ProgramData\\ManagerAgent':'/var/lib/manager-agent'),platform,'agent'),
     dataRoot:absolute(raw.dataRoot||(platform==='win32'?'C:\\ProgramData\\ManagerServices':'/var/lib/manager-services'),platform,'service data')};
 }
@@ -31,7 +31,8 @@ function verifyServicePlan(plan,inventory){
     const checked=upgrades.validate(plan.service,current,plan.version,inventory.platform);
     if(checked.currentVersion!==plan.currentVersion)throw Error('The installed version changed. Review the update again.');
     if(checked.kind==='database'&&(!plan.serviceName||!plan.configPath||!plan.databaseDataPath))throw Error('Select the existing service, configuration file and data directory for the cold backup');
-    if(plan.serviceName&&!inventory.services.some(s=>s.name===plan.serviceName))throw Error('The selected service is not present in this inventory');
+    if(plan.serviceManager==='pm2'){if(plan.service!=='caddy'||plan.serviceName!=='manager-remote-caddy')throw Error('Select the agent’s private Caddy process');}
+    else if(plan.serviceName&&!inventory.services.some(s=>s.name===plan.serviceName))throw Error('The selected service is not present in this inventory');
     if(plan.serviceName.length>200||/[\x00-\x1f]/.test(plan.serviceName))throw Error('Invalid service name');
     return;
   }
