@@ -7,12 +7,19 @@ const managerRoot = process.env.MANAGER_ROOT || path.resolve(__dirname, '..')
 const envFile = path.join(managerRoot, '.env.local')
 const managerConfig = fs.existsSync(envFile) ? require('dotenv').parse(fs.readFileSync(envFile)) : {}
 
-const php = process.env.PHPMYADMIN_PHP || 'php.exe'
+let php = process.env.PHPMYADMIN_PHP || 'php.exe'
 // Tools and temporary files sit beside the manager folder unless configured otherwise.
 const webRoot = managerConfig.MANAGER_WEB_ROOT || managerConfig.CADDY_PATH || process.env.MANAGER_WEB_ROOT || process.env.CADDY_PATH || path.dirname(managerRoot)
-const root = process.env.PHPMYADMIN_ROOT || managerConfig.PHPMYADMIN_ROOT || path.join(managerConfig.MANAGER_TOOLS_ROOT || path.join(webRoot, 'tools'), 'phpmyadmin')
-const tempDir = path.join(webRoot, 'temp', 'phpmyadmin')
-const sessionDir = path.join(webRoot, 'temp', 'phpmyadmin-sessions')
+let root = process.env.PHPMYADMIN_ROOT || managerConfig.PHPMYADMIN_ROOT || path.join(managerConfig.MANAGER_TOOLS_ROOT || path.join(webRoot, 'tools'), 'phpmyadmin')
+let tempDir = path.join(webRoot, 'temp', 'phpmyadmin')
+let sessionDir = path.join(webRoot, 'temp', 'phpmyadmin-sessions')
+let privateIni
+const activeMarker=path.join(managerConfig.MANAGER_TOOLS_ROOT || process.env.MANAGER_TOOLS_ROOT || path.join(webRoot,'tools'),'phpmyadmin-state','database-browser.json')
+if(process.env.MANAGER_OFFLINE_INSTALL!=='1'&&managerConfig.MANAGER_OFFLINE_INSTALL!=='1'&&fs.existsSync(activeMarker)){
+  const active=JSON.parse(fs.readFileSync(activeMarker,'utf8'))
+  if(![active.clientRoot,active.phpCgi,active.phpIni,active.tempRoot,active.sessionRoot].every(value=>typeof value==='string'&&path.isAbsolute(value)))throw Error('Invalid active database browser release')
+  root=active.clientRoot;php=path.join(path.dirname(active.phpCgi),'php.exe');privateIni=active.phpIni;tempDir=active.tempRoot;sessionDir=active.sessionRoot
+}
 const port = process.env.PHPMYADMIN_PORT || '8433'
 const managerDomain = managerConfig.MANAGER_DOMAIN || process.env.MANAGER_DOMAIN || 'deploy.smartcloudgh.com'
 const managerAddress = managerDomain.includes(':') && !managerDomain.startsWith('[') ? `[${managerDomain}]` : managerDomain
@@ -28,7 +35,7 @@ for (const directory of [tempDir, sessionDir]) {
   fs.mkdirSync(directory, { recursive: true })
 }
 
-const child = spawn(php, ['-S', `127.0.0.1:${port}`, '-t', root], {
+const child = spawn(php, [...(privateIni?['-c',privateIni]:[]),'-S', `127.0.0.1:${port}`, '-t', root], {
   cwd: root,
   windowsHide: true,
   stdio: 'inherit',
@@ -40,6 +47,7 @@ const child = spawn(php, ['-S', `127.0.0.1:${port}`, '-t', root], {
     TMP: process.env.TMP,
     Path: process.env.Path || process.env.PATH,
     PATH: process.env.Path || process.env.PATH,
+    ...(privateIni?{PHPRC:privateIni,PHP_INI_SCAN_DIR:path.join(root,'.ini-scan')}:{}),
     PHPMYADMIN_BLOWFISH_SECRET: createHmac('sha256', secret).update('manager:phpmyadmin').digest('hex'),
     PHPMYADMIN_PUBLIC_URL: `${managerUrl}/mysql/`,
     // phpMyAdmin's config reads these with forward slashes.

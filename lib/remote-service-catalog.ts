@@ -14,4 +14,4 @@ export const REMOTE_SERVICES=[
   {id:'phpmyadmin',name:'phpMyAdmin',tool:'phpmyadmin'},
 ] as const
 export type RemoteServiceId=typeof REMOTE_SERVICES[number]['id']
-export type RemoteServicePlan={service:RemoteServiceId;mode:'reuse'|'install'|'install-version';version:string;path:string;port:number;agentRoot:string;dataRoot:string}
+export type RemoteServicePlan={service:RemoteServiceId;mode:'reuse'|'install'|'install-version'|'update';version:string;path:string;port:number;agentRoot:string;dataRoot:string;currentVersion?:string;serviceName?:string;configPath?:string;databaseDataPath?:string}

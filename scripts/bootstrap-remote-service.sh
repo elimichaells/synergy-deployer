@@ -24,4 +24,8 @@ mkdir "$stage/installer-node"
 curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fLS "$NODE_URL" -o "$stage/installer-node.tar.xz"
 printf '%s  %s\n' "$NODE_SHA" "$stage/installer-node.tar.xz" | sha256sum -c -
 tar -xJf "$stage/installer-node.tar.xz" -C "$stage/installer-node" --strip-components=1
-/bin/bash "$stage/install-remote-service.sh" "$stage/plan.json" "$stage/installer-node/bin/node"
+if [ "${4:-}" = verify ] || [ "${4:-}" = restore ]; then
+  "$stage/installer-node/bin/node" "$stage/service-upgrade-runner.cjs" "$stage/plan.json" "$4"
+else
+  /bin/bash "$stage/install-remote-service.sh" "$stage/plan.json" "$stage/installer-node/bin/node"
+fi

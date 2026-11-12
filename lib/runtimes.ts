@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from 'fs'
+import { existsSync, readdirSync,readFileSync } from 'fs'
 import path from 'path'
 import { db, query } from '@/lib/db'
 import { runCommand } from '@/lib/exec'
@@ -126,6 +126,10 @@ async function inspectRuntime(definition: RuntimeDefinition) {
     }
     const receipt = offlineServiceReceipt(definition.id)
     return { installed: receipt?.phase === 'ready', version: receipt ? `${definition.name} ${receipt.version} — ${receipt.phase === 'ready' ? 'installed' : 'setup incomplete'} · port ${receipt.port}` : null }
+  }
+  if(definition.id==='phpmyadmin'){
+    const marker=path.join(toolsRoot(),'phpmyadmin-state','database-browser.json')
+    if(existsSync(marker)){try{const config=JSON.parse(readFileSync(marker,'utf8'));return {installed:existsSync(path.join(config.clientRoot,'index.php')),version:'phpMyAdmin '+config.version}}catch{return {installed:false,version:null}}}
   }
   const result = await runCommand(`${executable(definition)} --version`, undefined, 15_000, undefined, runtimeEnv(definition.id))
   const versionResult = result.code === 0 ? result : await runCommand(definition.versionCommand, undefined, 15_000, undefined, runtimeEnv(definition.id))
@@ -292,6 +296,11 @@ async function executeRuntimeJob(jobId: string) {
   const definition = definitionFor(job.runtime_id)
   try {
     await appendRuntimeLog(jobId, `[runtime] ${definition.name} ${job.action}${job.requested_version ? ` ${job.requested_version}` : ''}\n`)
+    if(job.runtime_id==='phpmyadmin'&&job.action==='update'&&!offlineMode()){
+      const {remoteToolUpdate,detectedToolVersion}=await import('./remote-tool-updates'),current=await inspectRuntime(definition),catalog=await remoteToolUpdate('phpmyadmin',process.platform,current.version,true),version=job.requested_version||catalog.latestVersion
+      if(!version||!detectedToolVersion('phpmyadmin',current.version||''))throw new Error('Check the current phpMyAdmin version and official release catalog before updating')
+      const {upgradeHostBrowser}=await import('./host-browser-upgrade');await upgradeHostBrowser(version,chunk=>appendRuntimeLog(jobId,chunk));await query("update runtime_jobs set status='success',finished_at=now(),updated_at=now() where id=$1",[jobId]);return
+    }
     const command = runtimeJobCommand(job.runtime_id, job.action, job.requested_version)
     let logQueue = Promise.resolve()
     const result = await runCommand(command, undefined, 30 * 60_000, (chunk) => { logQueue = logQueue.then(() => appendRuntimeLog(jobId, chunk)) }, runtimeEnv(job.runtime_id))

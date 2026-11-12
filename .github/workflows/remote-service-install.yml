@@ -4,10 +4,14 @@ on:
     paths:
       - 'scripts/install-remote-*'
       - 'scripts/*database-browser*'
+      - 'scripts/service-upgrade*'
+      - 'lib/service-upgrade*'
+      - 'lib/host-browser-upgrade.ts'
       - 'scripts/initialize-remote-database.cjs'
       - 'scripts/inspect-remote-server.*'
       - 'lib/remote-service*.ts'
       - 'tests/remote-*-install.test.cjs'
+      - 'tests/service-upgrade*'
       - '.github/workflows/remote-service-install.yml'
   workflow_dispatch:
 permissions:
@@ -48,9 +52,11 @@ jobs:
         env:
           MANAGER_SERVICE_INSTALL_LAB: '1'
           MANAGER_SERVICE_INSTALL_ENGINE: ${{ matrix.engine }}
+          MANAGER_SERVICE_UPGRADE_LAB: '1'
       - if: runner.os == 'Linux'
         shell: bash
-        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,TEST_CADDY,TEST_PM2_PACKAGE_ROOT,MANAGER_SERVICE_INSTALL_LAB,MANAGER_SERVICE_INSTALL_ENGINE "$(command -v node)" --require ./tests/register.cjs --test tests/remote-database-install.test.cjs
+        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,TEST_CADDY,TEST_PM2_PACKAGE_ROOT,MANAGER_SERVICE_INSTALL_LAB,MANAGER_SERVICE_INSTALL_ENGINE,MANAGER_SERVICE_UPGRADE_LAB "$(command -v node)" --require ./tests/register.cjs --test tests/remote-database-install.test.cjs
         env:
           MANAGER_SERVICE_INSTALL_LAB: '1'
           MANAGER_SERVICE_INSTALL_ENGINE: ${{ matrix.engine }}
+          MANAGER_SERVICE_UPGRADE_LAB: '1'
