@@ -28,6 +28,7 @@ function verifyServicePlan(plan,inventory){
   if(plan.mode==='update'){
     const current=plan.service==='phpmyadmin'?plan.currentVersion:candidates.find(x=>x.compatible&&(inventory.platform==='win32'?x.path.toLowerCase()===plan.path.toLowerCase():x.path===plan.path))?.version;
     if(!current)throw Error('Inspect the exact installed executable before upgrading');
+    if(plan.service==='mysql'&&/MariaDB/i.test(current))throw Error('This MySQL-compatible client belongs to MariaDB. Select MariaDB maintenance to preserve its database engine.');
     const checked=upgrades.validate(plan.service,current,plan.version,inventory.platform);
     if(checked.currentVersion!==plan.currentVersion)throw Error('The installed version changed. Review the update again.');
     if(checked.kind==='database'&&(!plan.serviceName||!plan.configPath||!plan.databaseDataPath))throw Error('Select the existing service, configuration file and data directory for the cold backup');

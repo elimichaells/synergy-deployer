@@ -13,6 +13,11 @@ test('Composer verification ignores the PHP version emitted before its version l
   const original=upgrade.run;upgrade.run=async()=> 'PHP version 8.3.6 (/usr/bin/php8.3)\nComposer version 2.11.2 2026-10-20\n';
   try{assert.equal(await require('../scripts/service-upgrade-runner.cjs').binaryVersion('composer','fixture.phar',{php:'fixture-php'}),'2.11.2')}finally{upgrade.run=original}
 });
+
+test('a MariaDB compatibility client cannot receive MySQL engine binaries',()=>{
+  const services=require('../scripts/remote-service-policy.cjs'),file='C:\\MariaDB\\bin\\mysql.exe',plan=services.servicePlan({service:'mysql',mode:'update',path:file,currentVersion:'10.6.16',version:'10.6.27',serviceName:'MariaDB',configPath:'C:\\MariaDB\\my.ini',databaseDataPath:'C:\\MariaDB\\data'},'win32');
+  assert.throws(()=>services.verifyServicePlan(plan,{platform:'win32',portsKnown:true,tools:{mysql:[{path:file,compatible:true,version:'mysql Ver 15.1 Distrib 10.6.16-MariaDB'}]},services:[{name:'MariaDB'}]}),/Select MariaDB maintenance/);
+});
 test('binary update verifies a cold backup before replacing files and preserves unrelated configuration',async t=>{
   const root=await fixture(t),target=path.join(root,'update'),exe=path.join(root,'engine'),candidate=path.join(root,'new-engine'),config=path.join(root,'site.conf'),data=path.join(root,'database');await fs.writeFile(exe,'old');await fs.writeFile(candidate,'new');await fs.writeFile(config,'existing site');await fs.writeFile(data,'existing row');const events=[];
   await upgrade.replaceFiles(target,[{source:candidate,destination:exe}],async()=>{events.push('verify');assert.equal(await fs.readFile(exe,'utf8'),'new')},{stop:async()=>events.push('stop'),start:async()=>events.push('start'),backup:async folder=>{events.push('backup');assert.equal(await fs.readFile(exe,'utf8'),'old');await fs.copyFile(data,path.join(folder,'data-before'))}});

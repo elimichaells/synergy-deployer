@@ -1,6 +1,6 @@
 # Host and connected-server functionality audit
 
-Audit for Manager 2.33.0 / agent 1.9.1, starting from Manager 2.31.0 / agent 1.8.0.
+Audit for Manager 2.33.0 / agent 1.9.2, starting from Manager 2.31.0 / agent 1.8.0.
 The release fixes the verified gaps below; it does not claim universal functional parity.
 Production applications, databases and shared proxy configuration are outside the destructive test scope.
 

@@ -40,7 +40,7 @@ for id in node git caddy pm2 psql pg_dump pg_restore mysql mariadb go php python
     elif [ -x "$exe" ]; then
       arg=--version; case "$id" in go|caddy|ng) arg=version;; sqlcmd) arg=-?;; esac
       if output="$(NG_CLI_ANALYTICS=false timeout 10 "$exe" "$arg" 2>&1)"; then
-        if [ "$id" = sqlcmd ]; then version="$(printf '%s\n' "$output" | sed -nE 's/.*[Vv]ersion[: ]+v?([0-9.]+).*/sqlcmd version \1/p' | head -1)"; elif [ "$id" = ng ]; then version="$(printf '%s\n' "$output" | grep -Eo 'Angular CLI[[:space:]]*:[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+' | head -1)"; else version="$(printf '%s\n' "$output" | head -1 | cut -c1-200)"; fi
+        if [ "$id" = sqlcmd ]; then version="$(printf '%s\n' "$output" | sed -nE 's/.*[Vv]ersion[: ]+v?([0-9.]+).*/sqlcmd version \1/p' | head -1)"; elif [ "$id" = composer ]; then version="$(printf '%s\n' "$output" | sed -nE 's/.*Composer( version)? ([0-9]+\.[0-9]+\.[0-9]+).*/Composer version \2/p' | head -1)"; elif [ "$id" = ng ]; then version="$(printf '%s\n' "$output" | grep -Eo 'Angular CLI[[:space:]]*:[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+' | head -1)"; else version="$(printf '%s\n' "$output" | head -1 | cut -c1-200)"; fi
       else problem='Version check failed'; fi
     else problem='Not executable'; fi
     emit tool "$id" "$exe" "$version" "$problem"
