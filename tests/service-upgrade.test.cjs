@@ -3,6 +3,7 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const upgrade=require('../scripts/service-upgrade.cjs'),policy=require('../scripts/service-upgrade-policy.cjs');
 async function fixture(t){const root=await fs.mkdtemp(path.join(os.tmpdir(),'manager-upgrade-test-'));t.after(async()=>{assert.equal(path.dirname(root),os.tmpdir());assert.match(path.basename(root),/^manager-upgrade-test-/);await fs.rm(root,{recursive:true,force:true})});return root;}
 test('database upgrades stay within the installed series and reject downgrade',()=>{
+  assert.equal(policy.version('C:\\mysql-8.4.11-winx64\\bin\\mysql.exe Ver 8.4.13 for Win64 on x86_64 (MySQL Community Server - GPL)'),'8.4.13');
   for(const [service,current,next]of [['postgresql','18.5','18.6'],['mysql','8.4.12','8.4.13'],['mariadb','11.4.12','11.4.13'],['mongodb','8.0.33','8.0.34']])assert.equal(policy.validate(service,current,next,'win32').version,next);
   assert.throws(()=>policy.validate('mysql','8.4.13','9.0.0','win32'),/release series/);assert.throws(()=>policy.validate('postgresql','18.6','18.5','win32'),/newer/);assert.throws(()=>policy.validate('redis','8.2.11','8.2.12','win32'),/maintenance/);
 });

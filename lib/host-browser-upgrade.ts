@@ -4,7 +4,7 @@ import {randomUUID,createHmac} from 'node:crypto'
 import {toolsRoot,webRoot} from './paths'
 import {serviceUpgradeDownloads} from './service-upgrade-downloads'
 import {runCommand} from './exec'
-import {atomic,browserPrepare,browserActivate,browserRecover,run} from '../scripts/service-upgrade.cjs'
+import {atomic,browserPrepare,browserActivate,run} from '../scripts/service-upgrade.cjs'
 import {configure} from '../scripts/install-database-browser.cjs'
 
 // Host and remote upgrades use the same complete-release staging, vendor
@@ -25,9 +25,8 @@ export async function upgradeHostBrowser(version:string,log:(value:string)=>Prom
   const downloads=await serviceUpgradeDownloads('phpmyadmin',previous.version,version,process.platform,process.arch),operationId=randomUUID(),target=path.join(state,'releases',operationId);await mkdir(path.dirname(target),{recursive:true})
   const plan={service:'phpmyadmin',mode:'update',version,currentVersion:previous.version,agentRoot:state,operationId,downloads}
   await log('[update] Staging and verifying the private phpMyAdmin release. Existing files and PHP settings are retained.\n');await browserPrepare(plan,target)
-  const check=async(root:string)=>{await run(process.execPath,[path.join(process.cwd(),'scripts/database-browser-agent.cjs'),root])}
   const restart=async()=>{const result=await runCommand('pm2 restart "manager-phpmyadmin" --update-env',process.cwd(),60000,undefined,{MANAGER_ROOT:process.cwd()},false);if(result.code!==0)throw new Error('The private browser process did not restart');for(let attempt=0;attempt<30;attempt++){try{const response=await fetch(`http://127.0.0.1:${process.env.PHPMYADMIN_PORT||8433}/`,{redirect:'manual',signal:AbortSignal.timeout(2000)});if(response.status===200&&(await response.text()).includes('name="pma_username"'))return}catch{}await new Promise(resolve=>setTimeout(resolve,500))}throw new Error('The updated private browser did not pass its login-page check')}
+  const check=async(root:string)=>{await run(process.execPath,[path.join(process.cwd(),'scripts/database-browser-agent.cjs'),root]);if(root===state)await restart()}
   await browserActivate(plan,target,check)
-  try{await restart();await log('[verify] phpMyAdmin '+version+' is ready. Previous release, sessions, database services and proxy routes preserved.\n')}
-  catch(error){await browserRecover(plan,target,check);await restart();throw error}
+  await log('[verify] phpMyAdmin '+version+' is ready. Previous release, sessions, database services and proxy routes preserved.\n')
 }
