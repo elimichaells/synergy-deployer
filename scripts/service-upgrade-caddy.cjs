@@ -24,4 +24,4 @@ async function control(root,action,expected){
   throw Error('The private Caddy process did not reach the requested state');
 }
 module.exports={control};
-if(require.main===module)control(process.argv[2],process.argv[3],JSON.parse(process.argv[4])).then(value=>console.log('MANAGER_CADDY_RESULT='+JSON.stringify(value))).catch(error=>{console.error(error.message);process.exitCode=1});
+if(require.main===module)control(process.argv[2],process.argv[3],JSON.parse(Buffer.from(process.argv[4],"base64").toString("utf8"))).then(value=>console.log('MANAGER_CADDY_RESULT='+JSON.stringify(value))).catch(error=>{console.error(error.message);process.exitCode=1});

@@ -71,7 +71,7 @@ async function recover(plan,stage,action){
     await upgrade.atomic(journalFile,journal);return {status:action==='verify'?'success':'failed',operationId:plan.operationId,service:plan.service,message:action==='verify'?'Updated tool verified.':'Previous tool selection restored; both installations retained.'};
   }
   if(plan.serviceName){const before=JSON.parse(await fs.readFile(path.join(target,'service-before.json'),'utf8')),actual=await platform.inspectSelected(plan);for(const key of ['command','account','startMode'])if(before[key]!==actual[key])throw Error('Service registration changed; recovery is blocked');if(!(await fs.readFile(plan.configPath)).equals(await fs.readFile(path.join(target,'configuration-before'))))throw Error('Service configuration changed; recovery is blocked');}
-  const restored=journal.phase==='rolled_back',expected=restored?plan.currentVersion:plan.version;
+  const restored=journal.restored||journal.phase==='rolled_back',expected=restored?plan.currentVersion:plan.version;
   if(journal.dataRestore&&!restored&&action!=='restore')throw Error('Continue the interrupted backup restoration before starting this database');
   let executable=plan.path,context={};if(plan.service==='composer'){const paths=JSON.parse(await fs.readFile(path.join(plan.agentRoot,'tool-paths.json'),'utf8'));context.php=paths.php;if(/\.(bat|cmd)$/i.test(executable))executable=path.join(path.dirname(executable),'composer.phar');}
   const verify=async version=>{if(database)await platform.waitForDatabase(plan,stage,version);else if(await binaryVersion(plan.service,executable,context)!==version)throw Error('The installed version is not the selected release')};
@@ -81,7 +81,7 @@ async function recover(plan,stage,action){
   if(action!=='restore')throw Error('Choose verification or reviewed backup restoration');
   if(plan.serviceName)await platform.transitionSelected(plan,'stop');
   if(database&&journal.started)await platform.restoreDatabase(plan,target,journal);
-  await upgrade.restoreFiles(journalFile);if(plan.serviceName)await platform.transitionSelected(plan,'start');await verify(plan.currentVersion);
+  await upgrade.restoreFiles(journalFile);try{if(plan.serviceName)await platform.transitionSelected(plan,'start');await verify(plan.currentVersion)}catch(error){if(plan.serviceName)await platform.transitionSelected(plan,'stop');throw error}
   return{status:'failed',operationId:plan.operationId,service:plan.service,message:'Previous installation restored and verified. Recovery files and post-upgrade data were retained.'};
 }
 module.exports={execute,recover,binaryVersion};

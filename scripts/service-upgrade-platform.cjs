@@ -21,7 +21,7 @@ async function asAgent(root,script,args){
 }
 async function privateCaddy(plan,action,identity){
   const folder=path.join(plan.agentRoot,'maintenance'),helper=path.join(folder,'service-upgrade-caddy.cjs');await fs.mkdir(folder,{recursive:true});await fs.copyFile(path.join(__dirname,'service-upgrade-caddy.cjs'),helper);
-  const output=await asAgent(plan.agentRoot,helper,[plan.agentRoot,action,JSON.stringify({path:plan.path,configPath:plan.configPath,identity})]);
+  const output=await asAgent(plan.agentRoot,helper,[plan.agentRoot,action,Buffer.from(JSON.stringify({path:plan.path,configPath:plan.configPath,identity})).toString("base64")]);
   const value=output.split(/\r?\n/).find(line=>line.startsWith('MANAGER_CADDY_RESULT='));if(!value)throw Error('Private Caddy maintenance did not return a receipt');return JSON.parse(value.slice('MANAGER_CADDY_RESULT='.length));
 }
 async function inspectSelected(plan){

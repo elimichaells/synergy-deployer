@@ -14,10 +14,12 @@ export async function upgradeHostBrowser(version:string,log:(value:string)=>Prom
   const marker=path.join(state,'database-browser.json');let previous:any
   try{previous=JSON.parse(await readFile(marker,'utf8'))}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error
     const php=process.env.PHPMYADMIN_PHP||(await run('where.exe',['php.exe'])).trim().split(/\r?\n/)[0],phpCgi=path.join(path.dirname(php),'php-cgi.exe');await access(phpCgi)
-    const clientRoot=process.env.PHPMYADMIN_ROOT||path.join(toolsRoot(),'phpmyadmin'),current=(await readFile(path.join(clientRoot,'VERSION'),'utf8')).trim()
+    const clientRoot=process.env.PHPMYADMIN_ROOT||path.join(toolsRoot(),'phpmyadmin')
+    const current=await readFile(path.join(clientRoot,'VERSION'),'utf8').then(value=>value.trim()).catch(async error=>{if(error.code!=='ENOENT')throw error;const value=(await readFile(path.join(clientRoot,'libraries/classes/Version.php'),'utf8')).match(/const VERSION\s*=\s*['"]([\d.]+)['"]/)?.[1];if(!value)throw new Error('Inspect the existing phpMyAdmin release before updating');return value})
     if(!process.env.JWT_SECRET)throw new Error('The Manager browser secret is unavailable')
     const privateConfig=await configure(state,phpCgi,current)
     previous={version:current,clientRoot,phpCgi,phpIni:privateConfig.phpIni,tempRoot:path.join(webRoot(),'temp/phpmyadmin'),sessionRoot:path.join(webRoot(),'temp/phpmyadmin-sessions'),secret:createHmac('sha256',process.env.JWT_SECRET).update('manager:phpmyadmin').digest('hex')}
+    await mkdir(previous.tempRoot,{recursive:true});await mkdir(previous.sessionRoot,{recursive:true})
     await atomic(marker,previous)
   }
   const downloads=await serviceUpgradeDownloads('phpmyadmin',previous.version,version,process.platform,process.arch),operationId=randomUUID(),target=path.join(state,'releases',operationId);await mkdir(path.dirname(target),{recursive:true})
