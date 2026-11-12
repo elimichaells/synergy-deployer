@@ -27,7 +27,7 @@ async function unpack(asset,target){
   return root;
 }
 async function browserStage(plan,target){
-  const marker=path.join(plan.agentRoot,'database-browser.json'),previous=await fs.readFile(marker,'utf8'),old=JSON.parse(previous);await regular(marker);await regular(old.clientRoot,true);await regular(old.phpCgi);await regular(old.phpIni);
+  const marker=path.join(plan.agentRoot,'database-browser.json'),previous=await fs.readFile(marker,'utf8'),old=JSON.parse(previous);await regular(marker);await regular(old.clientRoot,true);await regular(await fs.realpath(old.phpCgi));await regular(old.phpIni);
   policy.validate('phpmyadmin',old.version,plan.version,process.platform);
   if(plan.currentVersion&&old.version!==plan.currentVersion)throw Error('The private browser changed after review');
   const root=await unpack(plan.downloads.update,target),clientRoot=path.join(target,'client');await fs.rename(root,clientRoot);

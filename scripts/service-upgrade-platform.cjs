@@ -4,7 +4,7 @@ const {createReadStream}=require('node:fs'),{createHash}=require('node:crypto');
 const {randomUUID}=require('node:crypto');
 const {run,regular,inside,files}=require('./service-upgrade.cjs');
 const quote=value=>"'"+value.replaceAll("'","''")+"'";
-const ps=source=>run('powershell.exe',['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from("$ErrorActionPreference='Stop';$env:PSModulePath=(Join-Path $PSHOME 'Modules')+';'+$env:PSModulePath;"+source,'utf16le').toString('base64')]);
+const ps=(source,timeout=120000)=>run('powershell.exe',['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from("$ErrorActionPreference='Stop';$env:PSModulePath=(Join-Path $PSHOME 'Modules')+';'+$env:PSModulePath;"+source,'utf16le').toString('base64')],{timeout});
 async function digest(file){const hash=createHash('sha256');for await(const chunk of createReadStream(file))hash.update(chunk);return hash.digest('hex');}
 async function copyTree(source,destination){
   await regular(source,true);await files(source);if(await fs.lstat(destination).catch(()=>null))throw Error('Backup destination already exists');
@@ -17,7 +17,7 @@ async function asAgent(root,script,args){
   const name='ManagerUpgradeCheck-'+randomUUID(),folder=path.join(root,name),file=path.join(folder,'check.ps1'),result=path.join(folder,'result.txt');await fs.mkdir(folder);
   await fs.writeFile(file,`Set-Location -LiteralPath ${quote(root)}; & ${quote(paths.node)} ${quote(script)} ${args.map(quote).join(' ')} *> ${quote(result+'.log')}; [IO.File]::WriteAllText(${quote(result)},[string]$LASTEXITCODE)`);
   const task=`$a=New-ScheduledTaskAction -Execute "$env:SystemRoot\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Argument ${quote('-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "'+file+'"')};Register-ScheduledTask -TaskName ${quote(name)} -Action $a -Principal (New-ScheduledTaskPrincipal -UserId 'S-1-5-19' -LogonType ServiceAccount -RunLevel Limited)|Out-Null;try{Start-ScheduledTask -TaskName ${quote(name)};for($i=0;$i -lt 150;$i++){if(Test-Path -LiteralPath ${quote(result)}){break};Start-Sleep -Seconds 1};if(-not(Test-Path -LiteralPath ${quote(result)})){throw 'Agent maintenance check timed out'}}finally{Stop-ScheduledTask -TaskName ${quote(name)} -ErrorAction SilentlyContinue;Unregister-ScheduledTask -TaskName ${quote(name)} -Confirm:$false}`;
-  await ps(task);if((await fs.readFile(result,'utf8')).trim()!=='0')throw Error('Agent maintenance failed: '+(await fs.readFile(result+'.log','utf8')).replaceAll('\0','').slice(-2000));
+  await ps(task,180000);if((await fs.readFile(result,'utf8')).trim()!=='0')throw Error('Agent maintenance failed: '+(await fs.readFile(result+'.log','utf8')).replaceAll('\0','').slice(-2000));
 }
 async function inspectService(name){
   if(!/^[A-Za-z0-9_.@$-]{1,200}$/.test(name)||/^manageragent|^managerupdater/i.test(name))throw Error('Invalid maintenance service identity');
@@ -26,8 +26,11 @@ async function inspectService(name){
     value.executable=value.command.match(/^\s*"([^"]+)"/)?.[1]||value.command.match(/^\s*(.+?\.exe)(?:\s|$)/i)?.[1];return value;
   }
   const output=await run('systemctl',['show',name,'--property=Id,ExecStart,ActiveState,MainPID,User,UnitFileState']),fields=Object.fromEntries(output.trim().split('\n').map(line=>{const at=line.indexOf('=');return[line.slice(0,at),line.slice(at+1)]}));
-  const executable=fields.ExecStart?.match(/path=(.*?)\s*;/)?.[1];if(!executable)throw Error('Cannot identify the exact systemd executable');return {name:fields.Id,command:fields.ExecStart,status:fields.ActiveState==='active'?'Running':fields.ActiveState,pid:Number(fields.MainPID),account:fields.User,startMode:fields.UnitFileState,executable};
+  const executable=fields.ExecStart?.match(/path=(.*?)\s*;/)?.[1];if(!executable)throw Error('Cannot identify the exact systemd executable');return {name:fields.Id,command:systemdCommand(fields.ExecStart),status:fields.ActiveState==='active'?'Running':fields.ActiveState,pid:Number(fields.MainPID),account:fields.User,startMode:fields.UnitFileState,executable};
 }
+// ExecStart includes run timestamps, PID and exit status, which change on stop.
+// Preserve the executable, arguments and ignore_errors setting for identity checks.
+function systemdCommand(value){return value.split(/\s*;\s*start_time=/)[0].trim();}
 async function transition(name,action){
   if(process.platform==='win32')await ps(`${action==='stop'?'Stop':'Start'}-Service -Name ${quote(name)} -ErrorAction Stop;$s=Get-Service -Name ${quote(name)};$s.WaitForStatus([ServiceProcess.ServiceControllerStatus]::${action==='stop'?'Stopped':'Running'},[TimeSpan]::FromSeconds(90))`);
   else await run('systemctl',[action,name]);
@@ -58,4 +61,4 @@ async function adapterFor(plan,installRoot,stage){
     if(database){const list=await files(plan.databaseDataPath);let size=0;for(const file of list)size+=(await fs.stat(path.join(plan.databaseDataPath,file))).size;const space=await fs.statfs(target);if(space.bavail*space.bsize<size*1.15+128*1024*1024)throw Error('Insufficient space for a verified cold database backup');const backup=path.join(target,'database-backup');await copyTree(plan.databaseDataPath,backup);const manifest={};for(const file of list){manifest[file]=await digest(path.join(plan.databaseDataPath,file));if(manifest[file]!==await digest(path.join(backup,file)))throw Error('Cold backup verification failed')}await fs.writeFile(path.join(target,'database-backup.json'),JSON.stringify({data:plan.databaseDataPath,files:manifest,verified:true}),{flag:'wx',mode:0o600});}
   },verify:async()=>{await checkIdentity();const actual=await inspectService(plan.serviceName);if(actual.status!=='Running'||!actual.pid)throw Error('Updated service is not running');if(database){let ready=false;for(let attempt=0;attempt<40;attempt++){try{const info=await databaseInfo(plan,stage);if(require('./service-upgrade-policy.cjs').version(info.version)!==plan.version)throw Error('The running database did not report the selected version');ready=true;break}catch{await new Promise(resolve=>setTimeout(resolve,500))}}if(!ready)throw Error('Updated database failed authenticated readiness');}return actual;}};
 }
-module.exports={inspectService,transition,databaseInfo,adapterFor,copyTree,digest,asAgent};
+module.exports={inspectService,transition,databaseInfo,adapterFor,copyTree,digest,asAgent,systemdCommand};
