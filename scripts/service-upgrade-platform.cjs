@@ -51,7 +51,13 @@ async function processIdentity(pid){
   if(process.platform==='win32')return JSON.parse(await ps(`$p=Get-CimInstance Win32_Process -Filter 'ProcessId=${Number(pid)}';if($p){@{pid=$p.ProcessId;parent=$p.ParentProcessId;executable=$p.ExecutablePath}|ConvertTo-Json -Compress}else{'null'}`));
   try{const stat=await fs.readFile(`/proc/${pid}/stat`,'utf8'),fields=stat.slice(stat.lastIndexOf(')')+2).split(' ');return {pid:Number(pid),parent:Number(fields[1]),executable:await fs.readlink(`/proc/${pid}/exe`)}}catch(error){if(error.code==='ENOENT')return null;throw error}
 }
-function databaseProcessMatches(service,processInfo,selected){return !!processInfo&&(processInfo.pid===Number(selected.pid)||service==='postgresql'&&processInfo.parent===Number(selected.pid));}
+function databaseProcessMatches(service,processInfo,selected,os=process.platform){
+  if(!processInfo)return false;if(processInfo.pid===Number(selected.pid))return true;
+  // Windows pg_ctl and MySQL's restart monitor own the child engine process.
+  if(os!=='win32'||!['postgresql','mysql'].includes(service)||processInfo.parent!==Number(selected.pid))return false;
+  const p=path.win32,parent=String(selected.executable||'').toLowerCase(),child=String(processInfo.executable||'').toLowerCase();
+  return p.dirname(parent)===p.dirname(child)&&p.basename(parent)===(service==='mysql'?'mysqld.exe':'pg_ctl.exe')&&p.basename(child)===(service==='mysql'?'mysqld.exe':'postgres.exe');
+}
 async function verifyDatabaseIdentity(plan,info,selected){
   const normalize=value=>process.platform==='win32'?path.resolve(value).toLowerCase():path.resolve(value);
   if(normalize(info.data)!==normalize(plan.databaseDataPath))throw Error('The data directory does not match the authenticated database');
@@ -60,6 +66,7 @@ async function verifyDatabaseIdentity(plan,info,selected){
   if(info.pidFile){if(!path.isAbsolute(info.pidFile))throw Error('The database PID file must be absolute');await regular(info.pidFile);const value=(await fs.readFile(info.pidFile,'utf8')).split(/\r?\n/)[0].trim();if(!/^\d+$/.test(value))throw Error('Invalid database PID file');pid=Number(value)}
   const identity=await processIdentity(pid);
   if(!databaseProcessMatches(plan.service,identity,selected))throw Error('The authenticated database does not belong to the selected operating-system service');
+  if(pid!==Number(selected.pid)){const parent=await processIdentity(selected.pid);if(!parent||normalize(parent.executable)!==normalize(selected.executable))throw Error('The database service launcher changed during verification')}
   const engine=plan.service==='postgresql'?'postgres':plan.service==='mysql'?'mysqld':plan.service==='mariadb'?'mariadbd':plan.service==='mongodb'?'mongod':'redis-server',name=path.basename(identity.executable||'').replace(/\.exe$/i,'');
   if(![engine,...(plan.service==='mariadb'?['mysqld']:[])].includes(name)||!inside(path.dirname(path.dirname(plan.path)),identity.executable))throw Error('The database process does not run from the reviewed installation');
   return pid;

@@ -40,11 +40,13 @@ test('systemd identity excludes changing run metadata but keeps arguments',()=>{
   assert.notEqual(systemdCommand(prefix+' ; start_time=[] }'),systemdCommand(prefix.replace('server.conf','different.conf')+' ; start_time=[] }'));
 });
 
-test('authenticated database identity must match its selected service, including the PostgreSQL service launcher',()=>{
+test('authenticated database identity matches only its selected service or verified Windows database launcher',()=>{
   const {databaseProcessMatches:matches}=require('../scripts/service-upgrade-platform.cjs');
   assert.equal(matches('mysql',{pid:12,parent:1},{pid:12}),true);
   assert.equal(matches('mysql',{pid:12,parent:13},{pid:13}),false);
-  assert.equal(matches('postgresql',{pid:12,parent:13},{pid:13}),true);
+  assert.equal(matches('postgresql',{pid:12,parent:13,executable:'C:\\db\\bin\\postgres.exe'},{pid:13,executable:'C:\\db\\bin\\pg_ctl.exe'},'win32'),true);
+  assert.equal(matches('mysql',{pid:12,parent:13,executable:'C:\\db\\bin\\mysqld.exe'},{pid:13,executable:'C:\\db\\bin\\mysqld.exe'},'win32'),true);
+  assert.equal(matches('mysql',{pid:12,parent:13,executable:'C:\\other\\bin\\mysqld.exe'},{pid:13,executable:'C:\\db\\bin\\mysqld.exe'},'win32'),false);
   for(const service of ['postgresql','mysql','mariadb','mongodb','redis'])assert.equal(matches(service,{pid:12,parent:13},{pid:99}),false);
   assert.equal(matches('mysql',null,{pid:12}),false);
 });
