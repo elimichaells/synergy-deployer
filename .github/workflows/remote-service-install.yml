@@ -33,11 +33,11 @@ jobs:
           node-version: '24'
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - if: runner.os == 'Windows'
-        run: node --require ./tests/register.cjs --test tests/service-upgrade-native.test.cjs
+        run: node --require ./tests/register.cjs --test tests/service-upgrade-native.test.cjs tests/service-upgrade-tools.test.cjs
         env:
           MANAGER_SERVICE_UPGRADE_NATIVE: '1'
       - if: runner.os == 'Linux'
-        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,MANAGER_SERVICE_UPGRADE_NATIVE "$(command -v node)" --require ./tests/register.cjs --test tests/service-upgrade-native.test.cjs
+        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,MANAGER_SERVICE_UPGRADE_NATIVE "$(command -v node)" --require ./tests/register.cjs --test tests/service-upgrade-native.test.cjs tests/service-upgrade-tools.test.cjs
         env:
           MANAGER_SERVICE_UPGRADE_NATIVE: '1'
   database:
