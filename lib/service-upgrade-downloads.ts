@@ -4,7 +4,17 @@ import {installerDownloads} from './server-ssh'
 import {validate} from '../scripts/service-upgrade-policy.cjs'
 
 const cache=new Map<string,{url:string;sha256:string}>()
-async function json(url:string){const response=await fetch(url,{headers:{'User-Agent':'Manager-Service-Updater'},signal:AbortSignal.timeout(30000)});if(!response.ok)throw new ApiError('The official release catalog is unavailable',502);return response.json()}
+const delay=(milliseconds:number)=>new Promise(resolve=>setTimeout(resolve,milliseconds))
+async function json(url:string){
+  for(let attempt=0;attempt<3;attempt++){
+    const response=await fetch(url,{headers:{'User-Agent':'Manager-Service-Updater'},signal:AbortSignal.timeout(30000)})
+    if(response.ok)return response.json()
+    if(![429,502,503,504].includes(response.status)||attempt===2)throw new ApiError(`The official release catalog is unavailable (HTTP ${response.status})`,502)
+    const retryAfter=Number(response.headers.get('Retry-After')||0);if(retryAfter>10)throw new ApiError('The official release catalog is rate limited; try again later',502)
+    await delay(Math.max(1000*(attempt+1),retryAfter*1000))
+  }
+  throw new ApiError('The official release catalog is unavailable',502)
+}
 async function asset(url:string,expected?:string){
   if(!/^https:\/\//.test(url))throw new Error('Invalid official asset URL')
   if(expected&&/^[a-f0-9]{64}$/i.test(expected))return {url,sha256:expected.toLowerCase()}
@@ -15,10 +25,17 @@ async function asset(url:string,expected?:string){
   const result={url,sha256:hash.digest('hex')};if(cache.size>100)cache.clear();cache.set(url,result);return result
 }
 async function github(repo:string,tag:string,match:(name:string)=>boolean){
-  const release=await json(`https://api.github.com/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`)
-  if(release.draft||release.prerelease)throw new Error('Only stable published releases can be installed')
-  const candidates=release.assets.filter((a:any)=>match(a.name));if(candidates.length!==1)throw new Error('No unique official archive matches this platform')
-  const a=candidates[0];return {...await asset(a.browser_download_url,String(a.digest||'').replace(/^sha256:/,'')),name:a.name}
+  for(let attempt=0;attempt<3;attempt++){
+    const release=await json(`https://api.github.com/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`)
+    if(release.draft||release.prerelease)throw new Error('Only stable published releases can be installed')
+    const candidates=release.assets.filter((a:any)=>match(a.name))
+    if(candidates.length===1){const a=candidates[0];return {...await asset(a.browser_download_url,String(a.digest||'').replace(/^sha256:/,'')),name:a.name}}
+    // A release can become visible before all platform assets finish uploading.
+    // Retry the same tag only; never substitute another platform or version.
+    if(candidates.length>1||attempt===2)throw new Error(`No unique official archive in ${repo} ${tag} matches this platform`)
+    await delay(1000*(attempt+1))
+  }
+  throw new Error('The official archive is unavailable')
 }
 export async function serviceUpgradeDownloads(service:string,current:string,version:string,platform:string,arch:string,distribution?:{id:string;version:string}){
   validate(service,current,version,platform)

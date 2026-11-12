@@ -17,6 +17,7 @@ const sources:Record<string,{url:string;page:string;kind:'tag'|'tags'|'refs'|'np
   sqlserver:{url:gh('microsoft/go-sqlcmd'),page:'https://github.com/microsoft/go-sqlcmd/releases',kind:'tag'},
 }
 export function detectedToolVersion(id:string,value:string){
+  if(id==='composer')return value.match(/\bComposer(?:\s+version)?\s+(\d+\.\d+\.\d+)\b/i)?.[1]||value.trim().match(/^\d+\.\d+\.\d+$/)?.[0]||null
   if(['mariadb','mysql'].includes(id)&&/MariaDB/i.test(value))return value.match(/(?:Distrib\s+)?(\d+\.\d+\.\d+)(?:-[^\s]*)?-MariaDB/i)?.[1]||value.match(/Distrib\s+(\d+\.\d+\.\d+)/i)?.[1]||null
   if(id==='mysql')return value.match(/\bVer\s+(\d+\.\d+\.\d+)/i)?.[1]||value.match(/\d+\.\d+\.\d+/)?.[0]||null
   return value.match(/\d+\.\d+(?:\.\d+)?/)?.[0]||null

@@ -1,6 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),{randomUUID}=require('node:crypto');
 const upgrade=require('../scripts/service-upgrade.cjs'),runner=require('../scripts/service-upgrade-runner.cjs'),load=require('./server-module.cjs');
+require('./fixtures/vendor-catalog-auth.cjs');
 test('verified tool upgrades retain previous installations and unrelated settings',{skip:process.env.MANAGER_SERVICE_UPGRADE_NATIVE!=='1',timeout:900000},async t=>{
   assert.equal(process.env.GITHUB_ACTIONS,'true');assert.equal(process.env.RUNNER_ENVIRONMENT,'github-hosted');
   const root=await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()),'manager-tool-upgrades-')),agentRoot=path.join(root,'agent'),dataRoot=path.join(root,'updates');await fs.mkdir(agentRoot);await fs.mkdir(dataRoot);
@@ -8,6 +9,7 @@ test('verified tool upgrades retain previous installations and unrelated setting
   const windows=process.platform==='win32',php=await fs.realpath((await upgrade.run(windows?'where.exe':'which',['php'])).trim().split(/\r?\n/)[0]),paths={node:process.execPath,php};await upgrade.atomic(path.join(agentRoot,'tool-paths.json'),paths);await fs.writeFile(path.join(root,'site-settings'),'preserved unrelated site');
   const downloads=load('lib/service-upgrade-downloads.ts',{'./api':{ApiError:Error},'./server-ssh':{installerDownloads:async()=>({node:{}})}});
   for(const [service,currentVersion,version]of [['composer','2.11.1','2.11.2'],['sling','1.6.6','1.6.7'],['sqlserver','1.9.0','1.10.0'],['angular','21.2.28','21.2.29'],...(windows?[['git','2.56.0','2.56.1']]:[])]){
+    console.log('Testing '+service+' '+currentVersion+' -> '+version);
     const oldRoot=path.join(root,'original-'+service),assets=await downloads.serviceUpgradeDownloads(service,'0.0.0',currentVersion,process.platform,process.arch);let executable;
     if(service==='angular'){const npm=path.join(path.dirname(process.execPath),windows?'node_modules/npm/bin/npm-cli.js':'../lib/node_modules/npm/bin/npm-cli.js');await upgrade.run(process.execPath,[npm,'install','--prefix',oldRoot,'--ignore-scripts','--no-audit','--no-fund','@angular/cli@'+currentVersion],{timeout:180000});executable=path.join(oldRoot,'node_modules/.bin',windows?'ng.cmd':'ng');}
     else{const unpacked=await upgrade.unpack(assets.update,oldRoot);executable=path.join(unpacked,assets.update.executable)}

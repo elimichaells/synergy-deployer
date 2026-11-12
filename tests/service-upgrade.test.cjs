@@ -7,6 +7,11 @@ test('database upgrades stay within the installed series and reject downgrade',(
   for(const [service,current,next]of [['postgresql','18.5','18.6'],['mysql','8.4.12','8.4.13'],['mariadb','11.4.12','11.4.13'],['mongodb','8.0.33','8.0.34']])assert.equal(policy.validate(service,current,next,'win32').version,next);
   assert.throws(()=>policy.validate('mysql','8.4.13','9.0.0','win32'),/release series/);assert.throws(()=>policy.validate('postgresql','18.6','18.5','win32'),/newer/);assert.throws(()=>policy.validate('redis','8.2.11','8.2.12','win32'),/maintenance/);
 });
+
+test('Composer verification ignores the PHP version emitted before its version line',async()=>{
+  const original=upgrade.run;upgrade.run=async()=> 'PHP version 8.3.6 (/usr/bin/php8.3)\nComposer version 2.11.2 2026-10-20\n';
+  try{assert.equal(await require('../scripts/service-upgrade-runner.cjs').binaryVersion('composer','fixture.phar',{php:'fixture-php'}),'2.11.2')}finally{upgrade.run=original}
+});
 test('binary update verifies a cold backup before replacing files and preserves unrelated configuration',async t=>{
   const root=await fixture(t),target=path.join(root,'update'),exe=path.join(root,'engine'),candidate=path.join(root,'new-engine'),config=path.join(root,'site.conf'),data=path.join(root,'database');await fs.writeFile(exe,'old');await fs.writeFile(candidate,'new');await fs.writeFile(config,'existing site');await fs.writeFile(data,'existing row');const events=[];
   await upgrade.replaceFiles(target,[{source:candidate,destination:exe}],async()=>{events.push('verify');assert.equal(await fs.readFile(exe,'utf8'),'new')},{stop:async()=>events.push('stop'),start:async()=>events.push('start'),backup:async folder=>{events.push('backup');assert.equal(await fs.readFile(exe,'utf8'),'old');await fs.copyFile(data,path.join(folder,'data-before'))}});

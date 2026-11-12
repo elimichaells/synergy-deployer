@@ -1,4 +1,5 @@
 'use strict';
+require('./fixtures/vendor-catalog-auth.cjs');
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),net=require('node:net'),{randomUUID}=require('node:crypto');
 const upgrade=require('../scripts/service-upgrade.cjs'),platform=require('../scripts/service-upgrade-platform.cjs'),runner=require('../scripts/service-upgrade-runner.cjs'),load=require('./server-module.cjs');
 const port=()=>new Promise(resolve=>{const s=net.createServer();s.listen(0,'127.0.0.1',()=>{const value=s.address().port;s.close(()=>resolve(value))})});

@@ -2,6 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),load=require('./server-module.cjs');
 const updates=load('lib/remote-tool-updates.ts',{});
 test('vendor update versions preserve database series and distinguish MariaDB and client tools',()=>{
+  assert.equal(updates.detectedToolVersion('composer','PHP version 8.3.6\nComposer version 2.11.2 2026-10-20'),'2.11.2');
   assert.equal(updates.detectedToolVersion('postgresql','psql (PostgreSQL) 18.5'),'18.5');
   assert.equal(updates.detectedToolVersion('mysql','mysql Ver 15.1 Distrib 10.11.12-MariaDB'),'10.11.12');
   assert.equal(updates.releaseVersion('postgresql','tags',[{name:'REL_19_0'},{name:'REL_18_6'},{name:'REL_18_5'}],'18.4'),'18.6');

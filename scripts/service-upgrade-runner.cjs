@@ -8,7 +8,10 @@ async function binaryVersion(service,file,context={}){
     file=await fs.realpath(file);
     let folder=path.dirname(file);while(folder!==path.dirname(folder)){try{const metadata=JSON.parse(await fs.readFile(path.join(folder,'package.json'),'utf8'));if(metadata.name===(service==='pm2'?'pm2':'@angular/cli'))return metadata.version}catch{}folder=path.dirname(folder)}throw Error('Cannot identify the installed npm package');
   }
-  if(service==='composer')return policy.version(await upgrade.run(context.php,[file,'--version'],{env:{...process.env,COMPOSER_DISABLE_NETWORK:'1',COMPOSER_NO_INTERACTION:'1'}}));
+  if(service==='composer'){
+    const output=await upgrade.run(context.php,[file,'--version'],{env:{...process.env,COMPOSER_DISABLE_NETWORK:'1',COMPOSER_NO_INTERACTION:'1'}}),version=output.match(/\bComposer(?:\s+version)?\s+(\d+\.\d+\.\d+)\b/i)?.[1];
+    if(!version)throw Error('Cannot identify the installed Composer version');return version;
+  }
   const args=service==='caddy'?['version']:service==='sqlserver'?['--version']:['--version'];return policy.version(await upgrade.run(file,args));
 }
 async function npmUpdate(plan,target){
@@ -49,7 +52,7 @@ async function execute(plan,stage){
     const oldModules=(await upgrade.run(plan.path,['list-modules'])).split(/\r?\n/).filter(line=>/^[a-z][a-z0-9_.]+$/.test(line)),newModules=new Set((await upgrade.run(candidate,['list-modules'])).split(/\r?\n/));if(oldModules.some(name=>!newModules.has(name)))throw Error('The official binary does not contain all existing Caddy modules. Preserve the custom build.');
     await upgrade.run(candidate,['validate','--config',plan.configPath,...(path.extname(plan.configPath).toLowerCase()==='.json'?[]:['--adapter','caddyfile'])]);
   }
-  const adapter=await adapterFor(plan,installRoot,stage),result=await upgrade.replaceFiles(target,replacements,async()=>{if(await binaryVersion(plan.service,executable,context)!==plan.version)throw Error('Updated executable version mismatch');await adapter.verify?.();},adapter);
+  const adapter=await adapterFor(plan,installRoot,stage),result=await upgrade.replaceFiles(target,replacements,async()=>{const actual=await binaryVersion(plan.service,executable,context);if(actual!==plan.version)throw Error(`Updated ${plan.service} executable reports ${actual}; expected ${plan.version}`);await adapter.verify?.();},adapter);
   return {status:'success',operationId:plan.operationId,service:plan.service,mode:'update',version:plan.version,path:plan.path,...result,message:'Selected release verified. Existing service registration, configuration and database data preserved.'};
 }
 async function recover(plan,stage,action){

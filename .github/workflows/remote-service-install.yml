@@ -36,10 +36,12 @@ jobs:
         run: node --require ./tests/register.cjs --test tests/service-upgrade-native.test.cjs tests/service-upgrade-tools.test.cjs
         env:
           MANAGER_SERVICE_UPGRADE_NATIVE: '1'
+          GITHUB_TOKEN: ${{ github.token }}
       - if: runner.os == 'Linux'
-        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,MANAGER_SERVICE_UPGRADE_NATIVE "$(command -v node)" --require ./tests/register.cjs --test tests/service-upgrade-native.test.cjs tests/service-upgrade-tools.test.cjs
+        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,MANAGER_SERVICE_UPGRADE_NATIVE,GITHUB_TOKEN "$(command -v node)" --require ./tests/register.cjs --test tests/service-upgrade-native.test.cjs tests/service-upgrade-tools.test.cjs
         env:
           MANAGER_SERVICE_UPGRADE_NATIVE: '1'
+          GITHUB_TOKEN: ${{ github.token }}
   database:
     strategy:
       fail-fast: false
