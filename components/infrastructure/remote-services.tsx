@@ -1,5 +1,5 @@
 'use client'
-import { useCallback,useEffect,useState } from 'react'
+import { useCallback,useEffect,useRef,useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Section } from '@/components/app/section'
 import { REMOTE_SERVICES } from '@/lib/remote-service-catalog'
@@ -14,7 +14,8 @@ export function RemoteServices({server,onChanged,requested}:{server:ManagedServe
   const [databaseCredential,setDatabaseCredential]=useState({username:'',password:''}),[writersPaused,setWritersPaused]=useState(false)
   const [recoveryAction,setRecoveryAction]=useState('verify'),[confirmService,setConfirmService]=useState('')
   const [versions,setVersions]=useState<{version:string;label:string}[]>([])
-  useEffect(()=>{if(requested){setSelection(s=>({...s,...requested,path:'',currentVersion:'',serviceManager:requested.service==='caddy'&&server.metrics?.caddy?.mode==='pm2'?'pm2':'native',serviceName:requested.service==='caddy'&&server.metrics?.caddy?.mode==='pm2'?'manager-remote-caddy':'',configPath:requested.service==='caddy'?server.metrics?.caddy?.configPath||'':'',databaseDataPath:'',port:String((REMOTE_SERVICES.find(item=>item.id===requested.service) as {port?:number}|undefined)?.port||0)}));setReview('');setApproved(false);setWritersPaused(false);setDatabaseCredential({username:'',password:''})}},[requested])
+  const appliedRequest=useRef<RequestedService>()
+  useEffect(()=>{if(requested&&appliedRequest.current!==requested){appliedRequest.current=requested;setSelection(s=>({...s,...requested,path:'',currentVersion:'',serviceManager:requested.service==='caddy'&&server.metrics?.caddy?.mode==='pm2'?'pm2':'native',serviceName:requested.service==='caddy'&&server.metrics?.caddy?.mode==='pm2'?'manager-remote-caddy':'',configPath:requested.service==='caddy'?server.metrics?.caddy?.configPath||'':'',databaseDataPath:'',port:String((REMOTE_SERVICES.find(item=>item.id===requested.service) as {port?:number}|undefined)?.port||0)}));setReview('');setApproved(false);setWritersPaused(false);setDatabaseCredential({username:'',password:''})}},[requested,server.metrics?.caddy?.mode,server.metrics?.caddy?.configPath])
   useEffect(()=>{if(selection.mode!=='install-version'){setVersions([]);return}void fetch(`/api/servers/${server.id}/runtimes/versions?runtime=${selection.service}`).then(r=>r.json()).then(v=>{setVersions(v.available||[]);if(v.error)setError(v.error)}).catch(e=>setError(e.message))},[selection.mode,selection.service,server.id])
   const [fingerprint,setFingerprint]=useState(''),[accepted,setAccepted]=useState(false),[approved,setApproved]=useState(false),[review,setReview]=useState(''),[inventory,setInventory]=useState<ServerInventory|null>(null)
   const [credentials,setCredentials]=useState<{username:string;password:string;host:string;port:number}|null>(null)
