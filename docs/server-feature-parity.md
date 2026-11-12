@@ -1,6 +1,6 @@
 # Host and connected-server functionality audit
 
-Audit for Manager 2.32.2 / agent 1.9.1, starting from Manager 2.31.0 / agent 1.8.0.
+Audit for Manager 2.33.0 / agent 1.9.1, starting from Manager 2.31.0 / agent 1.8.0.
 The release fixes the verified gaps below; it does not claim universal functional parity.
 Production applications, databases and shared proxy configuration are outside the destructive test scope.
 
@@ -77,7 +77,9 @@ remaining rows and rerun affected integration checks before publishing a parity-
 - Console and runtime dialogs reset scope when switching servers. Shared connection forms expose the existing database and MongoDB authentication database; database passwords remain encrypted.
 - Browser evidence includes host environment files, host/remote settings, security-gate error/retry, remote completion, global settings scope and unfinished-server removal review.
 
-Manager 2.32.2 and agent 1.9.1 are published and deployed. Automatic updates of existing non-versioned services, private phpMyAdmin replacement and the evidence boundaries above prevent a claim of exact parity for every feature.
+Manager 2.32.2 and agent 1.9.1 were published and deployed at that audit checkpoint.
+Manager 2.33 adds the supported automatic maintenance paths described below; the
+remaining platform and evidence boundaries still prevent a claim of universal parity.
 
 ## Database browser and update-check evidence
 

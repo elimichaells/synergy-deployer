@@ -39,6 +39,15 @@ test('systemd identity excludes changing run metadata but keeps arguments',()=>{
   assert.notEqual(systemdCommand(prefix+' ; start_time=[] }'),systemdCommand(prefix.replace('server.conf','different.conf')+' ; start_time=[] }'));
 });
 
+test('authenticated database identity must match its selected service, including the PostgreSQL service launcher',()=>{
+  const {databaseProcessMatches:matches}=require('../scripts/service-upgrade-platform.cjs');
+  assert.equal(matches('mysql',{pid:12,parent:1},{pid:12}),true);
+  assert.equal(matches('mysql',{pid:12,parent:13},{pid:13}),false);
+  assert.equal(matches('postgresql',{pid:12,parent:13},{pid:13}),true);
+  for(const service of ['postgresql','mysql','mariadb','mongodb','redis'])assert.equal(matches(service,{pid:12,parent:13},{pid:99}),false);
+  assert.equal(matches('mysql',null,{pid:12}),false);
+});
+
 test('database restoration resumes after the original data rename and retains post-upgrade writes',async t=>{
   const root=await fixture(t),data=path.join(root,'data'),target=path.join(root,'update'),backup=path.join(target,'database-backup'),prepared=path.join(root,'data.manager-restore-'+randomUUID()),operationId=randomUUID(),retained=data+'.manager-recovery-'+operationId;
   await fs.mkdir(backup,{recursive:true});await fs.mkdir(data);await fs.mkdir(prepared);await fs.writeFile(path.join(backup,'record'),'before');await fs.writeFile(path.join(data,'record'),'writes after update');await fs.copyFile(path.join(backup,'record'),path.join(prepared,'record'));
