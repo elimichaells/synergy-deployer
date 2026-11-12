@@ -17,7 +17,7 @@ cleanup(){
   if [ "$code" != 0 ]; then
     if [ "$changed_paths" = 1 ]; then cp -- "$stage/previous-paths.json" "$root/tool-paths.json"; chown manager-agent:manager-agent "$root/tool-paths.json"; fi
     if [ -n "$created_unit" ]; then systemctl stop "$created_unit" || true; fi
-    "$node_exe" -e 'const fs=require("fs"),p=require(process.argv[1]);fs.writeFileSync(process.argv[2],JSON.stringify({status:"failed",operationId:p.operationId,service:p.service,message:"Service operation failed; existing paths restored. Initialized data and encrypted recovery credentials are retained."}))' "$plan_file" "$receipt"
+    "$node_exe" -e 'const fs=require("fs"),path=require("path"),p=require(process.argv[1]);let status="failed";if(p.mode==="update"){const file=path.join(p.dataRoot,"updates",p.service,p.operationId,"upgrade.json");if(fs.existsSync(file)){try{if(!["prepared","rolled_back"].includes(JSON.parse(fs.readFileSync(file)).phase))status="interrupted"}catch{status="interrupted"}}}fs.writeFileSync(process.argv[2],JSON.stringify({status,operationId:p.operationId,service:p.service,message:"Service operation failed. Existing data and recovery files are retained; review the operation before continuing."}))' "$plan_file" "$receipt"
     chown --reference="$plan_file" "$receipt"
   fi
 }
@@ -27,7 +27,32 @@ tool="$service"; [ "$service" != postgresql ] || tool=psql
 [ "$service" != mongodb ] || tool=mongod
 [ "$service" != sqlserver ] || tool=sqlcmd
 target="$files/$service"; config=''; data=''; username=''
+if [ "$mode" = update ] && [ "$service" != phpmyadmin ]; then
+  # Do not let the installation trap replace the maintenance recovery receipt.
+  trap - EXIT
+  "$node_exe" "$stage/service-upgrade-runner.cjs" "$plan_file"
+  chown --reference="$plan_file" "$receipt"
+  exit 0
+fi
 if [ "$service" = phpmyadmin ]; then
+  if [ "$mode" = update ]; then
+    operation="$("$node_exe" -p 'require(process.argv[1]).operationId' "$plan_file")"
+    [[ "$operation" =~ ^[a-f0-9-]{36}$ ]] || exit 1
+    target="$files/updates/phpmyadmin/$operation"
+    install -d -m 755 "$(dirname "$target")"
+    "$node_exe" "$stage/service-upgrade.cjs" prepare "$plan_file" "$target"
+    cp -- "$stage/database-browser-agent.cjs" "$target/browser-check.cjs"
+    chown -R root:manager-agent "$target";chmod -R g+rX "$target"
+    agent_node="$("$node_exe" -p 'require(process.argv[1]).node' "$root/tool-paths.json")"
+    (cd -- "$root";runuser -u manager-agent -- "$agent_node" "$target/browser-check.cjs" "$target")
+    "$node_exe" "$stage/service-upgrade.cjs" activate "$plan_file" "$target"
+    chown manager-agent:manager-agent "$root/database-browser.json"
+    "$node_exe" - "$plan_file" "$receipt" "$target" <<'JS'
+const fs=require('fs'),[file,receipt,target]=process.argv.slice(2),p=JSON.parse(fs.readFileSync(file));fs.writeFileSync(receipt,JSON.stringify({status:'success',operationId:p.operationId,service:p.service,mode:'update',version:p.version,path:target+'/client',backup:target}),{mode:0o600});
+JS
+    echo '[service] Private phpMyAdmin updated; previous release and sessions preserved.'
+    exit 0
+  fi
   [ "$mode" = install ] && [ ! -e "$target" ] && [ ! -e "$root/database-browser.json" ] || { echo 'The private browser already exists; it will not be overwritten';exit 1; }
   if ! command -v php-cgi >/dev/null || ! command -v unzip >/dev/null; then
     command -v apt-get >/dev/null || { echo 'Install PHP CGI 8.1–8.3 with mysqli, mbstring, openssl and unzip, then retry';exit 1; }

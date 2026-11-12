@@ -67,6 +67,7 @@ foreach ($id in $ids) {
           if (-not $proc.WaitForExit(5000)) { $proc.Kill(); throw 'Version check timed out' }
           if ($proc.ExitCode -ne 0) { throw 'Version check failed' }
           $version = (($stdout.Result + $stderr.Result) -split '[\r\n]+' | Where-Object { $_ } | Select-Object -First 1)
+          if($id -eq 'composer'){$match=[regex]::Match(($stdout.Result+$stderr.Result),'(?i)\bComposer(?:\s+version)?\s+(\d+\.\d+\.\d+)\b');if(-not $match.Success){throw 'Composer version check failed'};$version='Composer version '+$match.Groups[1].Value}
           if($id -eq 'sqlcmd'){$match=[regex]::Match(($stdout.Result+$stderr.Result),'(?i)Version[: ]+v?(\d+\.\d+(?:\.\d+)*)');if(-not $match.Success -or ($stdout.Result+$stderr.Result) -notmatch 'sqlcmd|SQL Server Command Line Tool'){throw 'SQL Server client version check failed'};$version='sqlcmd version '+$match.Groups[1].Value}
           if($id -eq 'ng'){$match=[regex]::Match(($stdout.Result+$stderr.Result),'Angular CLI\s*:\s*\d+\.\d+\.\d+');if(-not $match.Success){throw 'Angular CLI version check failed'};$version=$match.Value -replace '\s*:\s*',': '}
         } finally { $proc.Dispose() }

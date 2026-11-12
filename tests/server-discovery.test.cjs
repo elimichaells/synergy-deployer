@@ -32,13 +32,15 @@ test('custom database client is the executable used for database queries, and su
 test('read-only Windows discovery executes with custom paths and reports actual service inventory', {skip:process.platform!=='win32',timeout:120000},async t=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'manager-inspect-test-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));
   const file=path.join(dir,'inspect.ps1');
-  const custom={node:process.execPath,psql:path.join(dir,"custom ' database",'psql.exe')};
+  const custom={node:process.execPath,psql:path.join(dir,"custom ' database",'psql.exe'),composer:path.join(dir,'composer.cmd')};
+  await fs.writeFile(custom.composer,'@echo off\r\necho PHP version 8.3.6\r\necho Composer version 2.11.2\r\n');
   const source=(await fs.readFile(path.join(__dirname,'../scripts/inspect-remote-server.ps1'),'utf8')).replace('__MANAGER_PATHS__',JSON.stringify(custom).replace(/'/g,"''"));
   await fs.writeFile(file,source);
   const {stdout}=await promisify(execFile)('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',file],{windowsHide:true,timeout:110000,maxBuffer:200000});
   const ssh=load('lib/server-ssh.ts',mocks);const inventory=ssh.parseServerInventory(stdout,'win32');
   assert.equal(inventory.platform,'win32');assert.ok(inventory.tools.node.some(tool=>tool.path===process.execPath && tool.compatible));
   assert.ok(inventory.tools.psql.some(tool=>tool.path===custom.psql && !tool.compatible));
+  assert.ok(inventory.tools.composer.some(tool=>tool.path===custom.composer&&tool.compatible&&tool.version==='Composer version 2.11.2'));
   assert.ok(Array.isArray(inventory.services));
 });
 
@@ -70,7 +72,7 @@ test('Linux discovery preserves quoted custom paths and reports services and por
   const posix=p=>process.platform==='win32'?p.replace(/\\/g,'/').replace(/^([A-Za-z]):/,(_,d)=>'/'+d.toLowerCase()):p;
   const quote=s=>"'"+s.replace(/'/g,"'\\''")+"'";
   const bin=path.join(dir,'bin');await fs.mkdir(bin);
-  for(const [name,body] of Object.entries({uname:'[ "$1" = -m ] && echo x86_64 || echo Linux',id:'echo 0',ss:'echo "LISTEN 0 100 127.0.0.1:5432 0.0.0.0:*"',systemctl:'[ "$1" = is-active ] && echo active || echo "postgresql.service enabled"'}))await fs.writeFile(path.join(bin,name),'#!/bin/bash\n'+body+'\n',{mode:0o755});
+  for(const [name,body] of Object.entries({uname:'[ "$1" = -m ] && echo x86_64 || echo Linux',id:'echo 0',ss:'echo "LISTEN 0 100 127.0.0.1:5432 0.0.0.0:*"',systemctl:'[ "$1" = is-active ] && echo active || echo "postgresql.service enabled"',composer:'echo "PHP version 8.3.6";echo "Composer version 2.11.2"'}))await fs.writeFile(path.join(bin,name),'#!/bin/bash\n'+body+'\n',{mode:0o755});
   const client=path.join(dir,"Database's $& Tools",'psql');await fs.mkdir(path.dirname(client));await fs.writeFile(client,'#!/bin/bash\nprintf "psql (PostgreSQL) 18.1\\n"\n',{mode:0o755});
   const source=(await fs.readFile(path.join(__dirname,'../scripts/inspect-remote-server.sh'),'utf8')).replace(/\r\n/g,'\n').replace('__MANAGER_PATHS__',()=>`export PATH=${quote(posix(bin))}:/usr/bin:/bin\nTOOL_psql=${quote(posix(client))}`);
   const file=path.join(dir,'inspect.sh');await fs.writeFile(file,source);
@@ -78,5 +80,6 @@ test('Linux discovery preserves quoted custom paths and reports services and por
   const inventory=load('lib/server-ssh.ts',mocks).parseServerInventory(stdout,'linux');
   assert.deepEqual(inventory.ports,[5432]);assert.equal(inventory.portsKnown,true);
   assert.ok(inventory.tools.psql.some(tool=>tool.path===posix(client)&&tool.compatible));
+  assert.ok(inventory.tools.composer.some(tool=>tool.compatible&&tool.version==='Composer version 2.11.2'));
   assert.ok(inventory.services.some(service=>service.name==='postgresql.service'&&service.status==='active'));
 });

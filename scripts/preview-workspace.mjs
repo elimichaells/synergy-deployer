@@ -23,7 +23,7 @@ fs.copyFileSync(path.join(source, 'tests/fixtures/workspace-api.ts'), path.join(
 fs.copyFileSync(path.join(source, 'tests/fixtures/remote-servers-api.ts'), path.join(root, 'app/api/[[...path]]/remote-servers-api.ts'))
 fs.copyFileSync(path.join(source, 'tests/fixtures/release-cleanup-api.ts'), path.join(root, 'app/api/[[...path]]/release-cleanup-api.ts'))
 fs.copyFileSync(path.join(source, 'tests/fixtures/resource-workspaces-api.ts'), path.join(root, 'app/api/[[...path]]/resource-workspaces-api.ts'))
-for(const entry of ['lib/storage-client.ts','lib/storage-request-queue.ts','lib/infrastructure-client.ts','lib/application-removal-types.ts','lib/domain-route-policy.ts','lib/lan-address.ts','scripts/lan-address.cjs']) {
+for(const entry of ['lib/storage-client.ts','lib/storage-request-queue.ts','lib/infrastructure-client.ts','lib/application-removal-types.ts','lib/domain-route-policy.ts','lib/lan-address.ts','scripts/lan-address.cjs','scripts/service-upgrade-policy.cjs','scripts/console-policy.cjs']) {
   if(!fs.existsSync(path.join(source,entry)))continue
   fs.mkdirSync(path.dirname(path.join(root,entry)),{recursive:true})
   fs.copyFileSync(path.join(source,entry),path.join(root,entry))

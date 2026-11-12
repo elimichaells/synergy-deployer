@@ -2,6 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),load=require('./server-module.cjs');
 const updates=load('lib/remote-tool-updates.ts',{});
 test('vendor update versions preserve database series and distinguish MariaDB and client tools',()=>{
+  assert.equal(updates.detectedToolVersion('composer','PHP version 8.3.6\nComposer version 2.11.2 2026-10-20'),'2.11.2');
   assert.equal(updates.detectedToolVersion('postgresql','psql (PostgreSQL) 18.5'),'18.5');
   assert.equal(updates.detectedToolVersion('mysql','mysql Ver 15.1 Distrib 10.11.12-MariaDB'),'10.11.12');
   assert.equal(updates.releaseVersion('postgresql','tags',[{name:'REL_19_0'},{name:'REL_18_6'},{name:'REL_18_5'}],'18.4'),'18.6');
@@ -25,8 +26,9 @@ test('update discovery caches vendor results and retains errors instead of claim
   }finally{global.fetch=original}
 });
 test('one failed runtime catalog does not hide another connected-server tool update',async()=>{
-  const catalog=load('lib/remote-service-catalog.ts',{}),server={platform:'linux',metrics:{arch:'x64',tools:{node:'v24.0.0',caddy:'v2.10.1',phpmyadmin:'5.2.3'}}};
+  const catalog=load('lib/remote-service-catalog.ts',{}),server={platform:'linux',metrics:{arch:'x64',tools:{node:'v24.0.0',caddy:'v2.10.1',phpmyadmin:'5.2.3',mysql:'mysql Ver 15.1 Distrib 10.6.16-MariaDB'}}};
   class ApiError extends Error{}
   const module=load('lib/remote-runtimes.ts',{'./api':{ApiError},'./db':{query:async sql=>({rows:sql.includes('managed_servers')?[server]:[]})},'./managed-servers':{ensureManagedServers:async()=>{},uuid:()=>{}},'./remote-service-catalog':catalog,'./remote-tool-updates':{...updates,remoteToolUpdate:async id=>({latestVersion:id==='caddy'?'2.12.1':null,updateCheckSupported:true,updateCheckedAt:new Date().toISOString(),updateCheckError:null,updateSourceUrl:null})},'./remote-runtime-catalog':{remoteRuntimeCatalog:async()=>{throw Error('Official runtime catalog is unavailable')}}});
-  const rows=await module.listRemoteRuntimes('fixture',true);assert.match(rows.find(row=>row.id==='node').updateCheckError,/unavailable/);assert.equal(rows.find(row=>row.id==='caddy').updateAvailable,true);assert.equal(rows.find(row=>row.id==='caddy').canUpdate,false,'existing service upgrades are not run without a reviewed maintenance workflow');assert.equal(rows.find(row=>row.id==='phpmyadmin').canReuse,false);
+  const rows=await module.listRemoteRuntimes('fixture',true);assert.match(rows.find(row=>row.id==='node').updateCheckError,/unavailable/);assert.equal(rows.find(row=>row.id==='caddy').updateAvailable,true);assert.equal(rows.find(row=>row.id==='caddy').canUpdate,true);assert.equal(rows.find(row=>row.id==='caddy').updateMode,'maintenance','existing service upgrades require the reviewed maintenance workflow');assert.equal(rows.find(row=>row.id==='phpmyadmin').canReuse,false);
+  assert.equal(rows.find(row=>row.id==='mysql').updateService,'mariadb','MariaDB compatibility clients must open MariaDB maintenance');
 });

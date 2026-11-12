@@ -13,7 +13,7 @@ const { randomBytes, X509Certificate, createHash } = require('node:crypto');
 const { rootCertificates } = require('node:tls');
 const { createInterface } = require('node:readline/promises');
 const PROTOCOL_VERSION = 1;
-const AGENT_VERSION = '1.9.1';
+const AGENT_VERSION = '1.9.2';
 const LAN_CAPABILITY = 'lan-ip-v1';
 const resources = require('./manager-agent-resources.cjs');
 const { probeHttp, validateHealthProfile } = require('./http-health.cjs');
@@ -49,6 +49,7 @@ const toolVersion = async id => {
     });
   }else version=await run(id==='ng'&&/\.js$/i.test(executable(id))?executable('node'):executable(id),[...(id==='ng'&&/\.js$/i.test(executable(id))?[executable(id)]:[]),argument],{timeout:10000,env:{...baseEnv(),NG_CLI_ANALYTICS:'false',FORCE_COLOR:'0',NO_COLOR:'1'}});
   version=version.replace(/\u001b\[[0-9;]*m/g,'');
+  if(id==='composer'){const match=version.match(/\bComposer(?:\s+version)?\s+(\d+\.\d+\.\d+)\b/i);if(!match)throw Error('Composer version check failed');return 'Composer version '+match[1];}
   if(id==='ng'){const match=version.match(/Angular CLI\s*:\s*\d+\.\d+\.\d+/);if(!match)throw Error('Angular CLI version check failed');return match[0].replace(/\s*:\s*/,': ');}
   if(id==='sqlcmd'){const match=version.match(/Version[: ]+v?(\d+\.\d+(?:\.\d+)*)/i);if(!match||!/sqlcmd|SQL Server Command Line Tool/i.test(version))throw Error('SQL Server client version check failed');return 'sqlcmd version '+match[1];}
   return version;

@@ -4,20 +4,55 @@ on:
     paths:
       - 'scripts/install-remote-*'
       - 'scripts/*database-browser*'
+      - 'scripts/service-upgrade*'
+      - 'lib/service-upgrade*'
+      - 'lib/host-browser-upgrade.ts'
       - 'scripts/initialize-remote-database.cjs'
       - 'scripts/inspect-remote-server.*'
       - 'lib/remote-service*.ts'
       - 'tests/remote-*-install.test.cjs'
+      - 'tests/service-upgrade*'
       - '.github/workflows/remote-service-install.yml'
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
+  native-tools:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - if: runner.os == 'Windows'
+        run: node --require ./tests/register.cjs --test tests/service-upgrade-native.test.cjs tests/service-upgrade-tools.test.cjs
+        env:
+          MANAGER_SERVICE_UPGRADE_NATIVE: '1'
+          GITHUB_TOKEN: ${{ github.token }}
+      - if: runner.os == 'Linux'
+        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,MANAGER_SERVICE_UPGRADE_NATIVE,GITHUB_TOKEN "$(command -v node)" --require ./tests/register.cjs --test tests/service-upgrade-native.test.cjs tests/service-upgrade-tools.test.cjs
+        env:
+          MANAGER_SERVICE_UPGRADE_NATIVE: '1'
+          GITHUB_TOKEN: ${{ github.token }}
   database:
     strategy:
       fail-fast: false
       matrix:
         include:
+          - os: windows-latest
+            engine: postgresql
+          - os: windows-latest
+            engine: mysql
+          - os: windows-latest
+            engine: mariadb
           - os: windows-latest
             engine: phpmyadmin
           - os: ubuntu-22.04
@@ -48,9 +83,11 @@ jobs:
         env:
           MANAGER_SERVICE_INSTALL_LAB: '1'
           MANAGER_SERVICE_INSTALL_ENGINE: ${{ matrix.engine }}
+          MANAGER_SERVICE_UPGRADE_LAB: '1'
       - if: runner.os == 'Linux'
         shell: bash
-        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,TEST_CADDY,TEST_PM2_PACKAGE_ROOT,MANAGER_SERVICE_INSTALL_LAB,MANAGER_SERVICE_INSTALL_ENGINE "$(command -v node)" --require ./tests/register.cjs --test tests/remote-database-install.test.cjs
+        run: sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,TEST_CADDY,TEST_PM2_PACKAGE_ROOT,MANAGER_SERVICE_INSTALL_LAB,MANAGER_SERVICE_INSTALL_ENGINE,MANAGER_SERVICE_UPGRADE_LAB "$(command -v node)" --require ./tests/register.cjs --test tests/remote-database-install.test.cjs
         env:
           MANAGER_SERVICE_INSTALL_LAB: '1'
           MANAGER_SERVICE_INSTALL_ENGINE: ${{ matrix.engine }}
+          MANAGER_SERVICE_UPGRADE_LAB: '1'

@@ -17,6 +17,7 @@ const state = (globalThis as unknown as { __remoteFixture?: typeof initial }).__
 const variables = (globalThis as unknown as { __remoteEnvFixture?: Record<string,Record<string,string>> }).__remoteEnvFixture ??= {}
 const setupJobs = (globalThis as unknown as { __remoteSetupJobsFixture?: Record<string,any>[] }).__remoteSetupJobsFixture ??= []
 const updateFixture = (globalThis as unknown as { __agentUpdateFixture?: Record<string,any> }).__agentUpdateFixture ??= {}
+const serviceOperations: any[]=[]
 
 // Synthetic UI fixture only. No database, filesystem mutation or network agents.
 export async function remoteServersFixture(request: Request) {
@@ -74,11 +75,17 @@ export async function remoteServersFixture(request: Request) {
     }
   }
   if(parts[1]==='console')return NextResponse.json({jobs:[{id:'fixture-console',kind:'console',status:'success',log:'Synthetic preview: command completed.\n',created_at:new Date().toISOString(),result:{cwd:'/var/lib/manager-agent/releases/library/current',console:{entries:['src/','package.json','app.cjs'],scripts:{test:'node --test',build:'npm run build'}}}}]})
-  if(parts[1]==='services')return NextResponse.json({operations:[]})
+  if(parts[1]==='services'){
+    if(request.method==='GET')return NextResponse.json({operations:serviceOperations})
+    const body=await request.json(),selection=body.selection
+    if(body.action==='review')return NextResponse.json({review:'synthetic-service-review',selection:{...selection,currentVersion:selection.service==='phpmyadmin'?'5.2.2':selection.service==='mongodb'?'8.0.32':'2.11.6'},inventory:{platform:'linux',arch:'x64',privileged:true,portsKnown:true,ports:[22,443,27017],services:[{name:'ManagerMongoDB.service',status:'Running'}],tools:{}},message:'Preview: verified release, preserved configuration and retained recovery files. No real server is contacted.'})
+    if(body.action==='recover'){const active=serviceOperations.find(o=>o.id===body.operationId);active.status='success';active.result={message:'Preview: updated service verified.'};return NextResponse.json({status:'success'})}
+    const status=selection.service==='mongodb'?'interrupted':'success',result={message:status==='interrupted'?'Preview: simulated interruption. Review recovery while writers remain paused.':'Preview: updated release verified.'};serviceOperations.unshift({id:crypto.randomUUID(),service_id:selection.service,status,plan:{selection},result,log:result.message});return NextResponse.json({status,...result})
+  }
   if(parts[1]==='domains')return NextResponse.json({domains:[{id:appId,project_id:appId,project_name:app.name,environment:'production',hostname:app.hostname,record_type:'A',record_content:'192.168.10.20',dns_status:'manual',ssl_status:'Route loaded',application_route:true,proxied:false,is_primary:true}]})
   if(parts[1]==='runtimes') {
     if(parts[2]==='versions')return NextResponse.json({installed:['22.23.4'],available:[{version:'22.23.4',label:'Node.js 22.23.4 LTS'},{version:'24.22.2',label:'Node.js 24.22.2 LTS'}]})
-    return NextResponse.json({runtimes:[{id:'node',name:'Node.js',purpose:'JavaScript runtime',installed:true,version:'v24.22.1',canInstall:true,canUpdate:true,canConfigure:true,versioned:true,installedVersions:['22.23.4'],updateAvailable:true,latestVersion:'24.22.2',updateMode:'project-version',installSource:'Selected remote server'},{id:'postgresql',name:'PostgreSQL',purpose:'Database server',installed:false,version:null,canInstall:true,installedVersions:[],versioned:false}]})
+    return NextResponse.json({runtimes:[{id:'node',name:'Node.js',purpose:'JavaScript runtime',installed:true,version:'v24.22.1',canInstall:true,canUpdate:true,canConfigure:true,versioned:true,installedVersions:['22.23.4'],updateAvailable:true,latestVersion:'24.22.2',updateMode:'project-version',installSource:'Selected remote server'},{id:'postgresql',name:'PostgreSQL',purpose:'Database server',installed:false,version:null,canInstall:true,installedVersions:[],versioned:false},...([['phpmyadmin','phpMyAdmin','5.2.2','5.2.3'],['caddy','Caddy','2.11.6','2.11.7'],['mongodb','MongoDB','8.0.32','8.0.34']].map(([id,name,version,latestVersion])=>({id,name,version,latestVersion,installed:true,canInstall:true,canUpdate:true,canConfigure:id!=='phpmyadmin',versioned:false,installedVersions:[],updateAvailable:true,updateMode:'maintenance',updateInstructions:'Review the verified release before maintenance. Existing settings and recovery files are retained.',installSource:'Selected remote server'})))]})
   }
   if (parts.length===2 && parts[1]==='agent-update') {
     const server = state.servers.find(item=>item.id===parts[0])

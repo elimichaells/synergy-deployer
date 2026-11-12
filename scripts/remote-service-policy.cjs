@@ -1,5 +1,6 @@
 'use strict';
 const path=require('node:path');
+const upgrades=require('./service-upgrade-policy.cjs');
 const SERVICES={phpmyadmin:{tool:'phpmyadmin'},postgresql:{tool:'psql',port:5432,match:/postgres/i},mysql:{tool:'mysql',port:3306,match:/mysql|maria/i},mariadb:{tool:'mariadb',port:3306,match:/mysql|maria/i},node:{tool:'node'},git:{tool:'git'},caddy:{tool:'caddy',match:/caddy/i},pm2:{tool:'pm2'},go:{tool:'go'},php:{tool:'php'},python:{tool:'python'},composer:{tool:'composer'},sling:{tool:'sling'},angular:{tool:'ng'},mongodb:{tool:'mongod',port:27017,match:/mongo/i},sqlserver:{tool:'sqlcmd',port:1433,match:/mssql|sqlservr/i},redis:{tool:'redis',port:6379,match:/redis|memurai/i}};
 function absolute(value,platform,label){
   if(typeof value!=='string'||!value||value.length>1024||/[\x00-\x1f\x7f"<>|*?]/.test(value)||platform==='win32'&&(/[;]/.test(value)||value.slice(2).includes(':'))||platform==='linux'&&value.includes(':'))throw Error('Enter an absolute '+label+' path');
@@ -8,13 +9,15 @@ function absolute(value,platform,label){
   return p.normalize(value);
 }
 function servicePlan(raw,platform){
-  if(!['win32','linux'].includes(platform)||!raw||!SERVICES[raw.service]||!['install','reuse','install-version'].includes(raw.mode))throw Error('Choose a supported service and installation mode');
-  if(raw.service==='phpmyadmin'&&raw.mode!=='install')throw Error('The private database browser uses its own installation. Existing web clients and PHP configuration are preserved.');
-  const version=raw.mode==='install-version'?String(raw.version||''):'';
+  if(!['win32','linux'].includes(platform)||!raw||!SERVICES[raw.service]||!['install','reuse','install-version','update'].includes(raw.mode))throw Error('Choose a supported service and installation mode');
+  if(raw.service==='phpmyadmin'&&!['install','update'].includes(raw.mode))throw Error('The private database browser uses its own installation. Existing web clients and PHP configuration are preserved.');
+  const version=['install-version','update'].includes(raw.mode)?String(raw.version||''):'';
+  if(raw.mode==='update'&&(!upgrades.supports(raw.service,platform)||!/^\d+\.\d+(?:\.\d+)?$/.test(version)))throw Error('Choose a supported stable service update');
   if(raw.mode==='install-version'&&(!['node','go','php'].includes(raw.service)||!/^\d+\.\d+\.\d+$/.test(version)||platform==='linux'&&raw.service==='php'))throw Error('Choose a supported runtime version');
   const spec=SERVICES[raw.service],port=spec.port?Number(raw.port||spec.port):0;
   if(spec.port&&(!Number.isInteger(port)||port<1024||port>65535||[2019,2029].includes(port)))throw Error('Choose an unused database port between 1024 and 65535');
-  return {service:raw.service,mode:raw.mode,version,path:raw.mode==='reuse'?absolute(raw.path,platform,'executable'):'',port,
+  return {service:raw.service,mode:raw.mode,version,path:raw.mode==='reuse'||raw.mode==='update'&&raw.path?absolute(raw.path,platform,'executable'):'',port,
+    ...(raw.mode==='update'?{currentVersion:String(raw.currentVersion||''),serviceManager:raw.service==='caddy'&&raw.serviceManager==='pm2'?'pm2':'native',serviceName:String(raw.serviceName||''),configPath:raw.configPath?absolute(raw.configPath,platform,'service configuration'):'',databaseDataPath:raw.databaseDataPath?absolute(raw.databaseDataPath,platform,'database data'):''}:{}),
     agentRoot:absolute(raw.agentRoot||(platform==='win32'?'C:\\ProgramData\\ManagerAgent':'/var/lib/manager-agent'),platform,'agent'),
     dataRoot:absolute(raw.dataRoot||(platform==='win32'?'C:\\ProgramData\\ManagerServices':'/var/lib/manager-services'),platform,'service data')};
 }
@@ -22,6 +25,18 @@ function verifyServicePlan(plan,inventory){
   const spec=SERVICES[plan.service];
   if(!spec||!inventory.portsKnown)throw Error('Inspect listening ports before provisioning');
   const candidates=inventory.tools[spec.tool]||[];
+  if(plan.mode==='update'){
+    const current=plan.service==='phpmyadmin'?plan.currentVersion:candidates.find(x=>x.compatible&&(inventory.platform==='win32'?x.path.toLowerCase()===plan.path.toLowerCase():x.path===plan.path))?.version;
+    if(!current)throw Error('Inspect the exact installed executable before upgrading');
+    if(plan.service==='mysql'&&/MariaDB/i.test(current))throw Error('This MySQL-compatible client belongs to MariaDB. Select MariaDB maintenance to preserve its database engine.');
+    const checked=upgrades.validate(plan.service,current,plan.version,inventory.platform);
+    if(checked.currentVersion!==plan.currentVersion)throw Error('The installed version changed. Review the update again.');
+    if(checked.kind==='database'&&(!plan.serviceName||!plan.configPath||!plan.databaseDataPath))throw Error('Select the existing service, configuration file and data directory for the cold backup');
+    if(plan.serviceManager==='pm2'){if(plan.service!=='caddy'||plan.serviceName!=='manager-remote-caddy')throw Error('Select the agent’s private Caddy process');}
+    else if(plan.serviceName&&!inventory.services.some(s=>s.name===plan.serviceName))throw Error('The selected service is not present in this inventory');
+    if(plan.serviceName.length>200||/[\x00-\x1f]/.test(plan.serviceName))throw Error('Invalid service name');
+    return;
+  }
   if(plan.service==='phpmyadmin')return;
   if(plan.mode==='install-version')return; // A new version has its own directory and never replaces the server default.
   if(plan.mode==='reuse'){

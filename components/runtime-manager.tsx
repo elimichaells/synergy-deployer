@@ -11,7 +11,8 @@ import { runtimeCategory } from '@/lib/settings-workspace'
 type JobAction = 'install' | 'update' | 'configure' | 'install-version'
 interface RuntimeJob { id: string; runtime_id: string; action: JobAction; requested_version: string | null; status: 'queued' | 'running' | 'success' | 'failed' | 'interrupted'; log: string; error: string | null; created_at: string }
 interface RuntimeStatus {
-  updateMode?:'project-version'
+  updateMode?:'project-version'|'maintenance'
+  updateService?:string
   id: string
   name: string
   purpose: string

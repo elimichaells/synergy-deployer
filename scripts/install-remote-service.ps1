@@ -60,7 +60,23 @@ try{
   [IO.File]::WriteAllText((Join-Path $stage 'previous-paths.json'),$savedPaths,$utf8)
   $tool=@{postgresql='psql';mysql='mysql';mariadb='mariadb';angular='ng';mongodb='mongod';sqlserver='sqlcmd'}[$plan.service];if(-not $tool){$tool=$plan.service}
   $result=@{status='success';operationId=$plan.operationId;service=$plan.service;mode=$plan.mode;port=$plan.port;host='127.0.0.1';managed=($plan.mode -eq 'install')}
+  if($plan.mode -eq 'update' -and $plan.service -ne 'phpmyadmin'){
+    & $paths.node (Join-Path $stage 'service-upgrade-runner.cjs') $PlanFile
+    # The upgrade runner owns its durable receipt and recovery state.
+    if($LASTEXITCODE -ne 0){exit $LASTEXITCODE};return
+  }
   if($plan.service -eq 'phpmyadmin'){
+    if($plan.mode -eq 'update'){
+      $target=Join-Path $plan.dataRoot ('updates\phpmyadmin\'+$plan.operationId)
+      $parent=Split-Path -Parent $target;Private-Folder $parent;Run 'icacls.exe' @($parent,'/grant','*S-1-5-19:(OI)(CI)RX')
+      Run $paths.node @((Join-Path $stage 'service-upgrade.cjs'),'prepare',$PlanFile,$target)
+      Copy-Item -LiteralPath (Join-Path $stage 'database-browser-agent.cjs') -Destination (Join-Path $target 'browser-check.cjs')
+      Run 'icacls.exe' @($target,'/grant','*S-1-5-19:(OI)(CI)RX')
+      Agent-Check ('& '+(Quote-PS $paths.node)+' '+(Quote-PS (Join-Path $target 'browser-check.cjs'))+' '+(Quote-PS $target)+';if($LASTEXITCODE -ne 0){throw "Updated browser failed its service-account check"}')
+      Run $paths.node @((Join-Path $stage 'service-upgrade.cjs'),'activate',$PlanFile,$target)
+      $result.path=Join-Path $target 'client';$result.version=$plan.version;$result.backup=$target;Write-Json $receipt $result
+      Write-Output '[service] Private phpMyAdmin updated. Previous release, sessions, database services and sites preserved.';return
+    }
     if($plan.mode -ne 'install'){throw 'The private browser requires its own installation'}
     $target=Join-Path $plan.dataRoot 'phpmyadmin';$marker=Join-Path $plan.agentRoot 'database-browser.json'
     if((Test-Path -LiteralPath $target) -or (Test-Path -LiteralPath $marker)){throw 'The browser destination already exists. It will not be overwritten.'}
@@ -213,7 +229,7 @@ try{
   $result.path=$paths[$tool];Write-Json $receipt $result
   Write-Output '[service] Configuration complete; authenticated checks passed where a database was installed.'
 }catch{
-  if($savedPaths){Write-ToolPaths $savedPaths}
+  if($savedPaths -and $plan.mode -ne 'update'){Write-ToolPaths $savedPaths}
   # Never remove initialized data or an existing installation during recovery.
   if($createdService -and $target){
     $registered=Get-CimInstance Win32_Service -Filter ("Name='"+$createdService+"'") -ErrorAction SilentlyContinue
@@ -221,7 +237,12 @@ try{
     if($ownedExecutable -and [IO.Path]::GetFullPath($ownedExecutable).StartsWith([IO.Path]::GetFullPath($target).TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase)){Stop-Service -Name $createdService -ErrorAction SilentlyContinue}
   }
   $message=$_.Exception.Message+"`n"+$_.ScriptStackTrace; if($plan.databasePassword){$message=$message.Replace([string]$plan.databasePassword,'[redacted]')}
-  Write-Json $receipt @{status='failed';operationId=$plan.operationId;service=$plan.service;serviceName=$createdService;message=$message;preservedData=$true}
+  $status='failed'
+  if($plan.mode -eq 'update'){
+    $journal=Join-Path $plan.dataRoot ('updates\'+$plan.service+'\'+$plan.operationId+'\upgrade.json')
+    if(Test-Path -LiteralPath $journal){try{$phase=(Get-Content -LiteralPath $journal -Raw|ConvertFrom-Json).phase;if($phase -notin @('prepared','rolled_back')){$status='interrupted'}}catch{$status='interrupted'}}
+  }
+  Write-Json $receipt @{status=$status;operationId=$plan.operationId;service=$plan.service;serviceName=$createdService;message=$message;preservedData=$true}
   Write-Error $message
   exit 1
 }
