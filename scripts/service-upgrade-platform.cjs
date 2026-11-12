@@ -51,6 +51,10 @@ async function processIdentity(pid){
   if(process.platform==='win32')return JSON.parse(await ps(`$p=Get-CimInstance Win32_Process -Filter 'ProcessId=${Number(pid)}';if($p){@{pid=$p.ProcessId;parent=$p.ParentProcessId;executable=$p.ExecutablePath}|ConvertTo-Json -Compress}else{'null'}`));
   try{const stat=await fs.readFile(`/proc/${pid}/stat`,'utf8'),fields=stat.slice(stat.lastIndexOf(')')+2).split(' ');return {pid:Number(pid),parent:Number(fields[1]),executable:await fs.readlink(`/proc/${pid}/exe`)}}catch(error){if(error.code==='ENOENT')return null;throw error}
 }
+async function runningReceipt(plan){
+  const processStartedAt=process.platform==='win32'?(await ps(`(Get-Process -Id ${process.pid}).StartTime.ToUniversalTime().ToString('o')`)).trim():(await fs.readFile(`/proc/${process.pid}/stat`,'utf8')).split(' ')[21];
+  return {status:'running',operationId:plan.operationId,service:plan.service,pid:process.pid,processStartedAt};
+}
 function databaseProcessMatches(service,processInfo,selected,os=process.platform){
   if(!processInfo)return false;if(processInfo.pid===Number(selected.pid))return true;
   // Windows pg_ctl and MySQL's restart monitor own the child engine process.
@@ -129,4 +133,4 @@ async function adapterFor(plan,installRoot,stage){
     if(database){const list=await files(plan.databaseDataPath);let size=0;for(const file of list)size+=(await fs.stat(path.join(plan.databaseDataPath,file))).size;const space=await fs.statfs(target);if(space.bavail*space.bsize<size*1.15+128*1024*1024)throw Error('Insufficient space for a verified cold database backup');const backup=path.join(target,'database-backup');await copyTree(plan.databaseDataPath,backup);const manifest={};for(const file of list){manifest[file]=await digest(path.join(plan.databaseDataPath,file));if(manifest[file]!==await digest(path.join(backup,file)))throw Error('Cold backup verification failed')}await fs.writeFile(path.join(target,'database-backup.json'),JSON.stringify({data:plan.databaseDataPath,files:manifest,verified:true}),{flag:'wx',mode:0o600});}
   },verify:async()=>{await checkIdentity();const actual=await inspectSelected(plan);if(actual.status!=='Running'||!actual.pid)throw Error('Updated service is not running');if(database){const info=await waitForDatabase(plan,stage,plan.version);databasePid=await verifyDatabaseIdentity(plan,info,actual)}return actual;}};
 }
-module.exports={inspectService,inspectSelected,transition,transitionSelected,databaseInfo,waitForDatabase,restoreDatabase,verifyBackup,adapterFor,copyTree,digest,asAgent,systemdCommand,databaseProcessMatches};
+module.exports={inspectService,inspectSelected,transition,transitionSelected,databaseInfo,waitForDatabase,restoreDatabase,verifyBackup,adapterFor,copyTree,digest,asAgent,systemdCommand,databaseProcessMatches,runningReceipt};

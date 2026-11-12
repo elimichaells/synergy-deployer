@@ -16,6 +16,7 @@ import {detectedToolVersion} from './remote-tool-updates'
 import type { ServerToolId } from './server-tool-catalog'
 import type { RemoteServicePlan } from './remote-service-catalog'
 import type { SFTPWrapper } from 'ssh2'
+import type { PoolClient } from 'pg'
 import type { RemoteMetrics } from './managed-server-types'
 const ps=(s:string)=>"'"+s.replace(/'/g,"''")+"'",sh=(s:string)=>"'"+s.replace(/'/g,"'\\''")+"'"
 const digest=(v:unknown)=>createHash('sha256').update(JSON.stringify(v)).digest('hex')
@@ -130,8 +131,10 @@ export async function installRemoteService(id:string,body:Record<string,unknown>
   }
 }
 export async function recoverRemoteService(id:string,body:Record<string,unknown>,userId:string){
-  const {row,target,connection,auth}=await connectionFor(id,body);let sftp:SFTPWrapper|undefined
+  const {row,target,connection,auth}=await connectionFor(id,body);let sftp:SFTPWrapper|undefined,lease:PoolClient|undefined,locked=false
   try{
+    lease=await db.connect();locked=(await lease.query("select pg_try_advisory_lock(hashtext('manager-service-recovery'),hashtext($1)) as locked",[id])).rows[0].locked
+    if(!locked)throw new ApiError('Another administrator is already recovering this server operation. Wait for its result.',409)
     uuid(body.operationId);const operation=(await query("select * from remote_service_operations where id=$1 and server_id=$2 and status in ('running','interrupted')",[body.operationId,id])).rows[0]
     if(!operation||digest(target)!==digest(operation.plan.target)||body.fingerprint!==operation.plan.fingerprint||!operation.plan.stage?.endsWith('manager-service-'+operation.id))throw new ApiError('Reconnect to the original installation target',409)
     sftp=await sftpSession(connection);let receipt=JSON.parse(await readRemote(sftp,operation.plan.stage+'/result.json'))
@@ -163,5 +166,8 @@ export async function recoverRemoteService(id:string,body:Record<string,unknown>
     await query('update remote_service_operations set status=$2,result=$3,finished_at=now() where id=$1',[operation.id,receipt.status,JSON.stringify(receipt)])
     for(const name of ['plan.json','previous-paths.json','service-upgrade.cjs','service-upgrade-policy.cjs','service-upgrade-runner.cjs','service-upgrade-platform.cjs','service-upgrade-pm2.cjs','service-upgrade-caddy.cjs','install-remote-service.ps1','install-remote-service.sh','install-remote-tool.cjs','install-database-browser.cjs','database-browser-agent.cjs','initialize-remote-database.cjs','agent-runtime-loader.cjs','install-remote-sqlserver.ps1','offline-service.ps1','installer-offline.ps1','database-service.ps1','sql-setup.ini','chocolatey.ps1','bootstrap-remote-service.sh','privileged-node.env','result.json'])await new Promise<void>(resolve=>sftp!.unlink(operation.plan.stage+'/'+name,()=>resolve()))
     await audit(userId,'remote.service.recover',id,{operationId:operation.id,status:receipt.status});return receipt
-  }catch(error){throw new ApiError(redact((error as Error).message,credentialSecrets(auth)),error instanceof ApiError?error.status:400)}finally{sftp?.end();connection.end()}
+  }catch(error){throw new ApiError(redact((error as Error).message,credentialSecrets(auth)),error instanceof ApiError?error.status:400)}finally{
+    sftp?.end();connection.end()
+    if(lease){if(locked){try{await lease.query("select pg_advisory_unlock(hashtext('manager-service-recovery'),hashtext($1))",[id]);lease.release()}catch{lease.release(true)}}else lease.release()}
+  }
 }
