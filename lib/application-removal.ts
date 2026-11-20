@@ -41,6 +41,7 @@ async function snapshot(client: PoolClient, serverId: string | null, appId: stri
   const table = serverId ? 'remote_apps' : 'projects'
   const related = (await client.query(`select id,name from ${table} where production_id=$1 order by id for update`, [appId])).rows
   const jobs = await rows(client, serverId ? 'remote_jobs' : 'deployments', serverId ? 'app_id' : 'project_id', appId)
+  if(serverId)jobs.push(...(await rows(client,'remote_webhook_queue','app_id',appId)).map(job=>({...job,status:'queued',kind:'deploy'})))
   const domains = await rows(client, serverId ? 'remote_domains' : 'project_domains', 'project_id', appId)
   const connections = await rows(client, serverId ? 'remote_storage_services' : 'project_data_services', serverId ? 'app_id' : 'project_id', appId)
   if(serverId&&connections.length){const servers=(await client.query('select id,provider,host,port from remote_storage_connections where server_id=$1',[serverId])).rows;for(const item of connections){const connection=servers.find(c=>c.id===item.connection_id);if(connection)Object.assign(item,{provider:connection.provider,host:connection.host,port:connection.port})}}
