@@ -66,7 +66,32 @@ test('remote auto-deploy connects, persists, authenticates, queues and deduplica
   const raw=JSON.stringify({ref:'refs/heads/main',after:'b'.repeat(40),repository:{clone_url:'https://github.com/example/fixture.git'}}),headers=new Headers({'x-github-event':'push','x-hub-signature-256':'sha256='+require('node:crypto').createHmac('sha256',hook.config.secret).update(raw).digest('hex')});
   const first=await automation.receiveRemotePush(server.id,app.id,raw,headers),second=await automation.receiveRemotePush(server.id,app.id,raw,headers);assert.equal(first.deploymentId,second.deploymentId);
   const job=(await managed.claimJob(server.id)).job;assert.equal(job.id,first.deploymentId);assert.equal(job.payload.commitSha,'b'.repeat(40));assert.equal(job.payload.id,app.id);
+  const nextRaw=raw.replace('b'.repeat(40),'c'.repeat(40)),nextHeaders=new Headers({'x-github-event':'push','x-hub-signature-256':'sha256='+require('node:crypto').createHmac('sha256',hook.config.secret).update(nextRaw).digest('hex')});
+  const next=await automation.receiveRemotePush(server.id,app.id,nextRaw,nextHeaders);assert.notEqual(next.deploymentId,job.id);assert.equal((await automation.receiveRemotePush(server.id,app.id,nextRaw,nextHeaders)).deploymentId,next.deploymentId);
+  assert.equal((await query('select status from remote_job_history where id=$1',[next.deploymentId])).rows[0].status,'queued');assert.equal((await managed.claimJob(server.id)).job.id,job.id);
+  assert.equal((await query("select count(*)::int n from remote_jobs where app_id=$1 and status in ('queued','running')",[app.id])).rows[0].n,1);
+  assert.ok((await managed.serverDetail(server.id)).jobs.some(row=>row.id===next.deploymentId&&row.status==='queued'));
+  assert.ok((await managed.remoteDeploymentHistory(server.id,{appId:app.id})).jobs.some(row=>row.id===next.deploymentId));
+  await assert.rejects(managed.queueRemoteDeploy(server.id,app.id,actor),/current application or storage operation/);
   await managed.reportJob(server.id,{id:job.id,claimToken:job.claimToken,status:'failed',sequence:1,log:'Disposable test complete'});
+  const nextJob=(await managed.claimJob(server.id)).job;assert.equal(nextJob.id,next.deploymentId);assert.equal(nextJob.payload.commitSha,'c'.repeat(40));await managed.reportJob(server.id,{id:nextJob.id,claimToken:nextJob.claimToken,status:'failed',sequence:1,log:'Second disposable push complete'});
+  const push=async letter=>{const body=raw.replace('b'.repeat(40),letter.repeat(40)),signed=new Headers({'x-github-event':'push','x-hub-signature-256':'sha256='+require('node:crypto').createHmac('sha256',hook.config.secret).update(body).digest('hex')});return automation.receiveRemotePush(server.id,app.id,body,signed)};
+  const queued=await push('e'),waiting=await push('f'),cancelled=await push('1');await managed.cancelQueuedJob(server.id,cancelled.deploymentId,actor);
+  assert.equal((await query('select status,payload_ciphertext from remote_jobs where id=$1',[cancelled.deploymentId])).rows[0].status,'cancelled');assert.equal((await query('select 1 from remote_webhook_queue where id=$1',[cancelled.deploymentId])).rowCount,0);
+  await managed.cancelQueuedJob(server.id,queued.deploymentId,actor);const advanced=(await managed.claimJob(server.id)).job;assert.equal(advanced.id,waiting.deploymentId);assert.equal(advanced.payload.commitSha,'f'.repeat(40));await managed.reportJob(server.id,{id:advanced.id,claimToken:advanced.claimToken,status:'failed',sequence:1,log:'Cancellation advanced exactly one waiting push'});
+  const revokeFirst=await push('2'),revokeWaiting=await push('3');await managed.changeServer(server.id,'revoke',actor);
+  const revoked=(await query('select status,payload_ciphertext from remote_jobs where id=any($1::uuid[])',[[revokeFirst.deploymentId,revokeWaiting.deploymentId]])).rows;assert.equal(revoked.length,2);assert.ok(revoked.every(row=>row.status==='cancelled'&&row.payload_ciphertext===null));assert.equal((await query('select 1 from remote_webhook_queue where server_id=$1',[server.id])).rowCount,0);
+  await query('update managed_servers set enabled=true where id=$1',[server.id]);
+  const manual=await managed.queueRemoteDeploy(server.id,app.id,actor),manualJob=(await managed.claimJob(server.id)).job;assert.equal(manual.id,manualJob.id);const echo=await push('4');
+  await managed.reportJob(server.id,{id:manualJob.id,claimToken:manualJob.claimToken,status:'success',securityStatus:'passed',sequence:1,log:'Release already includes this pushed commit',commitSha:'4'.repeat(40)});
+  const skipped=(await query('select status,log,payload_ciphertext from remote_jobs where id=$1',[echo.deploymentId])).rows[0];assert.equal(skipped.status,'cancelled');assert.equal(skipped.payload_ciphertext,null);assert.match(skipped.log,/already live/);assert.equal((await managed.claimJob(server.id)).job,null);
+  const blockedRaw=raw.replace('b'.repeat(40),'d'.repeat(40)),blockedHeaders=new Headers({'x-github-event':'push','x-hub-signature-256':'sha256='+require('node:crypto').createHmac('sha256',hook.config.secret).update(blockedRaw).digest('hex')});
+  for(const kind of ['inspect','console']){
+    const blocker=(await query("insert into remote_jobs(server_id,app_id,user_id,kind,payload_ciphertext) values($1,$2,$3,$4,$5) returning id",[server.id,app.id,actor,kind,crypto.encryptSecret('{}')])).rows[0].id;
+    await assert.rejects(automation.receiveRemotePush(server.id,app.id,blockedRaw,blockedHeaders),/current application or storage operation/);await query('delete from remote_jobs where id=$1',[blocker]);
+  }
+  const storageBlocker=(await query("insert into remote_jobs(server_id,user_id,kind,operation_type,resource_action,payload_ciphertext) values($1,$2,'console','infrastructure','storage',$3) returning id",[server.id,actor,crypto.encryptSecret('{}')])).rows[0].id;
+  await assert.rejects(automation.receiveRemotePush(server.id,app.id,blockedRaw,blockedHeaders),/current application or storage operation/);await query('delete from remote_jobs where id=$1',[storageBlocker]);
   await automation.changeRemoteGit(server.id,app.id,{action:'auto',enabled:false},actor);assert.equal((await automation.receiveRemotePush(server.id,app.id,raw,headers)).status,'ignored');
   await automation.changeRemoteGit(server.id,app.id,{action:'auto',enabled:true},actor);
   const saved=(await managed.serverDetail(server.id)).apps.find(row=>row.id===app.id);

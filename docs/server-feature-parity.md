@@ -1,6 +1,6 @@
 # Host and connected-server functionality audit
 
-Audit for Manager 2.34.0 / agent 1.9.2, starting from Manager 2.31.0 / agent 1.8.0.
+Audit for Manager 2.34.1 / agent 1.9.2, starting from Manager 2.31.0 / agent 1.8.0.
 The release fixes the verified gaps below; it does not claim universal functional parity.
 Production applications, databases and shared proxy configuration are outside the destructive test scope.
 
@@ -11,7 +11,7 @@ backend. It missed the absent header/overview/project switches and the fact that
 enabling remote auto-deploy did not create its provider webhook. Both are fixed.
 The switch is now shared with the host and saves enabled state only after verified
 provider configuration succeeds. Operators can toggle it; provider administration
-remains administrator-only. Repository/connection changes clear old authorization.
+remains administrator-only. Repository/connection changes clear old authorization. Signed pushes arriving during an active deployment remain queued and execute sequentially; setup, console and storage operations still block conflicting admission.
 
 The page comparison also found missing promotion launch controls, guided-app source
 editing, setup reopening, pre/post command inputs and the application tool grid.

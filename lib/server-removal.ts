@@ -32,7 +32,7 @@ async function snapshot(client: PoolClient, id: string): Promise<ServerRemovalRe
   const server = (await client.query('select id,name,platform,enabled,enrolled_at from managed_servers where id=$1 for update', [id])).rows[0]
   if (!server) throw new ApiError('Server not found', 404)
   const apps = (await client.query('select id,name,hostname,environment_name,deployed_at from remote_apps where server_id=$1 order by id', [id])).rows
-  const jobs = (await client.query('select id,status from remote_jobs where server_id=$1 order by id', [id])).rows
+  const jobs = (await client.query('select id,status from remote_job_history where server_id=$1 order by id', [id])).rows
   const updates = (await client.query('select id,status from remote_agent_updates where server_id=$1 order by id', [id])).rows
   const services = (await client.query('select id,status from remote_service_operations where server_id=$1 order by id', [id])).rows
   const automation = (await client.query('select id,kind,config from remote_automations where server_id=$1 order by id', [id])).rows
