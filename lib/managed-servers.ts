@@ -25,7 +25,10 @@ const serverColumns = `s.id,s.name,s.location,s.platform,s.enabled,s.enrolled_at
 const appColumns = `id,server_id,name,repo_url,branch,install_cmd,build_cmd,start_cmd,deploy_script,pre_deploy_cmd,post_deploy_cmd,port,health_path,
   access_mode,hostname,ip_address,ip_port,git_connection_id,env_names,live_commit,deployed_at,
   environment_name,production_id,project_type,guided_setup,setup_step,setup_completed_at,database_config,runtime_versions,
-  application_group_id,component_role,health_profile,auto_deploy,(select g.name from remote_application_groups g where g.id=remote_apps.application_group_id and g.server_id=remote_apps.server_id) as group_name`
+  application_group_id,component_role,health_profile,auto_deploy,storage_catalog_enabled,
+  coalesce((select jsonb_agg(jsonb_build_object('status',d.status,'provider',c.provider,'host',c.host,'port',c.port,'database',d.database_name,'username',d.username,'tls',c.tls_enabled) order by d.application_primary desc,d.name)
+    from remote_storage_services d join remote_storage_connections c on c.id=d.connection_id and c.server_id=d.server_id where d.server_id=remote_apps.server_id and d.app_id=remote_apps.id),'[]'::jsonb) as data_services,
+  (select g.name from remote_application_groups g where g.id=remote_apps.application_group_id and g.server_id=remote_apps.server_id) as group_name`
 let schema: Promise<void> | null = null
 
 export function ensureManagedServers() {
@@ -233,7 +236,10 @@ export async function saveRemoteApp(serverId: string, appId: string | null, body
     const values = [serverId,app.name,app.repo_url,app.branch,app.install_cmd,app.build_cmd,app.start_cmd,app.port,app.health_path,
       app.access_mode,app.hostname,app.ip_address,app.ip_port,connectionId,envCipher,envNames]
     const result = appId ? await client.query(`update remote_apps set name=$2,repo_url=$3,branch=$4,install_cmd=$5,build_cmd=$6,start_cmd=$7,
-      port=$8,health_path=$9,access_mode=$10,hostname=$11,ip_address=$12,ip_port=$13,git_connection_id=$14,env_ciphertext=$15,env_names=$16
+      port=$8,health_path=$9,access_mode=$10,hostname=$11,ip_address=$12,ip_port=$13,git_connection_id=$14,env_ciphertext=$15,env_names=$16,
+      auto_deploy=case when repo_url<>$3 or git_connection_id is distinct from $14 then false else auto_deploy end,
+      webhook_ciphertext=case when repo_url<>$3 or git_connection_id is distinct from $14 then null else webhook_ciphertext end,
+      webhook_user_id=case when repo_url<>$3 or git_connection_id is distinct from $14 then null else webhook_user_id end
       where server_id=$1 and id=$17 returning id`, [...values, appId]) :
       await client.query(`insert into remote_apps (server_id,name,repo_url,branch,install_cmd,build_cmd,start_cmd,port,health_path,
         access_mode,hostname,ip_address,ip_port,git_connection_id,env_ciphertext,env_names)

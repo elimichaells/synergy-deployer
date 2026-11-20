@@ -19,7 +19,7 @@ export function remoteProjects(serverId: string, applications: RemoteApp[], jobs
     const members = apps.filter(item => groupOf(item)===groupId),app=members.find(item=>item.id===groupId)||members[0]
     return { id: groupId, name: app.group_name||app.name,
       domains: [...new Set(members.filter(item => !item.hostname.endsWith('.invalid')).map(item => item.hostname))],
-      database_count: new Set(members.filter(item => item.database_config).map(item => { const db = item.database_config!; return JSON.stringify([db.provider, db.host.toLowerCase(), db.port, db.database]) })).size,
+      database_count: remoteDatabases(members).length,
       apps: members.map(item => ({ id: item.id, name: item.name, project_type: item.project_type || 'node', environment: item.environment_name || 'production', production_id: item.production_id && ids.has(item.production_id) ? item.production_id : null, component_role: item.component_role||'application', setup_required: !!item.guided_setup && !item.setup_completed_at, deployed_at: item.deployed_at,
         deployment_status: jobs.filter(job => job.app_id === item.id && (!job.kind || job.kind === 'deploy')).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0]?.status || null })),
     }
@@ -28,16 +28,20 @@ export function remoteProjects(serverId: string, applications: RemoteApp[], jobs
 
 export const remoteRuntimeToolsUnavailable = 'Runtime logs and console are not supported by this agent. Deployment logs are available under Deployments.'
 
+export function remoteAppDatabases(app:RemoteApp):NonNullable<RemoteApp['database_config']>[] {
+  return app.storage_catalog_enabled||app.data_services?.length?app.data_services||[]:app.database_config?[app.database_config]:[]
+}
+
 /** One row per physical database within a selected server workspace. */
 export function remoteDatabases(apps: RemoteApp[]) {
   const rows = new Map<string, { key: string; config: NonNullable<RemoteApp['database_config']>; apps: RemoteApp[] }>()
   for (const app of apps) {
-    const config = app.database_config
-    if (!config) continue
+    for(const config of remoteAppDatabases(app)){
     const key = JSON.stringify([app.server_id, config.provider, config.host.toLowerCase(), Number(config.port), config.database])
     const row = rows.get(key)
-    if (row) row.apps.push(app)
+    if (row) {if(!row.apps.some(item=>item.id===app.id))row.apps.push(app)}
     else rows.set(key, { key, config, apps: [app] })
+    }
   }
   return [...rows.values()]
 }

@@ -35,11 +35,11 @@ for(const provider of ['github','gitea','gitlab'])test(`${provider} remote webho
   if(provider==='gitlab')assert.equal(mutation.options.body.enable_ssl_verification,true);else assert.equal(mutation.options.body.config.insecure_ssl,'0');
   await module.changeRemoteGit(server,id,{action:'disconnect'},'admin');assert.equal(app.webhook_ciphertext,null);assert.equal(requests.filter(x=>x.options?.method==='DELETE').length,1);assert.ok(requests.every(x=>!x.endpoint.endsWith('/9')));
   reject=true;await assert.rejects(module.changeRemoteGit(server,id,{action:'connect'},'admin'),/rejected/);assert.equal(app.webhook_ciphertext,null);
-  reject=false;repoChanged=true;await assert.rejects(module.changeRemoteGit(server,id,{action:'connect'},'admin'),/repository changed/);assert.equal(app.webhook_ciphertext,null);
+  reject=false;repoChanged=true;await assert.rejects(module.changeRemoteGit(server,id,{action:'connect'},'admin'),/repository.*changed/);assert.equal(app.webhook_ciphertext,null);
   await assert.rejects(module.remoteGitStatus('different-server',id),/not found/);
   unlockFailure=true;await assert.rejects(module.changeRemoteGit(server,id,{action:'auto',enabled:false},'admin'),/connection closed/);assert.equal(released,5);
 });
-test('remote webhook routes bound unauthenticated payloads and require admin same-origin configuration',async()=>{
+test('remote webhook routes bound payloads, permit operator auto-deploy and restrict webhook administration',async()=>{
   class ApiError extends Error{constructor(message,status){super(message);this.status=status}}
   const api={ApiError,jsonError:e=>Response.json({error:e.message},{status:e.status||500})};let role='operator',calls=0;
   const mocks={'next/server':{NextResponse:Response},'@/lib/api':api,'@/lib/auth':{getSessionFromCookie:async()=>({id:'user',role})},'@/lib/rbac':load('lib/rbac.ts',{'./api':api}),'@/lib/request-body':load('lib/request-body.ts',{'@/lib/api':api}),'@/lib/update-maintenance':{updateProtected:(_label,f)=>f()},'@/lib/remote-git-automation':{remoteGitStatus:async()=>({}),changeRemoteGit:async()=>{calls++;return{}},receiveRemotePush:async()=>{calls++;return{status:'queued'}}}};
@@ -47,6 +47,10 @@ test('remote webhook routes bound unauthenticated payloads and require admin sam
   const request=(body='{}',origin='https://manager.test')=>new Request('https://manager.test/api/test',{method:'POST',headers:{origin,host:'manager.test'},body});
   assert.equal((await route.POST(request(),context)).status,403);role='admin';assert.equal((await route.POST(request('{}','https://other.test'),context)).status,403);assert.equal(calls,0);
   const events=load('app/api/webhooks/remote/[serverId]/[appId]/route.ts',mocks);assert.equal((await events.POST(request('x'.repeat(2*1024*1024+1)),context)).status,413);assert.equal(calls,0);
+  role='operator';assert.equal((await route.POST(request('{"action":"auto","enabled":true}'),context)).status,200);assert.equal(calls,1);
+  for(const action of ['generate','connect','disconnect'])assert.equal((await route.POST(request(JSON.stringify({action})),context)).status,403);
+  assert.equal((await route.POST(request('{"action":"auto","enabled":false}','https://other.test'),context)).status,403);
+  role='viewer';assert.equal((await route.POST(request('{"action":"auto","enabled":true}'),context)).status,403);assert.equal(calls,1);
 });
 test('signed HTTP deliveries reach only their selected remote application for all Git providers',async t=>{
   const http=require('node:http'),{randomUUID}=require('node:crypto'),serverId=randomUUID(),appId=randomUUID(),actor=randomUUID(),secret='disposable-http-webhook-secret',queued=[];

@@ -17,6 +17,7 @@ import { RolePicker, roleIcons } from '@/components/app/stack-panel'
 import { ProviderLogo, providerMeta, type Provider } from '@/components/app/providers'
 import { ProjectServiceSheet } from '@/components/app/project-service-sheet'
 import { AppToolLinks } from '@/components/app/app-tools'
+import { AutoDeployControl } from '@/components/app/auto-deploy-control'
 import { ProjectDeployments, ProjectEnvironment, ProjectLogsConsole } from '@/components/app/project-tools'
 import { relativeTime } from '@/lib/deployment-stages'
 import { isApplicationRoot, projectEnvironment } from '@/lib/application-environments'
@@ -97,19 +98,6 @@ export default function ProjectPage() {
       if (!response.ok) throw new Error(body.error || 'Deployment failed to start')
       if (body.deploymentId) router.push(`/deployments/${body.deploymentId}`)
     } catch (err) { setError((err as Error).message) } finally { setBusy(null) }
-  }
-
-  const setAutoDeploy = async (app: App, enabled: boolean) => {
-    setBusy(`auto-${app.id}`); setError('')
-    setProject(current => current && { ...current, apps: current.apps.map(item => item.id === app.id ? { ...item, auto_deploy: enabled } : item) })
-    try {
-      const response = await fetch(`/api/sites/${app.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ autoDeploy: enabled }) })
-      const body = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(body.error || 'Could not change automatic deploys')
-    } catch (err) {
-      setProject(current => current && { ...current, apps: current.apps.map(item => item.id === app.id ? { ...item, auto_deploy: !enabled } : item) })
-      setError((err as Error).message)
-    } finally { setBusy(null) }
   }
 
   const rename = async () => {
@@ -256,10 +244,7 @@ export default function ProjectPage() {
                     {app.setup_required ? <span className="text-amber-200">Setup incomplete</span> : app.deployment_status ? <StatusLabel status={app.deployment_status} className="text-xs" /> : 'Not deployed'}
                     {app.deployed_at && <p className="mt-0.5">{relativeTime(app.deployed_at, now)}</p>}
                   </div>
-                  {!app.setup_required && <label className="flex items-center gap-2 text-xs text-muted-foreground" title={app.auto_deploy ? `Deploys when you push to ${app.default_branch}` : 'Pushes are ignored; deploy manually'}>
-                    <Zap className={`h-3.5 w-3.5 ${app.auto_deploy ? 'text-status-ready' : ''}`} aria-hidden="true" />Auto-deploy
-                    <Switch checked={app.auto_deploy} disabled={!access.canWrite || busy !== null} onCheckedChange={checked => void setAutoDeploy(app, checked)} aria-label={`Auto-deploy ${app.name}`} />
-                  </label>}
+                  {!app.setup_required && <AutoDeployControl appId={app.id} name={app.name} branch={app.default_branch} enabled={app.auto_deploy} disabled={!access.canWrite||busy!==null} variant="compact" onChanged={enabled=>setProject(current=>current&&({...current,apps:current.apps.map(item=>item.id===app.id?{...item,auto_deploy:enabled}:item)}))}/>}
                   <div className="flex gap-2">
                     {app.setup_required
                       ? <Button asChild size="sm" variant="outline"><Link href={`/sites/${app.id}?tab=setup`}>Finish setup</Link></Button>

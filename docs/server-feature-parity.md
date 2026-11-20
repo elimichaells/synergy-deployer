@@ -1,8 +1,28 @@
 # Host and connected-server functionality audit
 
-Audit for Manager 2.33.0 / agent 1.9.2, starting from Manager 2.31.0 / agent 1.8.0.
+Audit for Manager 2.34.0 / agent 1.9.2, starting from Manager 2.31.0 / agent 1.8.0.
 The release fixes the verified gaps below; it does not claim universal functional parity.
 Production applications, databases and shared proxy configuration are outside the destructive test scope.
+
+## Auto-deploy and application workspace correction in 2.34
+
+The earlier Git automation row covered the Settings component and signed delivery
+backend. It missed the absent header/overview/project switches and the fact that
+enabling remote auto-deploy did not create its provider webhook. Both are fixed.
+The switch is now shared with the host and saves enabled state only after verified
+provider configuration succeeds. Operators can toggle it; provider administration
+remains administrator-only. Repository/connection changes clear old authorization.
+
+The page comparison also found missing promotion launch controls, guided-app source
+editing, setup reopening, pre/post command inputs and the application tool grid.
+Those controls are now exposed. Project Storage now reads the full scoped catalog
+and uses the shared creation dialog, waiting for agent acknowledgement before sharing.
+
+The remaining differences include host optional candidate preflight/health switches
+(remote always performs final readiness), Git provider comparison history, and the
+existing evidence boundaries below. Do not describe these changes as proof that every
+module behaves identically. Current live connected-server inventory has no registered
+applications; real application mutations use disposable tests.
 
 ## Service maintenance evidence for 2.33
 

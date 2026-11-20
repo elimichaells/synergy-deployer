@@ -67,7 +67,7 @@ export function PromoteSheet({ stagingId, open, onOpenChange, onStarted,serverId
 
             <p className="text-xs leading-5 text-muted-foreground">
               {plan.mode === 'merge'
-                ? <>Synergy merges commit <span className="font-mono text-foreground">{short(plan.staging.commit)}</span> into <span className="font-mono text-foreground">{plan.production.branch}</span>, builds and test-starts it, then switches production over. <span className="font-mono text-foreground">{plan.production.branch}</span> on the Git server is updated only after production is live and healthy.</>
+                ? <>Synergy merges commit <span className="font-mono text-foreground">{short(plan.staging.commit)}</span> into <span className="font-mono text-foreground">{plan.production.branch}</span>, {serverId?'builds it, activates the release and checks readiness':'builds and test-starts it, then switches production over'}. <span className="font-mono text-foreground">{plan.production.branch}</span> on the Git server is updated only after production is live and healthy.</>
                 : <>Staging and production share the <span className="font-mono text-foreground">{plan.production.branch}</span> branch, so production moves to exactly commit <span className="font-mono text-foreground">{short(plan.staging.commit)}</span>. Newer commits that staging has not run are left out.</>}
               {' '}If anything fails, production keeps running its current version.
             </p>
