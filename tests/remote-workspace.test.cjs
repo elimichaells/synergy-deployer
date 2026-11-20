@@ -99,3 +99,11 @@ test('storage groups physical databases without inventing connections or merging
   assert.equal(rows.length,3);
   assert.deepEqual(rows[0].apps.map(item=>item.id),[appId,'staging']);
 });
+
+test('remote overview and project counts use the full catalog and do not revive detached legacy databases',()=>{
+  const config={provider:'postgresql',host:'127.0.0.1',port:5432,database:'primary',status:'ready'},secondary={...config,database:'audit'};
+  const owner={...app,hostname:'library.example',storage_catalog_enabled:true,database_config:{...config,database:'old'},data_services:[config,secondary]};
+  const shared={...owner,id:'shared',production_id:appId,data_services:[config]};
+  const rows=remoteDatabases([owner,shared]);assert.equal(rows.length,2);assert.equal(rows[0].apps.length,2);assert.equal(remoteProjects(serverId,[owner,shared],[])[0].database_count,2);
+  assert.deepEqual(remoteDatabases([{...owner,data_services:[]}]),[]);
+});

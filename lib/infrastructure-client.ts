@@ -34,7 +34,7 @@ export async function infrastructureResponse(response:Response,endpoint?:string,
     const timeout=AbortSignal.timeout(10000)
     const poll=await fetch(`${endpoint}/jobs/${body.jobId}`,{cache:'no-store',signal:signal?AbortSignal.any([signal,timeout]):timeout}),data=await poll.json()
     if(!poll.ok)throw Error(data.error||'Unable to read operation status')
-    if(data.job.status==='success')return {...data.job.result,message:data.job.result?.message||data.job.log||'Operation completed',output:data.job.result?.output||data.job.log}
+    if(data.job.status==='success')return {...data.job.result,...(body.service?{service:body.service}:{}),message:data.job.result?.message||data.job.log||'Operation completed',output:data.job.result?.output||data.job.log}
     if(!['queued','running'].includes(data.job.status))throw Error(data.job.log||`Operation ${data.job.status}`)
   }
   throw Error('The server has not confirmed completion. Refresh its state before retrying.')

@@ -12,6 +12,8 @@ import { AutomationWorkspace } from '@/components/infrastructure/automation-work
 import { AgentUpdates } from '@/components/infrastructure/agent-updates'
 import { RemoteAppImport } from '@/components/infrastructure/remote-app-import'
 import { RemoteApplicationWorkspace } from '@/components/infrastructure/remote-application-workspace'
+import { AutoDeployControl } from '@/components/app/auto-deploy-control'
+import { RemotePromotion } from '@/components/infrastructure/remote-promotion'
 import { RemoteApplications } from '@/components/infrastructure/remote-applications'
 import { RemoteDeployment } from '@/components/infrastructure/remote-deployment'
 import { RemoteServerHealth, RemoteProcesses } from '@/components/infrastructure/remote-server-health'
@@ -124,12 +126,14 @@ function ManagedServerWorkspace({ id }: { id: string }) {
     back={parentProject ? { href: remoteProjectHref(id, parentProject.id, 'overview', selected?.environment_name), label: parentProject.name } : projectId ? { href: `${root}#applications`, label: 'Projects' } : view === 'app' || view === 'new' ? { href: `${root}#applications`, label: 'Projects' } : openedJob ? { href: `${root}#deployments`, label: 'Deployments' } : undefined}
     tabs={project ? <ProjectTabs unavailable={server.metrics?.capabilities?.includes('remote-console-v1')?{}:{ logs: remoteRuntimeToolsUnavailable }} /> : selected ? <ApplicationTabs unavailable={server.metrics?.capabilities?.includes('remote-console-v1')?{}:{ logs: remoteRuntimeToolsUnavailable }} activeTab={appTab} showSetupTab={!!selected.guided_setup && (!selected.setup_completed_at || appTab === 'setup')} /> : undefined}
     actions={<>
+      {selected&&deployer&&(!selected.guided_setup||selected.setup_completed_at)&&<AutoDeployControl key={selected.id} appId={selected.id} serverId={id} name={selected.name} branch={selected.branch} enabled={!!selected.auto_deploy} disabled={busy||!server.enabled} label="Auto-deploy" onChanged={()=>void load()}/>}
+      {selected&&<RemotePromotion key={`promote-${selected.id}`} serverId={id} app={selected} apps={summary.apps} jobs={summary.jobs} disabled={!deployer||busy||!server.enabled||!summary.fresh} onChanged={()=>void load()}/>}
       {admin && !selected && !projectId && (view === 'overview' || (view === 'server-access' && infraSection === 'agent')) && <RenameServerDialog serverId={id} serverName={server.name} onRenamed={name => setData(current => current ? { ...current, server: { ...current.server, name } } : current)} />}
       {admin && !selected && !projectId && (view === 'overview' || (view === 'server-access' && infraSection === 'agent')) && <RemoveServerDialog serverId={id} serverName={server.name} leaveWorkspace disabled={sshBusy} />}
       {selected && !selected.hostname.endsWith('.invalid') && <Button asChild variant="outline" size="sm"><a href={`https://${selected.hostname}`} target="_blank" rel="noreferrer">Visit<ArrowUpRight className="ml-1.5 h-3.5 w-3.5" /></a></Button>}
       <Button variant="outline" size="sm" onClick={() => void load()}><RefreshCw className="mr-1.5 h-3.5 w-3.5" />Refresh</Button>
       {selected && deployer && <Button size="sm" disabled={busy || !server.enabled || !server.enrolled_at || summary.active.some(job => job.app_id === selected.id) || (!!selected.guided_setup && !selected.setup_completed_at)} onClick={() => void action(`/apps/${selected.id}/deploy`)}><Rocket className="mr-1.5 h-3.5 w-3.5" />Deploy</Button>}
-      {admin && server.enabled && project && <Button asChild size="sm"><Link href={remoteProjectHref(id, project.id, 'storage', projectEnvironment)}><Database className="mr-1.5 h-4 w-4" />Add service</Link></Button>}
+      {admin && server.enabled && project && <Button asChild size="sm"><Link href={remoteProjectHref(id, project.id, 'storage', projectEnvironment).replace('#', '&addService=1#')}><Database className="mr-1.5 h-4 w-4" />Add service</Link></Button>}
       {admin && server.enabled && !selected && !projectId && ['overview', 'applications'].includes(view) && !openedJob && <Button asChild size="sm" disabled={sshBusy}><Link href={`${root}#new`}><Plus className="mr-1.5 h-4 w-4" />New app</Link></Button>}
     </>}>
     <div className="space-y-6">
@@ -152,7 +156,7 @@ function ManagedServerWorkspace({ id }: { id: string }) {
       {view === 'new' && admin && <RemoteAppImport server={server} onDirtyChange={setFormDirty} onCreated={appId => { setFormDirty(false); void load().then(() => router.push(`${root}?tab=setup#app-${appId}`)) }} onCancel={() => { setFormDirty(false); router.push(`${root}#applications`) }} />}
       {view === 'overview' && <RemoteServerOverview server={server} apps={summary.apps} jobs={summary.jobs} now={now} loadError={!!loadError} canCreate={admin && server.enabled && !sshBusy} />}
       {view === 'applications' && !projectId && <RemoteApplications canCreate={admin && server.enabled} now={now} server={server} apps={summary.apps} jobs={summary.jobs} fresh={summary.fresh} />}
-      {project && <TabsContent value={projectTab} className="mt-0"><RemoteProjectWorkspace key={project.id} server={server} projectId={project.id} apps={projectApps} jobs={summary.jobs} tab={projectTab} preferredEnvironment={projectEnvironment} now={now} canWrite={admin} canDeploy={deployer} busy={busy} onDeploy={appId => { void action(`/apps/${appId}/deploy`).then(ok => { if (ok) router.push(remoteAppHref(id, appId, 'deployments')) }) }} /></TabsContent>}
+      {project && <TabsContent value={projectTab} className="mt-0"><RemoteProjectWorkspace key={project.id} server={server} projectId={project.id} apps={projectApps} jobs={summary.jobs} tab={projectTab} preferredEnvironment={projectEnvironment} now={now} canWrite={admin} canDeploy={deployer} busy={busy} onChanged={()=>void load()} onDeploy={appId => { void action(`/apps/${appId}/deploy`).then(ok => { if (ok) router.push(remoteAppHref(id, appId, 'deployments')) }) }} /></TabsContent>}
       {projectId && !project && <div role="alert" className="notice-error">This project is no longer available on {server.name}. <Link href={`${root}#applications`} className="underline">View projects</Link></div>}
       {view === 'storage' && <StorageWorkspace embedded/>}
       {view === 'domains' && <DomainsWorkspace key={server.id} serverId={server.id} />}

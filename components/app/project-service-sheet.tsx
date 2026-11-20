@@ -10,6 +10,7 @@ import { ChoiceCard, roleLabels } from './section'
 import { ServiceCatalog, type ServerConnection } from './service-catalog'
 import { providerMeta } from './providers'
 import { cn } from '@/lib/utils'
+import {useStorageTransport} from '@/lib/storage-client'
 
 interface App { id: string; name: string; component_role: string; project_type: string; environment: string }
 
@@ -28,6 +29,7 @@ export function ProjectServiceSheet({ open, onOpenChange, projectName, apps, app
   role: 'admin' | 'operator' | 'viewer'
   onCreated: (message: string) => void
 }) {
+  const {fetch,serverId}=useStorageTransport()
   const eligible = useMemo(() => apps.filter(app => app.project_type !== 'angular'), [apps])
   const browserApps = apps.filter(app => app.project_type === 'angular')
   const [server, setServer] = useState<ServerConnection | null>(null)
@@ -44,7 +46,7 @@ export function ProjectServiceSheet({ open, onOpenChange, projectName, apps, app
     setServer(null); setOwner(preferred?.id || ''); setUsers([]); setName('primary'); setBackup(true); setError('')
     // Reset only when the sheet opens, not when the parent re-renders its app list.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
+  }, [open,serverId])
 
   const create = async () => {
     if (!server || !owner) return
@@ -57,6 +59,7 @@ export function ProjectServiceSheet({ open, onOpenChange, projectName, apps, app
       }) })
       const body = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(body.error || 'Database could not be created')
+      if(!body.service?.id)throw new Error('The server did not confirm the created service. Refresh its database list before retrying.')
       const failed: string[] = []
       for (const appId of users) {
         const shared = await fetch(`/api/sites/${appId}/data-services`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({

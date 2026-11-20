@@ -12,6 +12,7 @@ import { AppToolGrid } from '@/components/app/app-tools'
 import { DomainsPanel } from '@/components/app/domains-panel'
 import { MemorySetting } from '@/components/app/memory-setting'
 import { DeploymentScript } from '@/components/app/deployment-script'
+import { DeploymentHooks } from '@/components/app/deployment-hooks'
 import { ApplicationRemoval } from '@/components/app/application-removal'
 import { ApplicationProcess } from '@/components/app/application-process'
 import { RuntimeLogs } from '@/components/app/runtime-logs'
@@ -23,6 +24,7 @@ import { StackPanel } from '@/components/app/stack-panel'
 import { StagingAsleepBanner, StagingSleepSetting } from '@/components/app/staging-sleep'
 import { StoragePanel, providerMeta } from '@/components/app/storage-panel'
 import { GitAutomation } from '@/components/app/git-automation'
+import { AutoDeployControl } from '@/components/app/auto-deploy-control'
 import { EnvironmentSettings } from '@/components/app/environment-settings'
 import { AppShell } from '@/components/layout/app-shell'
 import { useWorkspace } from '@/components/layout/workspace-provider'
@@ -149,29 +151,6 @@ export default function SitePage() {
 }
 
 function ApplicationWorkspace({ siteId }: { siteId: string }) {
-const [savingAutoDeploy, setSavingAutoDeploy] = useState(false)
-const handleToggleAutoDeploy = async () => {
-    if (!siteId || !project || savingAutoDeploy) return
-    const previousValue = project.auto_deploy
-    const nextValue = !previousValue
-    setSavingAutoDeploy(true)
-    setError(null)
-    setProject({ ...project, auto_deploy: nextValue })
-    setProjectForm(current => ({ ...current, autoDeploy: nextValue }))
-    try {
-      const res = await fetch(`/api/sites/${siteId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ autoDeploy: nextValue }) })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.error || 'Failed to update auto deployment')
-      }
-    } catch (err) {
-      setProject({ ...project, auto_deploy: previousValue })
-      setProjectForm(current => ({ ...current, autoDeploy: previousValue }))
-      setError(err instanceof Error ? err.message : 'Failed to update auto deployment')
-    } finally {
-      setSavingAutoDeploy(false)
-    }
-  }
   const { navigate } = useWorkspace()
   const { health, error: healthError } = useServerHealth()
   const router = useRouter()
@@ -599,10 +578,7 @@ const handleToggleAutoDeploy = async () => {
         </span>}
         tabs={tabs}
         actions={<>
-          {canWrite && !project.setup_required && <label className="flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground" title={project.auto_deploy ? `Deploys when you push to ${project.default_branch}` : 'Pushes are ignored; deploy manually'}>
-            <Zap className={`h-3.5 w-3.5 ${project.auto_deploy ? 'text-status-ready' : ''}`} aria-hidden="true" />Auto-deploy
-            <Switch checked={project.auto_deploy} disabled={savingAutoDeploy} onCheckedChange={() => void handleToggleAutoDeploy()} aria-label="Auto-deploy" />
-          </label>}
+          {canWrite && !project.setup_required && <AutoDeployControl appId={project.id} name={project.name} branch={project.default_branch} enabled={project.auto_deploy} label="Auto-deploy" onChanged={enabled=>{setProject(current=>current&&({...current,auto_deploy:enabled}));setProjectForm(current=>({...current,autoDeploy:enabled}))}}/>}
           {primaryUrl && <Button asChild variant="outline" size="sm"><a href={primaryUrl} target="_blank" rel="noreferrer">Visit<ArrowUpRight className="ml-1.5 h-3.5 w-3.5" /></a></Button>}
           {project.environment === 'staging' && project.production_id && (
             <Button variant="outline" size="sm" onClick={() => setPromoteOpen(true)} disabled={!canWrite || sameAsProduction} title={sameAsProduction ? 'Production already runs this commit' : 'Review what would be released, then promote it'}>
@@ -669,7 +645,7 @@ const handleToggleAutoDeploy = async () => {
                   : <><span className="font-medium">No database</span><span className="text-muted-foreground"> connected</span></>}
               </StatusLine>
               <StatusLine tone={project.auto_deploy ? 'ok' : 'off'} icon={<Zap className="h-3.5 w-3.5" />}
-                action={canWrite ? <Switch checked={project.auto_deploy} disabled={savingAutoDeploy || project.setup_required} onCheckedChange={() => void handleToggleAutoDeploy()} aria-label="Automatic deployments" /> : undefined}>
+                action={canWrite ? <AutoDeployControl appId={project.id} name={project.name} branch={project.default_branch} enabled={project.auto_deploy} disabled={project.setup_required} variant="switch" label="Automatic deployments" onChanged={enabled=>{setProject(current=>current&&({...current,auto_deploy:enabled}));setProjectForm(current=>({...current,autoDeploy:enabled}))}}/> : undefined}>
                 {project.auto_deploy ? <><span className="font-medium">Deploys automatically</span><span className="text-muted-foreground"> when you push to <span className="font-mono">{project.default_branch}</span></span></> : <><span className="font-medium">Manual deploys only</span><span className="text-muted-foreground"> — pushes to <span className="font-mono">{project.default_branch}</span> are ignored</span></>}
               </StatusLine>
               <StatusLine tone={inStack ? 'info' : 'off'} icon={<Layers className="h-3.5 w-3.5" />}>
@@ -798,6 +774,7 @@ const handleToggleAutoDeploy = async () => {
             footer={<><span>Commands run from the app directory and stop at the first failure. <code className="font-mono text-xs">$BRANCH</code> is the deployed branch.</span><Button size="sm" onClick={() => void handleSaveProject()} disabled={savingProject || !canWrite}>{savingProject ? 'Saving…' : 'Save'}</Button></>}>
             <div className="space-y-4">
               <DeploymentScript value={projectForm.deployScript} disabled={!canWrite} onChange={deployScript=>setProjectForm({...projectForm,deployScript})}/>
+              <DeploymentHooks before={projectForm.preDeployCmd} after={projectForm.postDeployCmd} disabled={!canWrite} onChange={values=>setProjectForm(current=>({...current,...(values.before!==undefined?{preDeployCmd:values.before}:{}),...(values.after!==undefined?{postDeployCmd:values.after}:{})}))}/>
               <label className="field-label">Start command<input className={cn(inputClass, 'font-mono')} value={projectForm.startCmd} onChange={e => setProjectForm({ ...projectForm, startCmd: e.target.value })} placeholder={projectTypeDefaults[projectForm.projectType].startCmd ?? 'Synergy static server'} /></label>
               {visibleToolchains.length > 0 && <>
                 <div className="grid gap-3 md:grid-cols-2">

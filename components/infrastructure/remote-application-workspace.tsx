@@ -1,6 +1,4 @@
 'use client'
-import {useState} from 'react'
-import {PromoteSheet} from '@/components/app/promote-sheet'
 import {StoragePanel} from '@/components/app/storage-panel'
 import { Section, StatusLine } from '@/components/app/section'
 import { ApplicationRemoval } from '@/components/app/application-removal'
@@ -11,7 +9,8 @@ import { GitAutomation } from '@/components/app/git-automation'
 import { SecurityGateSetting,SecurityGateBanner,useSecurityGate } from '@/components/app/security-gate'
 import { MemorySetting } from '@/components/app/memory-setting'
 import { StagingSleepSetting } from '@/components/app/staging-sleep'
-import { AppToolLinks } from '@/components/app/app-tools'
+import { AppToolLinks, AppToolGrid } from '@/components/app/app-tools'
+import { AutoDeployControl } from '@/components/app/auto-deploy-control'
 import { RuntimeLogs } from '@/components/app/runtime-logs'
 import { RuntimeView } from '@/components/app/runtime-view'
 import { StackPanel } from '@/components/app/stack-panel'
@@ -21,10 +20,11 @@ import { Button } from '@/components/ui/button'
 import { ApplicationRelease } from '@/components/workspace/application-release'
 import { RemoteDeploymentHistory } from './remote-deployment-history'
 import type { ManagedServer, RemoteApp, RemoteJob } from '@/lib/managed-server-types'
-import { remoteAppHref, remoteDeployment, remoteProcessState } from '@/lib/remote-workspace'
+import { remoteAppHref, remoteAppDatabases, remoteDeployment, remoteProcessState } from '@/lib/remote-workspace'
 import { Activity, ArrowRight, Database, Globe2, Rocket } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import {useCallback,useRef} from 'react'
 import { RemoteAppSetup } from './remote-app-setup'
 import { RemoteAppForm } from './remote-app-form'
 import { RemoteConsole } from './remote-console'
@@ -34,8 +34,11 @@ export function RemoteApplicationWorkspace({ server, app, apps, jobs, tab, now, 
   onTab: (tab: string) => void; onChanged: () => void; onDirtyChange: (dirty: boolean) => void; onDeploy: () => Promise<void>
 }) {
   const router=useRouter()
-  const [promoteOpen,setPromoteOpen]=useState(false)
+  const settingsDirty=useRef({source:false,runtime:false})
+  const sourceDirty=useCallback((dirty:boolean)=>{settingsDirty.current.source=dirty;onDirtyChange(settingsDirty.current.source||settingsDirty.current.runtime)},[onDirtyChange])
+  const runtimeDirty=useCallback((dirty:boolean)=>{settingsDirty.current.runtime=dirty;onDirtyChange(settingsDirty.current.source||settingsDirty.current.runtime)},[onDirtyChange])
   const security=useSecurityGate(app.id,server.id)
+  const databases=remoteAppDatabases(app),primaryDatabase=databases[0]
   const history = jobs.filter(job => job.app_id === app.id).map(job => remoteDeployment(job, apps))
   const live = history.find(job => job.is_active) || null
   const active = history.some(job => job.status === 'running' || job.status === 'queued')
@@ -47,10 +50,12 @@ export function RemoteApplicationWorkspace({ server, app, apps, jobs, tab, now, 
   if(tab==='storage')return <StoragePanel projectId={app.id} projectName={app.name} projectType={app.project_type||'node'} role={admin?'admin':deployer?'operator':'viewer'} onChanged={onChanged}/>
   if(tab==='domains'&&app.live_commit)return <div className="space-y-6"><DomainsPanel projectId={app.id} projectName={app.name} port={app.port} serverId={server.id} environment={app.environment_name||'production'} role={admin?'admin':deployer?'operator':'viewer'} onChanged={onChanged}/><details className="rounded-xl border border-border p-4"><summary className="cursor-pointer text-sm font-medium">Primary address configuration</summary><div className="mt-4">{app.guided_setup?<RemoteAppSetup server={server} appId={app.id} section="domain" canWrite={admin} canDeploy={deployer} onChanged={onChanged} onDirtyChange={onDirtyChange} onDeploy={onDeploy}/>:<RemoteAppForm serverId={server.id} platform={server.platform} app={app} section="domains" canWrite={admin&&server.enabled} onSaved={onChanged} onDirtyChange={onDirtyChange}/>}</div></details></div>
   if(tab==='settings')return <div className="space-y-6">
+    {app.guided_setup&&<details className="rounded-xl border border-border p-4"><summary className="cursor-pointer text-sm font-medium">App name & source</summary><div className="mt-4"><RemoteAppSetup key={`${app.id}:source`} server={server} appId={app.id} section="repository" canWrite={admin} canDeploy={deployer} onChanged={onChanged} onDirtyChange={sourceDirty} onDeploy={onDeploy}/></div></details>}
     <GitAutomation projectId={app.id} serverId={server.id} branch={app.branch} autoDeploy={!!app.auto_deploy} canWrite={admin} onChanged={onChanged}/>
     <ApplicationHealth key={app.id} id={app.id} serverId={server.id} canWrite={deployer&&server.enabled&&!active&&(!app.live_commit||fresh&&server.metrics?.capabilities?.includes('application-control-v1')===true)}/>
     <Section title="Dependency security gate" description="Checks production dependencies before they go live."><SecurityGateSetting loadError={security.loadError} onRetry={security.reload} projectId={app.id} appName={app.name} serverId={server.id} gate={security.gate} canTurnOff={security.canTurnOff} canWrite={deployer} onChanged={security.setGate}/></Section>
-    {app.guided_setup?<RemoteAppSetup key={`${app.id}:settings`} server={server} appId={app.id} section="runtime" canWrite={admin} canDeploy={deployer} onChanged={onChanged} onDirtyChange={onDirtyChange} onDeploy={onDeploy}/>:<RemoteAppForm key={`${app.id}:settings`} serverId={server.id} platform={server.platform} app={app} section="settings" canWrite={admin&&server.enabled} onSaved={onChanged} onDirtyChange={onDirtyChange}/>}
+    {app.guided_setup?<RemoteAppSetup key={`${app.id}:settings`} server={server} appId={app.id} section="runtime" canWrite={admin} canDeploy={deployer} onChanged={onChanged} onDirtyChange={runtimeDirty} onDeploy={onDeploy}/>:<RemoteAppForm key={`${app.id}:settings`} serverId={server.id} platform={server.platform} app={app} section="settings" canWrite={admin&&server.enabled} onSaved={onChanged} onDirtyChange={runtimeDirty}/>}
+    {app.guided_setup&&<Section title="Setup wizard" description="Walk through source, build, database, environment and domain again." action={<Button variant="outline" size="sm" onClick={()=>onTab('setup')}>Open setup</Button>}/>}
     {app.environment_name==='staging'&&<Section id="sleep" title="Sleep when idle" description="Stop this staging app when nobody has used it for a while, to give its memory back to the server."><StagingSleepSetting projectId={app.id} serverId={server.id} canWrite={deployer&&fresh&&!!app.live_commit&&!active}/></Section>}
     <Section id="memory" title="Memory" description="How much memory this app uses, and a limit so a leak cannot starve the whole server."><MemorySetting projectId={app.id} serverId={server.id} canWrite={deployer&&fresh&&!!app.live_commit&&!active&&server.metrics?.capabilities?.includes('application-control-v1')===true}/>{!server.metrics?.capabilities?.includes('application-control-v1')&&<p className="mt-3 text-sm text-muted-foreground">Update the agent in Agent access & updates to save memory limits without restarting.</p>}</Section>
     <Section title="Server" description="Where this application runs on the selected server."><p className="mb-4 text-sm text-muted-foreground">{server.name} · port {app.port}</p><ApplicationProcess appId={app.id} name={app.name} serverId={server.id} canWrite={deployer&&fresh&&!!app.live_commit&&!active&&server.metrics?.capabilities?.includes('remote-infrastructure-v1')===true} onChanged={onChanged}/></Section>
@@ -75,8 +80,9 @@ export function RemoteApplicationWorkspace({ server, app, apps, jobs, tab, now, 
     <Section title="At a glance" description="How this application is running, in plain language."><div className="divide-y divide-border">
       <StatusLine tone={status.readiness === 'ready' ? 'ok' : 'off'} icon={<Activity className="h-3.5 w-3.5" />}><span className="font-medium">{status.label}</span><span className="text-muted-foreground"> — port {app.port} · health check {app.health_path}</span></StatusLine>
       <StatusLine tone={url ? 'ok' : 'warn'} icon={<Globe2 className="h-3.5 w-3.5" />} action={<Button variant="ghost" size="sm" onClick={() => onTab('domains')}>Manage</Button>}><span className="font-medium">{url ? app.hostname : 'No domain configured'}</span><span className="text-muted-foreground"> · {app.access_mode.toUpperCase()} HTTPS</span></StatusLine>
-      <StatusLine tone={app.database_config?.status === 'ready' ? 'ok' : 'off'} icon={<Database className="h-3.5 w-3.5" />} action={<Button variant="ghost" size="sm" onClick={() => onTab('storage')}>{app.database_config ? 'Manage' : 'Add database'}</Button>}><span className="font-medium">{app.database_config?.database || 'No managed database connection'}</span>{app.database_config && <span className="text-muted-foreground"> · {app.database_config.provider} · {app.database_config.status}</span>}</StatusLine>
-      <StatusLine tone={app.auto_deploy?'ok':'off'} icon={<Rocket className="h-3.5 w-3.5" />}><span className="font-medium">{app.auto_deploy?'Deploy on push':'Manual deploys'}</span><span className="text-muted-foreground"> from branch {app.branch}</span></StatusLine>
+      <StatusLine tone={primaryDatabase?.status === 'ready' ? 'ok' : 'off'} icon={<Database className="h-3.5 w-3.5" />} action={<Button variant="ghost" size="sm" onClick={() => onTab('storage')}>{primaryDatabase ? 'Manage' : 'Add database'}</Button>}><span className="font-medium">{primaryDatabase?`${primaryDatabase.database}${databases.length>1?` and ${databases.length-1} more`:''}`:'No managed database connection'}</span>{primaryDatabase && <span className="text-muted-foreground"> · {primaryDatabase.provider} · {primaryDatabase.status}</span>}</StatusLine>
+      <StatusLine tone={app.auto_deploy?'ok':'off'} icon={<Rocket className="h-3.5 w-3.5" />} action={deployer?<AutoDeployControl appId={app.id} serverId={server.id} name={app.name} branch={app.branch} enabled={!!app.auto_deploy} variant="switch" label="Automatic deployments" disabled={!server.enabled||needsSetup} onChanged={onChanged}/>:undefined}><span className="font-medium">{app.auto_deploy?'Deploys automatically':'Manual deploys only'}</span><span className="text-muted-foreground"> from branch {app.branch}</span></StatusLine>
     </div></Section>
+    <Section title="Everything for this app" description="Each part of this app has its own tab. Here is what each one is for, in plain words."><AppToolGrid appId={app.id} onSelect={onTab} hrefFor={(id,section)=>remoteAppHref(server.id,id,section)}/></Section>
   </div>
 }

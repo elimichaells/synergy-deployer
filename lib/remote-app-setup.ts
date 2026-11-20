@@ -93,7 +93,9 @@ export async function changeRemoteSetup(serverId: string, appId: string, body: R
   // Credential resolution does not hold a database transaction open.
   const before=(await query('select repo_url,git_connection_id from remote_apps where id=$1 and server_id=$2',[appId,serverId])).rows[0]
   if(!before)throw new ApiError('Application not found',404)
-  const git=body.action==='inspect'?await connection(before.git_connection_id,before.repo_url):null
+  const sourceConnection=body.git_connection_id===undefined?before.git_connection_id:body.git_connection_id?uuid(body.git_connection_id):null
+  const sourceRepo=body.repo_url===undefined?before.repo_url:String(body.repo_url)
+  const git=body.action==='inspect'?await connection(sourceConnection,sourceRepo):null
   const client=await db.connect()
   let jobId:string|undefined
   try {
@@ -131,9 +133,11 @@ export async function changeRemoteSetup(serverId: string, appId: string, body: R
       if(body.environment!==undefined)await client.query('update remote_apps set env_files_ciphertext=null where id=$1',[appId])
     } else if(body.action==='inspect') {
       if(app.repo_url!==before.repo_url || app.git_connection_id!==before.git_connection_id)throw new ApiError('Repository changed; retry inspection',409)
-      const config=validateApp({...app,branch:body.branch ?? app.branch,start_cmd:app.start_cmd || 'npm start',environment:{}})
+      const config=validateApp({...app,name:body.name??app.name,repo_url:sourceRepo,branch:body.branch ?? app.branch,start_cmd:app.start_cmd || 'npm start',environment:{}})
       jobId=await enqueue(client,serverId,appId,userId,'inspect',{...config,id:appId,git})
-      await client.query("update remote_apps set inspection=null,branch=$2,setup_step='repository' where id=$1",[appId,config.branch])
+      const changed=config.repo_url!==app.repo_url||sourceConnection!==app.git_connection_id
+      await client.query(`update remote_apps set inspection=null,name=$2,repo_url=$3,git_connection_id=$4,branch=$5,setup_step='repository',
+        auto_deploy=case when $6 then false else auto_deploy end,webhook_ciphertext=case when $6 then null else webhook_ciphertext end,webhook_user_id=case when $6 then null else webhook_user_id end where id=$1`,[appId,config.name,config.repo_url,sourceConnection,config.branch,changed])
     } else if(body.action==='database') {
       if(app.storage_catalog_enabled&&(await client.query('select 1 from remote_storage_services where server_id=$1 and app_id=$2',[serverId,appId])).rowCount)throw new ApiError('Manage this application’s connected databases in Storage',409)
       if(!app.project_type || app.project_type==='angular')throw new ApiError('Choose a backend framework first; browser apps must use a backend API',400)

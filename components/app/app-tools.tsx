@@ -35,7 +35,7 @@ export function AppToolLinks({ appId, className, hrefFor = toolHref, unavailable
 }
 
 /** Tiles that each explain a tool in a sentence. On the app's own page they switch tabs instead of navigating. */
-export function AppToolGrid({ appId, onSelect, facts }: { appId: string; onSelect?: (tab: AppToolTab) => void; facts?: Partial<Record<AppTool['tab'], string>> }) {
+export function AppToolGrid({ appId, onSelect, facts, hrefFor=toolHref }: { appId: string; onSelect?: (tab: AppToolTab) => void; facts?: Partial<Record<AppTool['tab'], string>>;hrefFor?: (appId:string,tab:AppTool['tab'])=>string }) {
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {APP_TOOLS.map(tool => {
@@ -49,7 +49,7 @@ export function AppToolGrid({ appId, onSelect, facts }: { appId: string; onSelec
         const className = 'syn-tile flex flex-col p-4 text-left'
         return onSelect && tool.tab !== 'jobs'
           ? <button key={tool.tab} type="button" onClick={() => onSelect(tool.tab as AppToolTab)} className={className}>{inner}</button>
-          : <Link key={tool.tab} href={toolHref(appId, tool.tab)} className={className}>{inner}</Link>
+          : <Link key={tool.tab} href={hrefFor(appId, tool.tab)} className={className}>{inner}</Link>
       })}
     </div>
   )

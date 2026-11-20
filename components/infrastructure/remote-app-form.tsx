@@ -1,5 +1,6 @@
 'use client'
 import { DeploymentScript } from '@/components/app/deployment-script'
+import { DeploymentHooks } from '@/components/app/deployment-hooks'
 import { RemoteAddressFields } from './remote-address-fields'
 
 import { RemoteRuntimeSelection } from './remote-runtime-selection'
@@ -78,9 +79,11 @@ export function RemoteAppForm({ serverId, platform, app, onSaved, onDirtyChange,
       <label className="text-sm">App name<input required maxLength={100} className={inputClass} value={form.name} onChange={e => field('name', e.target.value)} /></label>
       <label className="text-sm">Git connection<select className={inputClass} value={form.git_connection_id} onChange={e => field('git_connection_id', e.target.value)}><option value="">Public repository (no credentials)</option>{connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
       <label className="text-sm sm:col-span-2">Repository URL<input type="url" required placeholder="https://github.com/organization/app" className={inputClass} value={form.repo_url} onChange={e => field('repo_url', e.target.value)} /></label>
+      <p className="text-xs text-muted-foreground sm:col-span-2">Changing the repository or Git connection turns off auto-deploy. Turn it on again to connect the new webhook.</p>
       <label className="text-sm">Branch<input required className={inputClass} value={form.branch} onChange={e => field('branch', e.target.value)} /></label>
       <label className="text-sm">Command preset<select className={inputClass} defaultValue="" onChange={e => preset(e.target.value)}><option value="">Choose a preset…</option><option value="next">Next.js</option><option value="node">Node.js</option><option value="go">Go</option><option value="laravel">Laravel</option></select></label>
       <div className="sm:col-span-2"><DeploymentScript value={form.deploy_script} onChange={value=>field('deploy_script',value)}/></div>
+      <div className="sm:col-span-2"><DeploymentHooks before={form.pre_deploy_cmd} after={form.post_deploy_cmd} onChange={values=>setForm(current=>({...current,...(values.before!==undefined?{pre_deploy_cmd:values.before}:{}),...(values.after!==undefined?{post_deploy_cmd:values.after}:{})}))}/></div>
       {(['install_cmd','build_cmd','start_cmd'] as const).map((key,i) => <label key={key} className="text-sm sm:col-span-2">{['Install command','Build command','Start command'][i]}<input required={key === 'start_cmd'} className={`${inputClass} font-mono`} value={form[key]} onChange={e => field(key, e.target.value)} /></label>)}
       <label className="text-sm">Application port<input type="number" min={1024} max={65535} required className={inputClass} value={form.port} onChange={e => field('port', e.target.value)} /></label>
       {!app && <label className="text-sm">Health check path<input required className={inputClass} value={form.health_path} onChange={e => field('health_path', e.target.value)} /><span className="mt-1 block text-xs text-muted-foreground">Uses the application readiness settings. The default accepts HTTP 2xx and local redirects.</span></label>}

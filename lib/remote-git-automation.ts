@@ -10,10 +10,14 @@ import { managerUrl } from '@/lib/manager-address'
 import { remotePush } from '@/lib/remote-webhook-policy'
 
 export const remoteWebhookUrl=(server:string,app:string)=>`${managerUrl()}/api/webhooks/remote/${server}/${app}`
-async function context(serverId:string,appId:string){
+async function application(serverId:string,appId:string){
   await ensureManagedServers()
   const app=(await query('select * from remote_apps where server_id=$1 and id=$2',[uuid(serverId),uuid(appId)])).rows[0]
   if(!app)throw new ApiError('Application not found on this server',404)
+  return app
+}
+async function context(serverId:string,appId:string){
+  const app=await application(serverId,appId)
   const host=await getGitConnection(app.git_connection_id),repository=repositoryPath(app.repo_url,host)
   return{app,host,repository,url:remoteWebhookUrl(serverId,appId)}
 }
@@ -30,10 +34,10 @@ async function hookContext(serverId:string,appId:string){
   return{...ctx,token,endpoint,existing}
 }
 export async function remoteGitStatus(serverId:string,appId:string){
-  const ctx=await context(serverId,appId)
+  const app=await application(serverId,appId)
   let installed=false,hookError=''
-  if(ctx.app.webhook_ciphertext){try{installed=!!(await hookContext(serverId,appId)).existing}catch(error){hookError=(error as Error).message}}
-  return{autoDeploy:ctx.app.auto_deploy,branch:ctx.app.branch,hasSecret:!!ctx.app.webhook_ciphertext,webhookUrl:ctx.url,installed,hookError}
+  if(app.webhook_ciphertext){try{const {existing,host}=await hookContext(serverId,appId);installed=!!existing&&(host.provider==='gitlab'?existing.push_events!==false&&existing.enable_ssl_verification!==false:existing.active!==false&&(!existing.events||existing.events.includes('push')||existing.events.includes('*'))&&existing.config?.insecure_ssl!=='1');if(!installed)hookError='The Git webhook is missing, disabled, or is not configured for verified push delivery. Connect it again.'}catch(error){hookError=(error as Error).message}}
+  return{autoDeploy:app.auto_deploy,branch:app.branch,hasSecret:!!app.webhook_ciphertext,webhookUrl:remoteWebhookUrl(serverId,appId),installed,hookError}
 }
 export async function changeRemoteGit(serverId:string,appId:string,body:Record<string,unknown>,actor:string){
   await ensureManagedServers();uuid(serverId);uuid(appId)
@@ -41,26 +45,33 @@ export async function changeRemoteGit(serverId:string,appId:string,body:Record<s
   try{
     locked=(await client.query("select pg_try_advisory_lock(hashtext('remote-webhook'),hashtext($1)) as ok",[appId])).rows[0].ok
     if(!locked)throw new ApiError('Another webhook change is running',409)
-    const ctx=await context(serverId,appId),action=body.action
+    const app=await application(serverId,appId),action=body.action
     let secret:string|undefined
-    if(action==='auto'){
-      if(typeof body.enabled!=='boolean')throw new ApiError('Choose whether pushes deploy automatically',400)
-      await query('update remote_apps set auto_deploy=$3,webhook_user_id=$4 where server_id=$1 and id=$2',[serverId,appId,body.enabled,actor])
+    if(action==='auto'&&typeof body.enabled!=='boolean')throw new ApiError('Choose whether pushes deploy automatically',400)
+    if(action==='auto'&&body.enabled===false){
+      // Disabling must work even if the Git connection has expired or was removed.
+      await query('update remote_apps set auto_deploy=$3,webhook_user_id=$4 where server_id=$1 and id=$2',[serverId,appId,false,actor])
     }else if(action==='generate'){
-      if(ctx.app.webhook_ciphertext)throw new ApiError('A webhook secret already exists. Connect it automatically or disconnect before generating another.',409)
+      if(app.webhook_ciphertext)throw new ApiError('A webhook secret already exists. Connect it automatically or disconnect before generating another.',409)
       secret=randomBytes(32).toString('hex')
       await query('update remote_apps set webhook_ciphertext=$3,webhook_user_id=$4 where server_id=$1 and id=$2',[serverId,appId,encryptSecret(secret),actor])
-    }else if(action==='connect'||action==='disconnect'){
+    }else if(action==='connect'||action==='disconnect'||action==='auto'){
+      if(action==='auto'&&app.guided_setup&&!app.setup_completed_at)throw new ApiError('Finish application setup and server checks before enabling auto-deploy',409)
+      if(action!=='disconnect'&&!(await query('select id from managed_servers where id=$1 and enabled=true',[serverId])).rowCount)throw new ApiError('Reconnect this server before configuring automatic deployments',409)
       const hook=await hookContext(serverId,appId)
-      if(action==='connect'){
-        secret=ctx.app.webhook_ciphertext?decryptSecret(ctx.app.webhook_ciphertext):randomBytes(32).toString('hex')
-        const config={url:ctx.url,content_type:'json',secret,insecure_ssl:'0'}
-        const payload=ctx.host.provider==='gitlab'?{url:ctx.url,token:secret,push_events:true,tag_push_events:false,enable_ssl_verification:true}:ctx.host.provider==='gitea'?{type:'gitea',active:true,events:['push'],config}:{name:'web',active:true,events:['push'],config}
-        const response=await gitApi(ctx.host,hook.token,hook.endpoint+(hook.existing?'/'+hook.existing.id:''),{method:hook.existing?(ctx.host.provider==='gitlab'?'PUT':'PATCH'):'POST',body:payload})
+      if(hook.app.repo_url!==app.repo_url||hook.app.git_connection_id!==app.git_connection_id||hook.app.branch!==app.branch)throw new ApiError('Application repository changed. Refresh before configuring its webhook.',409)
+      if(action==='connect'||action==='auto'){
+        secret=app.webhook_ciphertext?decryptSecret(app.webhook_ciphertext):randomBytes(32).toString('hex')
+        const config={url:hook.url,content_type:'json',secret,insecure_ssl:'0'}
+        const payload=hook.host.provider==='gitlab'?{url:hook.url,token:secret,push_events:true,tag_push_events:false,enable_ssl_verification:true}:hook.host.provider==='gitea'?{type:'gitea',active:true,events:['push'],config}:{name:'web',active:true,events:['push'],config}
+        const response=await gitApi(hook.host,hook.token,hook.endpoint+(hook.existing?'/'+hook.existing.id:''),{method:hook.existing?(hook.host.provider==='gitlab'?'PUT':'PATCH'):'POST',body:payload})
         if(!response.ok)throw new ApiError(`Git server rejected webhook configuration (HTTP ${response.status})`,502)
-        if(!(await query('update remote_apps set webhook_ciphertext=$3,webhook_user_id=$4 where server_id=$1 and id=$2 and repo_url=$5 and git_connection_id is not distinct from $6',[serverId,appId,encryptSecret(secret),actor,ctx.app.repo_url,ctx.app.git_connection_id])).rowCount)throw new ApiError('Application repository changed. Refresh and connect its current repository.',409)
+        // Enable only after the provider accepts the verified push webhook. A
+        // concurrent source/setup/server change must not authorize a stale plan.
+        if(!(await query(`update remote_apps set webhook_ciphertext=$3,webhook_user_id=$4${action==='auto'?',auto_deploy=true':''} where server_id=$1 and id=$2 and repo_url=$5 and git_connection_id is not distinct from $6 and branch=$7
+          and exists(select 1 from managed_servers where id=$1 and enabled=true)${action==='auto'?' and (guided_setup=false or setup_completed_at is not null)':''}`,[serverId,appId,encryptSecret(secret),actor,app.repo_url,app.git_connection_id,app.branch])).rowCount)throw new ApiError('Application repository, setup or server changed. Refresh and connect its current repository.',409)
       }else{
-        if(hook.existing){const response=await gitApi(ctx.host,hook.token,hook.endpoint+'/'+hook.existing.id,{method:'DELETE'});if(!response.ok&&response.status!==404)throw new ApiError('Could not remove this application webhook',502)}
+        if(hook.existing){const response=await gitApi(hook.host,hook.token,hook.endpoint+'/'+hook.existing.id,{method:'DELETE'});if(!response.ok&&response.status!==404)throw new ApiError('Could not remove this application webhook',502)}
         await query('update remote_apps set webhook_ciphertext=null,auto_deploy=false where server_id=$1 and id=$2',[serverId,appId])
       }
     }else throw new ApiError('Unknown Git automation action',400)

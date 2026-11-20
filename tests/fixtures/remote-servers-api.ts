@@ -30,7 +30,22 @@ export async function remoteServersFixture(request: Request) {
     if(request.method==='POST'){const body=await request.json();if(body.previousContent!==selected.envFiles[body.file])return NextResponse.json({error:'File changed elsewhere'},{status:409});selected.envFiles[body.file]=body.content;return NextResponse.json({ok:true})}
     const file=new URL(request.url).searchParams.get('file')||'.env';return NextResponse.json({file,content:selected.envFiles[file]||''})
   }
-  if(parts[1]==='apps'&&parts[3]==='git-automation')return NextResponse.json({autoDeploy:false,hasSecret:false,webhookUrl:'https://manager.example/api/webhooks/remote/'+parts[0]+'/'+parts[2],installed:false})
+  if(parts[1]==='apps'&&parts[3]==='git-automation'){
+    const selected=state.apps.find(a=>a.id===parts[2]&&a.server_id===parts[0]);if(!selected)return NextResponse.json({error:'Application not found'},{status:404})
+    if(request.method==='POST'){
+      const body=await request.json();if(body.action==='auto'){
+        if(selected.autoDeployFailure&&body.enabled)return NextResponse.json({error:'Git server rejected webhook configuration (HTTP 403)'},{status:502})
+        selected.auto_deploy=body.enabled;selected.webhookConnected ||= body.enabled
+      }
+    }
+    return NextResponse.json({autoDeploy:!!selected.auto_deploy,branch:selected.branch,hasSecret:!!selected.webhookConnected,webhookUrl:'https://manager.example/api/webhooks/remote/'+parts[0]+'/'+parts[2],installed:!!selected.webhookConnected})
+  }
+  if(parts[1]==='apps'&&parts[3]==='promote'){
+    const staging=state.apps.find(a=>a.id===parts[2]&&a.server_id===parts[0]),production=state.apps.find(a=>a.id===staging?.production_id&&a.server_id===parts[0]);if(!staging||!production)return NextResponse.json({error:'Promotion pair not found'},{status:404})
+    if(request.method==='POST')return NextResponse.json({deploymentId:state.jobs[0].id,productionId:production.id})
+    const info=(a:typeof app)=>({id:a.id,name:a.name,branch:a.branch,commit:a.live_commit,autoDeploy:!!a.auto_deploy})
+    return NextResponse.json({plan:{staging:info(staging),production:info(production),mode:staging.branch===production.branch?'commit':'merge',review:'fixture-review',commits:[],historyKnown:false,databaseFiles:[],blocker:null,warnings:['Synthetic review only; no production app will be changed.']}})
+  }
   if(parts[1]==='deployments')return NextResponse.json({jobs:state.jobs.filter(job=>state.apps.some(app=>app.server_id===parts[0]&&app.id===job.app_id)),next:null})
   if(parts[1]==='apps'&&parts[3]==='security-gate')return NextResponse.json({gate:{off:false,indefinite:false,until:null,reason:null,by:null,at:null},canTurnOff:state.role==='admin'})
   if(parts[1]==='apps'&&parts[3]==='removal'){
@@ -123,12 +138,15 @@ export async function remoteServersFixture(request: Request) {
   if(parts[1]==='apps' && parts[3]==='setup') {
     const target=state.apps.find(item=>item.id===parts[2] && item.server_id===parts[0])!
     if(body.action==='save') {
-      for(const key of ['project_type','install_cmd','build_cmd','start_cmd','port','health_path','access_mode','hostname','ip_address','ip_port'])if(Object.hasOwn(body,key))target[key]=body[key]
+      for(const key of ['project_type','install_cmd','build_cmd','start_cmd','deploy_script','pre_deploy_cmd','post_deploy_cmd','port','health_path','access_mode','hostname','ip_address','ip_port'])if(Object.hasOwn(body,key))target[key]=body[key]
       target.setup_completed_at=null; target.setup_step=body.step
       if(body.environment){variables[target.id]=body.environment;target.env_names=Object.keys(body.environment)}
       if(body.environmentReviewed)target.setup_decisions.environment='reviewed'
       if(body.domainConfigured)target.setup_decisions.domain='configured'
       if(body.databaseNone){target.database_config=null;target.setup_decisions.database='none'}
+    } else if(body.action==='inspect') {
+      for(const key of ['name','repo_url','git_connection_id','branch'])if(Object.hasOwn(body,key))target[key]=body[key]
+      target.auto_deploy=false;target.setup_completed_at=null
     } else if(body.action==='progress')target.setup_step=body.step
     else if(body.action==='database') {
       target.database_config={provider:body.provider||'postgresql',host:body.host||'127.0.0.1',port:body.port||5432,database:body.database||'library_fixture',username:body.username||'library_user',status:'ready',tls:false};target.setup_decisions.database='configured'
