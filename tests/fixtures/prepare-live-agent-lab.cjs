@@ -8,7 +8,11 @@ const fs=require('node:fs/promises'),path=require('node:path'),{createHash}=requ
   const checksums=(await download(`caddy_${version}_checksums.txt`)).toString('utf8'),line=checksums.split(/\r?\n/).find(line=>line.trim().split(/\s+/).at(-1)===name),expected=line?.trim().split(/\s+/)[0];if(!/^(?:[a-f0-9]{64}|[a-f0-9]{128})$/i.test(expected||''))throw Error('Caddy checksum missing');
   const bytes=await download(name);if(createHash(expected.length===128?'sha512':'sha256').update(bytes).digest('hex')!==expected.toLowerCase())throw Error('Caddy checksum mismatch');const archive=path.join(root,name);await fs.writeFile(archive,bytes);
   const run=promisify(execFile);
-  if(windows)await run('powershell.exe',['-NoProfile','-NonInteractive','-Command','Expand-Archive -LiteralPath $env:FIXTURE_ARCHIVE -DestinationPath $env:FIXTURE_DESTINATION -Force'],{windowsHide:true,env:{...process.env,FIXTURE_ARCHIVE:archive,FIXTURE_DESTINATION:root}});
+  if(windows)await run('powershell.exe',['-NoProfile','-NonInteractive','-Command',"$ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath $env:FIXTURE_ARCHIVE -DestinationPath $env:FIXTURE_DESTINATION -Force"],{windowsHide:true,env:{...process.env,FIXTURE_ARCHIVE:archive,FIXTURE_DESTINATION:root}});
   else await run('tar',['-xzf',archive,'-C',root]);
-  await fs.appendFile(process.env.GITHUB_ENV,`TEST_CADDY=${path.join(root,windows?'caddy.exe':'caddy')}\nTEST_PM2_PACKAGE_ROOT=${path.join(root,'node_modules','pm2')}\n`);
+  const executable=path.join(root,windows?'caddy.exe':'caddy');await fs.access(executable);
+  const installed=await run(executable,['version'],{windowsHide:true,timeout:15000});
+  if(!installed.stdout.trim().startsWith('v'+version+' '))throw Error('Prepared Caddy version does not match the verified archive');
+  console.log('Verified isolated Caddy '+installed.stdout.trim());
+  await fs.appendFile(process.env.GITHUB_ENV,`TEST_CADDY=${executable}\nTEST_PM2_PACKAGE_ROOT=${path.join(root,'node_modules','pm2')}\n`);
 })().catch(error=>{console.error(error.message);process.exitCode=1});
